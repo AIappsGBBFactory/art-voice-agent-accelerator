@@ -335,6 +335,57 @@ class VoiceLiveBYOMConfig:
         return {"profile": self.mode}
 
 
+# Models the Voice Live service can host itself — i.e. valid to run with BYOM OFF.
+# A model NOT in this set (o3-mini, o1, o3, plain gpt-5-chat, or any custom /
+# fine-tuned deployment) can ONLY run via a BYOM profile: selecting it for
+# VoiceLive without BYOM lets the socket open but the model never responds, so the
+# agent goes silent until the ~900s idle timeout. This set is the single-source
+# invariant used to catch that (previously silent) misconfiguration.
+# Keep in sync with the frontend MANAGED_VOICELIVE_MODELS (foundryModels.js) and:
+# https://learn.microsoft.com/azure/ai-services/speech-service/voice-live#supported-models-and-regions
+MANAGED_VOICELIVE_MODELS = frozenset(
+    {
+        # Native speech-to-speech (realtime).
+        "gpt-realtime-1.5",
+        "gpt-realtime",
+        "gpt-realtime-mini",
+        "phi4-mm-realtime",
+        "azure-realtime",
+        # Cascaded (Azure STT -> text LLM -> Azure TTS).
+        "gpt-5.4",
+        "gpt-5.3-chat",
+        "gpt-5.2",
+        "gpt-5.2-chat",
+        "gpt-5.1",
+        "gpt-5.1-chat",
+        "gpt-5",
+        "gpt-5-mini",
+        "gpt-5-nano",
+        "gpt-4.1",
+        "gpt-4.1-mini",
+        "gpt-4.1-nano",
+        "gpt-4o",
+        "gpt-4o-mini",
+        "phi4-mini",
+    }
+)
+
+_MANAGED_VOICELIVE_MODELS_LOWER = frozenset(m.lower() for m in MANAGED_VOICELIVE_MODELS)
+
+
+def is_managed_voicelive_model(deployment_id: str | None) -> bool:
+    """True when ``deployment_id`` is a model managed Voice Live can host itself.
+
+    Managed Voice Live can only serve the models in ``MANAGED_VOICELIVE_MODELS``.
+    Any other deployment (o3-mini, o1, a fine-tuned/custom name, ...) REQUIRES a
+    BYOM profile — connecting it as managed makes the agent go silent. An empty id
+    is treated as managed (nothing to validate; the runtime applies its default).
+    """
+    if not deployment_id:
+        return True
+    return deployment_id.strip().lower() in _MANAGED_VOICELIVE_MODELS_LOWER
+
+
 @dataclass
 class SpeechConfig:
     """

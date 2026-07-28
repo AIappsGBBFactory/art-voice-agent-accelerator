@@ -21,6 +21,9 @@ from apps.artagent.backend.registries.agentstore.loader import (
     build_handoff_map,
     discover_agents,
 )
+from apps.artagent.backend.registries.agentstore.base import (
+    is_managed_voicelive_model,
+)
 from apps.artagent.backend.src.utils.tracing import (
     create_service_dependency_attrs,
     create_service_handler_attrs,
@@ -102,40 +105,14 @@ tracer = trace.get_tracer(__name__)
 _DTMF_FLUSH_DELAY_SECONDS = 1.5
 _VOICELIVE_WARMUP_WAIT_SECONDS = 0.75
 
-# Models that managed Voice Live (BYOM OFF) can actually serve. Connecting with a
-# model outside this set succeeds at the WebSocket level but the model never
-# produces a response — the agent "stops responding" and the session ends in a
-# ~900s idle timeout. We only WARN (never block) here because the managed catalog
-# grows over time; a warning makes the misconfiguration obvious in the logs
+# Models that managed Voice Live (BYOM OFF) can actually serve are defined once in
+# agentstore.base (MANAGED_VOICELIVE_MODELS / is_managed_voicelive_model) so the
+# save-time guard (agent_builder) and this connect-time check can never diverge.
+# Connecting with a model outside that set succeeds at the WebSocket level but the
+# model never produces a response — the agent "stops responding" and the session
+# ends in a ~900s idle timeout. We only WARN (never block) here because the managed
+# catalog grows over time; a warning makes the misconfiguration obvious in the logs
 # without breaking a newly-added-but-unlisted model.
-# Keep in sync with the frontend MANAGED_VOICELIVE_MODELS and:
-# https://learn.microsoft.com/azure/ai-services/speech-service/voice-live#supported-models-and-regions
-_MANAGED_VOICELIVE_SUPPORTED_MODELS = frozenset(
-    {
-        # Native speech-to-speech (realtime).
-        "gpt-realtime-1.5",
-        "gpt-realtime",
-        "gpt-realtime-mini",
-        "phi4-mm-realtime",
-        "azure-realtime",
-        # Cascaded (Azure STT -> text LLM -> Azure TTS).
-        "gpt-5.4",
-        "gpt-5.3-chat",
-        "gpt-5.2",
-        "gpt-5.2-chat",
-        "gpt-5.1",
-        "gpt-5.1-chat",
-        "gpt-5",
-        "gpt-5-mini",
-        "gpt-5-nano",
-        "gpt-4.1",
-        "gpt-4.1-mini",
-        "gpt-4.1-nano",
-        "gpt-4o",
-        "gpt-4o-mini",
-        "phi4-mini",
-    }
-)
 
 
 @dataclass
@@ -1342,7 +1319,7 @@ class VoiceLiveSDKHandler:
                         ),
                         self.session_id,
                     )
-                elif connection_model not in _MANAGED_VOICELIVE_SUPPORTED_MODELS:
+                elif not is_managed_voicelive_model(connection_model):
                     # Managed Voice Live (no BYOM) with a model outside the known
                     # serveable set: the connection will succeed but the model
                     # typically never responds, so the agent goes silent until the

@@ -34,6 +34,7 @@ from apps.artagent.backend.registries.agentstore.base import (
     VoiceConfig,
     VoiceLiveBYOMConfig,
     VOICELIVE_BYOM_MODES,
+    is_managed_voicelive_model,
 )
 from apps.artagent.backend.registries.agentstore.loader import (
     AGENTS_DIR,
@@ -1387,6 +1388,23 @@ def build_session_agent(
     byom_config = (
         VoiceLiveBYOMConfig.from_dict(config.byom.model_dump()) if config.byom else None
     )
+
+    # Guardrail: a non-managed Voice Live model (o3-mini, o1, custom/fine-tuned,
+    # etc.) with BYOM OFF is the silent-failure misconfiguration — it connects to
+    # managed Voice Live, which can't serve the model, so the agent never responds
+    # (idle timeout + client reconnect storm). Surface it at save time instead of
+    # only discovering it live in App Insights. We warn rather than raise because
+    # the managed catalog grows over time (mirrors the connect-time check).
+    if byom_config is None and not is_managed_voicelive_model(voicelive_model.deployment_id):
+        logger.warning(
+            "[AgentBuilder] non_managed_voicelive_without_byom | agent=%s "
+            "voicelive_model=%s session=%s — saved without a BYOM profile; managed "
+            "Voice Live cannot serve this model so the agent will not respond. Enable "
+            "a BYOM profile or pick a managed Voice Live model.",
+            config.name,
+            voicelive_model.deployment_id,
+            session_id,
+        )
 
     return UnifiedAgent(
         name=config.name,
