@@ -100,6 +100,74 @@ _BENIGN_ERROR_CODES = {
     "response_cancel_no_active_response",
 }
 
+
+def _voice_identity(voice: Any) -> str | None:
+    """Extract a comparable voice identity from a payload or a server echo.
+
+    The Voice Live wire format allows ``voice`` to be either a plain string
+    (OpenAI voices such as ``alloy``) or an object with a ``name`` (Azure
+    standard / custom / personal voices), and the SDK echoes it back in the
+    same shape it was accepted. Normalizing both to a lowercase name is what
+    makes "did the voice I asked for actually apply?" answerable.
+    """
+    if voice is None:
+        return None
+    if isinstance(voice, str):
+        return voice.strip().lower() or None
+    name = getattr(voice, "name", None)
+    if name is None and isinstance(voice, dict):
+        name = voice.get("name")
+    if isinstance(name, str):
+        return name.strip().lower() or None
+    return None
+
+
+def verify_voicelive_session_contract(
+    *,
+    requested_voice: Any,
+    requested_model: str | None,
+    session_obj: Any,
+) -> dict[str, Any]:
+    """Compare the session config we asked for against what the service echoed.
+
+    ``session.updated`` is the only ground truth for a Voice Live session: the
+    service echoes the config it actually accepted. Without this comparison a
+    rejected/ignored voice or a model that silently differs from the one the
+    agent selected is indistinguishable from success — which is exactly how a
+    "the TTS voice isn't being respected" bug stays invisible.
+
+    Unknown/absent echo fields are treated as "not verifiable" (``None``) rather
+    than as a mismatch, so older service versions don't produce false alarms.
+
+    Returns a dict with ``voice_requested``/``voice_applied``/``voice_ok``,
+    ``model_requested``/``model_applied``/``model_ok`` and an aggregate ``ok``
+    that is False only when something is verifiably wrong.
+    """
+    voice_requested = _voice_identity(requested_voice)
+    voice_applied = _voice_identity(getattr(session_obj, "voice", None))
+    voice_ok: bool | None = None
+    if voice_requested is not None and voice_applied is not None:
+        voice_ok = voice_requested == voice_applied
+
+    model_requested = (requested_model or "").strip().lower() or None
+    raw_model_applied = getattr(session_obj, "model", None)
+    model_applied = (
+        raw_model_applied.strip().lower() if isinstance(raw_model_applied, str) else None
+    )
+    model_ok: bool | None = None
+    if model_requested is not None and model_applied is not None:
+        model_ok = model_requested == model_applied
+
+    return {
+        "voice_requested": voice_requested,
+        "voice_applied": voice_applied,
+        "voice_ok": voice_ok,
+        "model_requested": model_requested,
+        "model_applied": model_applied,
+        "model_ok": model_ok,
+        "ok": voice_ok is not False and model_ok is not False,
+    }
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # SESSION ORCHESTRATOR REGISTRY
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -895,10 +963,13 @@ class LiveOrchestrator:
             sess["turn_detection"] = td
             ua.session = sess
         if voice and ua.voice is not None:
-            if voice.get("name"):
-                ua.voice.name = voice["name"]
-            if voice.get("rate"):
-                ua.voice.rate = voice["rate"]
+            # Apply every field the caller actually set. Ignoring style/pitch here
+            # made those Quick Tune controls silent no-ops: the UI reported
+            # success while the live session kept the previous voice settings.
+            for field in ("name", "rate", "style", "pitch"):
+                value = voice.get(field)
+                if value:
+                    setattr(ua.voice, field, value)
 
         try:
             from azure.ai.voicelive.models import RequestSession
@@ -921,9 +992,10 @@ class LiveOrchestrator:
 
         await self.conn.session.update(session=RequestSession(**kwargs))
         logger.info(
-            "[LiveOrchestrator] Pushed live session settings | agent=%s keys=%s",
+            "[LiveOrchestrator] Pushed live session settings | agent=%s keys=%s voice=%s",
             self.active,
             list(kwargs.keys()),
+            _voice_identity(kwargs.get("voice")),
         )
         return True
 
@@ -1201,11 +1273,79 @@ class LiveOrchestrator:
                     "VoiceLive benign cancel-race ignored | code=%s", code
                 )
             else:
-                logger.error("VoiceLive error: %s", message)
+                # code/type/param identify WHICH field the service rejected. A
+                # rejected `voice` (unsupported name or style) or `model` fails the
+                # whole session.update, so without these fields the symptom is just
+                # "my settings didn't apply" with no way to tell why.
+                logger.error(
+                    "VoiceLive error: %s | code=%s type=%s param=%s agent=%s model=%s",
+                    message,
+                    code,
+                    getattr(err, "type", None),
+                    getattr(err, "param", None),
+                    self.active,
+                    self._model_name,
+                )
 
     # ═══════════════════════════════════════════════════════════════════════════
     # EVENT HANDLERS
     # ═══════════════════════════════════════════════════════════════════════════
+
+    def _verify_session_contract(self, session_obj) -> dict[str, Any] | None:
+        """Confirm the voice/model the service accepted match what we asked for.
+
+        Emits a single KPI line per ``session.updated`` so a call can be audited
+        after the fact: ``session_contract_ok`` means the selected TTS voice and
+        the selected (possibly BYOM) model are the ones actually driving the
+        session; ``session_contract_mismatch`` means the service quietly
+        substituted or dropped one of them.
+        """
+        if session_obj is None:
+            return None
+
+        agent = self.agents.get(self.active)
+        if agent is None:
+            return None
+        ua = getattr(agent, "_agent", agent)
+
+        try:
+            requested_voice = ua.build_voicelive_voice()
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("Failed to build requested voice for verification", exc_info=True)
+            return None
+
+        result = verify_voicelive_session_contract(
+            requested_voice=requested_voice,
+            requested_model=self._model_name,
+            session_obj=session_obj,
+        )
+
+        span = trace.get_current_span()
+        if result["voice_applied"] is not None:
+            span.set_attribute("voicelive.voice_applied", result["voice_applied"])
+        if result["voice_requested"] is not None:
+            span.set_attribute("voicelive.voice_requested", result["voice_requested"])
+        span.set_attribute("voicelive.session_contract_ok", bool(result["ok"]))
+
+        if result["ok"]:
+            logger.info(
+                "[VoiceLive] session_contract_ok | agent=%s voice=%s model=%s",
+                self.active,
+                result["voice_applied"] or result["voice_requested"],
+                result["model_applied"] or result["model_requested"],
+            )
+        else:
+            logger.warning(
+                "[VoiceLive] session_contract_mismatch | agent=%s "
+                "voice_requested=%s voice_applied=%s model_requested=%s model_applied=%s "
+                "— the service did not accept the selected configuration",
+                self.active,
+                result["voice_requested"],
+                result["voice_applied"],
+                result["model_requested"],
+                result["model_applied"],
+            )
+        return result
 
     async def _handle_session_updated(self, event) -> None:
         """Handle SESSION_UPDATED event."""
@@ -1213,6 +1353,8 @@ class LiveOrchestrator:
         session_id = getattr(session_obj, "id", "unknown") if session_obj else "unknown"
         voice_info = getattr(session_obj, "voice", None) if session_obj else None
         logger.info("Session ready: %s | voice=%s", session_id, voice_info)
+
+        self._verify_session_contract(session_obj)
 
         if self.messenger:
             try:

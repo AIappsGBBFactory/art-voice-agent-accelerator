@@ -291,6 +291,8 @@ class LiveVoicePatch(BaseModel):
 
     name: str | None = Field(default=None, description="Azure neural voice name")
     rate: str | None = Field(default=None, description="Speaking rate, e.g. '-4%'")
+    style: str | None = Field(default=None, description="Speaking style, e.g. 'chat'")
+    pitch: str | None = Field(default=None, description="Pitch offset, e.g. '+5%'")
 
 
 class LiveSettingsRequest(BaseModel):
@@ -1833,9 +1835,10 @@ async def apply_live_session_settings(
     Push quick session-setting changes ("shorthand") to a live call.
 
     - **VoiceLive**: turn_detection (threshold / silence_duration_ms /
-      prefix_padding_ms) and voice (name / rate) are pushed live via a partial
-      ``session.update``; the change also persists to the in-memory session agent
-      so it survives subsequent turns. ``applied`` and ``live`` are both true.
+      prefix_padding_ms) and voice (name / rate / style / pitch) are pushed live
+      via a partial ``session.update``; the change also persists to the in-memory
+      session agent so it survives subsequent turns. ``applied`` and ``live`` are
+      both true.
     - **Cascade**: the Azure Speech recognizer binds VAD at construction and the
       SDK cannot change it mid-stream, so VAD changes return
       ``needs_reconnect=true`` (the client restarts the STT leg). Voice changes
@@ -1874,6 +1877,10 @@ async def apply_live_session_settings(
                     existing.voice.name = payload.voice.name
                 if payload.voice.rate:
                     existing.voice.rate = payload.voice.rate
+                if payload.voice.style:
+                    existing.voice.style = payload.voice.style
+                if payload.voice.pitch:
+                    existing.voice.pitch = payload.voice.pitch
             set_session_agent(session_id, existing)
             persisted = True
         except Exception as exc:  # pragma: no cover - defensive
@@ -1910,7 +1917,12 @@ async def apply_live_session_settings(
             else None
         )
         voice_dict = (
-            {"name": payload.voice.name, "rate": payload.voice.rate}
+            {
+                "name": payload.voice.name,
+                "rate": payload.voice.rate,
+                "style": payload.voice.style,
+                "pitch": payload.voice.pitch,
+            }
             if payload.voice is not None
             else None
         )

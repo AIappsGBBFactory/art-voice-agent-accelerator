@@ -1163,6 +1163,29 @@ class UnifiedAgent:
                 getattr(voice_payload, "name", None) if voice_payload else None,
             )
 
+            # Voice is the field most likely to be silently dropped (SDK missing,
+            # empty name, or a type the builder doesn't map), and the symptom —
+            # "the TTS voice I picked isn't used" — is otherwise indistinguishable
+            # from the service ignoring it. Log the exact request so it can be
+            # diffed against the session.updated echo.
+            if voice_payload is None:
+                logger.warning(
+                    "[%s] voice_not_applied | configured=%r type=%r — no voice will be "
+                    "sent on session.update, the service default will be used",
+                    self.name,
+                    getattr(self.voice, "name", None),
+                    getattr(self.voice, "type", None),
+                )
+            else:
+                logger.info(
+                    "[%s] voice_requested | name=%s type=%s style=%s rate=%s",
+                    self.name,
+                    getattr(voice_payload, "name", None),
+                    getattr(voice_payload, "type", None),
+                    getattr(voice_payload, "style", None),
+                    getattr(voice_payload, "rate", None),
+                )
+
             # Build transcription settings
             transcription_cfg = self.session.get("input_audio_transcription_settings") or {}
             transcription_kwargs: dict[str, Any] = {}

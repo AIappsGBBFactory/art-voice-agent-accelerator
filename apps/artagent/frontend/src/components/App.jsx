@@ -2205,7 +2205,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
     // Build the exact base→applied deltas for the surface being tuned so the
     // popup reflects what actually changed on THIS mode (VoiceLive vs Cascade),
     // not a generic snapshot. ``fast`` limits the list to fields the instant
-    // VoiceLive push actually persists (VAD + voice name/rate).
+    // VoiceLive push actually persists (VAD + the full voice config).
     const fmtPct = (v) => `${Number(v) >= 0 ? '+' : ''}${Math.round(Number(v) || 0)}%`;
     const buildChanges = (fast) => {
       const out = [];
@@ -2250,13 +2250,13 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       if (ls.voice_name && ls.voice_name !== baseVoiceName) {
         out.push(`Voice ${formatVoiceShort(baseVoiceName) || '—'} → ${formatVoiceShort(ls.voice_name)}`);
       }
-      if (!fast && ls.voice_style && ls.voice_style !== (base.voice?.style || '')) {
+      if (ls.voice_style && ls.voice_style !== (base.voice?.style || '')) {
         out.push(`Style → ${ls.voice_style}`);
       }
       if (Math.round(parsePercent(base.voice?.rate)) !== Math.round(ls.rate)) {
         out.push(`Rate → ${fmtPct(ls.rate)}`);
       }
-      if (!fast && Math.round(parsePercent(base.voice?.pitch)) !== Math.round(ls.pitch)) {
+      if (Math.round(parsePercent(base.voice?.pitch)) !== Math.round(ls.pitch)) {
         out.push(`Pitch → ${fmtPct(ls.pitch)}`);
       }
       if (out.length === 0) out.push('No changes');
@@ -2334,7 +2334,12 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                 silence_duration_ms: Math.round(ls.silence_duration_ms),
                 prefix_padding_ms: Math.round(ls.prefix_padding_ms),
               },
-              voice: { name: ls.voice_name || undefined, rate: toPercent(ls.rate) },
+              voice: {
+                name: ls.voice_name || undefined,
+                rate: toPercent(ls.rate),
+                style: ls.voice_style || undefined,
+                pitch: toPercent(ls.pitch),
+              },
             }),
           }
         );

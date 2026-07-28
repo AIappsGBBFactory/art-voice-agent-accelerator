@@ -263,6 +263,30 @@ class TestLiveSettingsPersist:
         assert stored.session["turn_detection"]["silence_duration_ms"] == 900
 
     @pytest.mark.asyncio
+    async def test_patches_voice_style_and_pitch(self, session_id) -> None:
+        """Style/pitch were accepted by the UI but dropped by the patch schema,
+        so the Quick Tune controls for them were silent no-ops."""
+        cfg = DynamicAgentConfig.model_validate(
+            frontend_payload(name="Tunable", voice_name="en-US-AvaMultilingualNeural")
+        )
+        await update_session_agent(session_id, cfg, stub_request())
+
+        payload = LiveSettingsRequest.model_validate(
+            {
+                "mode": "voicelive",
+                "voice": {"style": "cheerful", "pitch": "+6%"},
+            }
+        )
+        result = await apply_live_session_settings(session_id, payload, stub_request())
+
+        assert result["applied"] is True
+        stored = get_session_agent(session_id)
+        assert stored.voice.style == "cheerful"
+        assert stored.voice.pitch == "+6%"
+        # Untouched fields survive the partial patch.
+        assert stored.voice.name == "en-US-AvaMultilingualNeural"
+
+    @pytest.mark.asyncio
     async def test_clones_base_agent_when_no_session_agent(self, session_id) -> None:
         # No session agent yet; a base agent is "active" for the call.
         base = UnifiedAgent(
