@@ -103,3 +103,60 @@ test('barge-in cancelled response bubble drops the cursor and shows the reason',
   assert.match(html, /Your balance is fifty/);
   assert.match(html, /barge in/);
 });
+
+test('a dedicated error bubble renders the diagnostic card with remediation', () => {
+  const html = renderBubble({
+    kind: 'error',
+    speaker: 'System',
+    status: 'error',
+    text: "The model deployment 'gpt-4o' was not found.",
+    code: 'DeploymentNotFound',
+    error: {
+      code: 'DeploymentNotFound',
+      message: "The model deployment 'gpt-4o' was not found.",
+      details: 'Error code: 404 - DeploymentNotFound',
+      remediation: "Check that the agent's model matches a real deployment.",
+    },
+  });
+
+  assert.match(html, /DeploymentNotFound/);
+  assert.match(html, /HOW TO FIX|How to fix/i);
+  assert.match(html, /matches a real deployment/);
+});
+
+test('a failed turn that still spoke renders the spoken line, not a second error card', () => {
+  // The backend marks the turn failed *and* emits a separate error envelope.
+  // Rendering the card here as well would duplicate the diagnosis and hide the
+  // sentence the caller actually heard.
+  const html = renderBubble({
+    speaker: 'BankingConcierge',
+    text: "I'm sorry, I'm not able to connect to my language model right now.",
+    status: 'error',
+    turnId: 'turn-9',
+    error: JSON.stringify({
+      code: 'DeploymentNotFound',
+      message: "The model deployment 'gpt-4o' was not found.",
+      remediation: 'Check the deployment name.',
+    }),
+  });
+
+  assert.match(html, /not able to connect to my language model/);
+  assert.doesNotMatch(html, /HOW TO FIX/i);
+  assert.doesNotMatch(html, /DeploymentNotFound/);
+});
+
+test('a failed turn with nothing spoken still falls back to the error card', () => {
+  const html = renderBubble({
+    speaker: 'BankingConcierge',
+    text: '',
+    status: 'error',
+    error: JSON.stringify({
+      code: 'RateLimited',
+      message: 'The Azure OpenAI deployment is rate limited.',
+      remediation: 'Raise the quota for the deployment.',
+    }),
+  });
+
+  assert.match(html, /RateLimited/);
+  assert.match(html, /Raise the quota/);
+});

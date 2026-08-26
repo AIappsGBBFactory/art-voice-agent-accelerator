@@ -199,8 +199,14 @@ const ChatBubble = ({ message }) => {
     ? cancelReason.replace(/[_-]+/g, " ")
     : "Assistant interrupted";
 
-  // Error message display (when status === "error" or error field is present)
-  if (status === "error" || error) {
+  // The full error card belongs to the dedicated error bubble that the backend
+  // emits for a failure. A failed *turn* also carries `status`/`error` metadata,
+  // but it still has the line the agent spoke, so rendering the card here too
+  // would show the same failure twice and hide what the caller actually heard.
+  // A failed turn with nothing to show still falls back to the card so the
+  // failure is never silent.
+  const isErrorBubble = message.kind === "error";
+  if (isErrorBubble || ((status === "error" || error) && !effectiveText.trim())) {
     let errorData = {};
     try {
       // Try to parse error as JSON if it's a string

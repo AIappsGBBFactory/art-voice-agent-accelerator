@@ -661,24 +661,32 @@ async def emit_voice_error(
     Returns:
         ``True`` when the envelope was handed to a delivery path.
     """
-    logger.error(
-        "Voice pipeline error | session=%s call=%s %s",
-        session_id,
-        call_id,
-        info.log_summary(),
-        extra={"error_code": info.code, "error_source": info.source, "fatal": info.fatal},
-    )
+    # A fatal error is often reported by the component that failed *and* by the
+    # endpoint that unwinds the session, and a retrying SDK can report the same
+    # cause dozens of times a second. Recognise an exact repeat on this socket so
+    # the user sees one card and the log keeps one actionable ERROR line.
+    fingerprint = (info.code, info.message, info.source)
+    repeat = websocket is not None and getattr(websocket, "_last_voice_error", None) == fingerprint
+
+    if repeat:
+        logger.debug(
+            "Repeat voice pipeline error suppressed | session=%s %s", session_id, info.code
+        )
+    else:
+        logger.error(
+            "Voice pipeline error | session=%s call=%s %s",
+            session_id,
+            call_id,
+            info.log_summary(),
+            extra={"error_code": info.code, "error_source": info.source, "fatal": info.fatal},
+        )
 
     if websocket is None:
         return False
 
-    # A fatal error is often reported by the component that failed *and* by the
-    # endpoint that unwinds the session, which would render two identical cards.
-    # Suppress an exact repeat of the error already emitted on this socket.
-    fingerprint = (info.code, info.message, info.source)
-    if getattr(websocket, "_last_voice_error", None) == fingerprint:
-        logger.debug("Suppressing duplicate voice error emit for %s", info.code)
+    if repeat:
         return True
+
     try:
         websocket._last_voice_error = fingerprint
     except Exception:  # noqa: BLE001 - transport may forbid attribute assignment
