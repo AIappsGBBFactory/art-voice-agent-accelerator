@@ -49,6 +49,12 @@ from apps.artagent.backend.voice.shared import (
     resolve_from_app_state,
     resolve_orchestrator_config,
 )
+from apps.artagent.backend.voice.shared.errors import (
+    VoiceErrorInfo,
+    classify_voice_error,
+    classify_voicelive_server_error,
+    emit_voice_error,
+)
 from apps.artagent.backend.src.services.session_loader import load_user_profile_by_email
 from apps.artagent.backend.src.orchestration.session_agents import get_session_agent
 
@@ -140,6 +146,7 @@ class VoiceLivePreparedConnection:
             return
         with contextlib.suppress(Exception):
             await self.connection_cm.__aexit__(None, None, None)
+
 
 def _resolve_agent_label(agent_name: str | None) -> str | None:
     """Return the agent name as the label (agents define their own display names)."""
@@ -549,7 +556,7 @@ class _SessionMessenger:
 
         segment_id = self._current_segment_id()
         message_text = self._set_assistant_segment(segment_id, text or "", append=False)
-        
+
         # Deduplication: prevent sending the same message twice for the same turn_id
         # This can happen when TRANSCRIPT_DONE fires multiple times or events race
         msg_key = (turn_id, hash(message_text))
@@ -561,7 +568,7 @@ class _SessionMessenger:
             )
             return
         self._sent_messages.add(msg_key)
-        
+
         sender_name = self._resolve_sender(sender)
         payload = {
             "type": "assistant",
@@ -940,6 +947,11 @@ class VoiceLiveSDKHandler:
         self._active_model_name: str | None = None
         # Where the bound model came from: "agent_override" or "settings_default".
         self._active_model_source: str | None = None
+        # Start agent resolved at connect time, retained for error attribution.
+        self._active_start_agent: str | None = None
+        # Classified startup failure, retained so the endpoint can close the
+        # WebSocket with a meaningful reason instead of a bare disconnect.
+        self._startup_error: VoiceErrorInfo | None = None
         self._event_task: asyncio.Task | None = None
         self._running = False
         self._shutdown = asyncio.Event()
@@ -1015,9 +1027,7 @@ class VoiceLiveSDKHandler:
     async def _start_turn_span(self) -> None:
         await self._end_active_turn_span()
         transport = (
-            self._transport.value
-            if hasattr(self._transport, "value")
-            else str(self._transport)
+            self._transport.value if hasattr(self._transport, "value") else str(self._transport)
         )
         turn = ConversationTurnSpan(
             call_connection_id=self.call_connection_id,
@@ -1098,7 +1108,9 @@ class VoiceLiveSDKHandler:
                 # These are independent and can run concurrently to cut startup time.
                 # ─────────────────────────────────────────────────────────────
 
-                async def _connect_voicelive(connection_model: str, byom_query: dict[str, str] | None = None):
+                async def _connect_voicelive(
+                    connection_model: str, byom_query: dict[str, str] | None = None
+                ):
                     """Establish VoiceLive WebSocket connection.
 
                     NOTE: The VoiceLive SDK fixes the generative model at connect() time;
@@ -1132,7 +1144,8 @@ class VoiceLiveSDKHandler:
                     elapsed = (time.perf_counter() - t0) * 1000
                     logger.info(
                         "[VoiceLive Startup] connect_ms=%.1f | session=%s",
-                        elapsed, self.session_id,
+                        elapsed,
+                        self.session_id,
                     )
 
                 async def _resolve_agents_and_scenario():
@@ -1149,7 +1162,10 @@ class VoiceLiveSDKHandler:
                     if not scenario_name:
                         memo_mgr = getattr(self.websocket.state, "cm", None)
                         if memo_mgr and hasattr(memo_mgr, "get_value_from_corememory"):
-                            from apps.artagent.backend.src.orchestration.naming import get_scenario_from_corememory
+                            from apps.artagent.backend.src.orchestration.naming import (
+                                get_scenario_from_corememory,
+                            )
+
                             scenario_name = get_scenario_from_corememory(memo_mgr)
                             if scenario_name:
                                 logger.debug(
@@ -1163,7 +1179,11 @@ class VoiceLiveSDKHandler:
                     if app_state:
                         app_state = getattr(app_state, "state", None)
 
-                    if app_state and hasattr(app_state, "unified_agents") and app_state.unified_agents:
+                    if (
+                        app_state
+                        and hasattr(app_state, "unified_agents")
+                        and app_state.unified_agents
+                    ):
                         agents = app_state.unified_agents
                         orchestrator_config = resolve_orchestrator_config(
                             session_id=self.session_id,
@@ -1173,7 +1193,9 @@ class VoiceLiveSDKHandler:
                             "Using unified agents for VoiceLive | count=%d start_agent=%s scenario=%s session_id=%s",
                             len(agents),
                             orchestrator_config.start_agent if orchestrator_config else "default",
-                            scenario_name or getattr(orchestrator_config, "scenario_name", None) or "(none)",
+                            scenario_name
+                            or getattr(orchestrator_config, "scenario_name", None)
+                            or "(none)",
                             self.session_id or "(none)",
                         )
                         agent_source = "unified"
@@ -1190,7 +1212,9 @@ class VoiceLiveSDKHandler:
                             "Discovered unified agents | count=%d start_agent=%s scenario=%s session_id=%s",
                             len(agents),
                             orchestrator_config.start_agent if orchestrator_config else "default",
-                            scenario_name or getattr(orchestrator_config, "scenario_name", None) or "(none)",
+                            scenario_name
+                            or getattr(orchestrator_config, "scenario_name", None)
+                            or "(none)",
                             self.session_id or "(none)",
                         )
                         agent_source = "discovered"
@@ -1236,11 +1260,20 @@ class VoiceLiveSDKHandler:
                     elapsed = (time.perf_counter() - t0) * 1000
                     logger.info(
                         "[VoiceLive Startup] resolve_agents_ms=%.1f | agents=%d scenario=%s session=%s",
-                        elapsed, len(agents),
+                        elapsed,
+                        len(agents),
                         getattr(orchestrator_config, "scenario_name", None) or "(none)",
                         self.session_id,
                     )
-                    return agents, orchestrator_config, session_agent, effective_start_agent, user_profile, agent_source, app_state
+                    return (
+                        agents,
+                        orchestrator_config,
+                        session_agent,
+                        effective_start_agent,
+                        user_profile,
+                        agent_source,
+                        app_state,
+                    )
 
                 # Resolve agents/scenario FIRST so we know which generative model the
                 # start agent requires. The VoiceLive SDK binds the model at connect()
@@ -1260,6 +1293,7 @@ class VoiceLiveSDKHandler:
                 # falling back to the global setting when the agent has no override.
                 connection_model = self._settings.azure_voicelive_model
                 start_agent_obj = agents.get(effective_start_agent) if agents else None
+                self._active_start_agent = effective_start_agent
                 if start_agent_obj is not None:
                     try:
                         vl_model = start_agent_obj.get_model_for_mode("voicelive")
@@ -1305,7 +1339,8 @@ class VoiceLiveSDKHandler:
                     except Exception as byom_err:  # pragma: no cover - defensive
                         logger.warning(
                             "[VoiceLive Startup] Failed to resolve BYOM config for %s | err=%s",
-                            effective_start_agent, byom_err,
+                            effective_start_agent,
+                            byom_err,
                         )
                 if byom_query:
                     logger.info(
@@ -1364,7 +1399,6 @@ class VoiceLiveSDKHandler:
                         await prepared.close()
                     await _connect_voicelive(connection_model, byom_query)
 
-
                 # Set span attributes from resolved values
                 span.set_attribute("voicelive.agent_source", agent_source)
                 span.set_attribute("voicelive.agents_count", len(agents))
@@ -1375,11 +1409,11 @@ class VoiceLiveSDKHandler:
                 span.set_attribute("gen_ai.request.model", connection_model)
                 span.set_attribute("voicelive.model_source", model_source)
                 if byom_query:
-                    span.set_attribute(
-                        "voicelive.byom_profile", byom_query.get("profile", "")
-                    )
+                    span.set_attribute("voicelive.byom_profile", byom_query.get("profile", ""))
                 if orchestrator_config and orchestrator_config.has_scenario:
-                    span.set_attribute("voicelive.scenario", orchestrator_config.scenario_name or "")
+                    span.set_attribute(
+                        "voicelive.scenario", orchestrator_config.scenario_name or ""
+                    )
                 if session_agent:
                     span.set_attribute("voicelive.session_agent", session_agent.name)
                 if user_profile:
@@ -1506,6 +1540,24 @@ class VoiceLiveSDKHandler:
                 span.set_status(Status(StatusCode.ERROR, str(e)))
                 span.set_attribute("error.type", type(e).__name__)
                 span.set_attribute("error.message", str(e))
+
+                # Surface *before* stop(): a bad model/deployment or credential
+                # here would otherwise close the socket with no explanation.
+                info = classify_voice_error(
+                    e,
+                    source="voicelive",
+                    model=self._active_model_name
+                    or getattr(self._settings, "azure_voicelive_model", None),
+                    agent=self._active_start_agent,
+                )
+                span.set_attribute("error.code", info.code)
+                self._startup_error = info
+                await emit_voice_error(
+                    self.websocket,
+                    info,
+                    session_id=self.session_id,
+                    call_id=self.call_connection_id,
+                )
                 await self.stop()
                 raise
 
@@ -2072,6 +2124,7 @@ class VoiceLiveSDKHandler:
             logger.debug("Failed to send StopAudio", exc_info=True)
 
     async def _send_error(self, event: Any) -> None:
+        """Relay an ``ErrorData`` frame on the raw ACS transport."""
         if not self._websocket_open:
             return
         error_info: dict[str, Any] = {
@@ -2087,6 +2140,12 @@ class VoiceLiveSDKHandler:
             logger.debug("Failed to send error message", exc_info=True)
 
     async def _handle_server_error(self, event: Any) -> None:
+        """Handle a VoiceLive ``error`` server event.
+
+        Benign cancel-race codes are ignored. Everything else stops playback,
+        relays an ``ErrorData`` frame on the ACS transport, and broadcasts a
+        classified session envelope so the operator UI shows the real cause.
+        """
         error_obj = getattr(event, "error", None)
         code = getattr(error_obj, "code", "VoiceLiveError")
         message = getattr(error_obj, "message", "Unknown VoiceLive error")
@@ -2096,11 +2155,14 @@ class VoiceLiveSDKHandler:
         # after the response already finished, so VoiceLive reports there is no
         # active response to cancel. This is NOT a real failure — do not stop
         # audio or surface an error to the UI, or the next turn gets cut off.
-        BENIGN_ERROR_CODES = {
-            "response_cancel_not_active",
-            "response_cancel_no_active_response",
-        }
-        if code in BENIGN_ERROR_CODES:
+        info = classify_voicelive_server_error(
+            code,
+            message,
+            details=details,
+            model=self._active_model_name,
+            agent=self._active_start_agent,
+        )
+        if info is None:
             logger.info(
                 "[VoiceLiveSDK] Ignoring benign cancel-race error | session=%s code=%s",
                 self.session_id,
@@ -2125,6 +2187,12 @@ class VoiceLiveSDKHandler:
 
         await self._send_stop_audio()
         await self._send_error(event)
+        await emit_voice_error(
+            self.websocket,
+            info,
+            session_id=self.session_id,
+            call_id=self.call_connection_id,
+        )
 
     async def _handle_dtmf_tone(self, raw_tone: Any) -> None:
         """Delegate DTMF tone handling to the DTMFProcessor."""

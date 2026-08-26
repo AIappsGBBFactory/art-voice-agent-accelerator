@@ -1276,3 +1276,83 @@ test('a full cascade session renders one user, one response, and one tool blob p
 });
 
 
+
+test('error envelope becomes an error bubble carrying code, message and remediation', () => {
+  const frame = envelope('error', 'System', {
+    error_message: "The model deployment 'gpt-4o-mini' was not found.",
+    error_type: 'DeploymentNotFound',
+    code: 'DeploymentNotFound',
+    message: "The model deployment 'gpt-4o-mini' was not found.",
+    content: "The model deployment 'gpt-4o-mini' was not found.",
+    details: 'DeploymentNotFound: The API deployment for this resource does not exist.',
+    remediation: "Check that the agent's model name matches a real deployment.",
+    source: 'llm',
+    fatal: false,
+  });
+
+  const event = conversationBubbleEventFromPayload(flattenSessionEnvelope(frame));
+  assert.equal(event.type, BubbleEventType.ERROR);
+  assert.equal(event.code, 'DeploymentNotFound');
+  assert.equal(event.source, 'llm');
+
+  const messages = apply([], frame);
+  assert.equal(messages.length, 1);
+  const bubble = messages[0];
+  assert.equal(bubble.kind, 'error');
+  assert.equal(bubble.speaker, 'System');
+  // ChatBubble's existing error card keys off `status`/`error`.
+  assert.equal(bubble.status, 'error');
+  assert.equal(bubble.error.code, 'DeploymentNotFound');
+  assert.equal(bubble.error.message, "The model deployment 'gpt-4o-mini' was not found.");
+  assert.equal(
+    bubble.error.remediation,
+    "Check that the agent's model name matches a real deployment.",
+  );
+});
+
+test('an identical repeated error does not flood the transcript', () => {
+  const frame = envelope('error', 'System', {
+    error_message: 'Voice not available.',
+    error_type: 'VoiceNotAvailable',
+    code: 'VoiceNotAvailable',
+    message: 'Voice not available.',
+    source: 'tts',
+    fatal: false,
+  });
+
+  let messages = apply([], frame);
+  messages = apply(messages, frame);
+  assert.equal(messages.length, 1);
+
+  // A *different* error still appends.
+  const other = envelope('error', 'System', {
+    error_message: 'Rate limit exceeded.',
+    error_type: 'RateLimitExceeded',
+    code: 'RateLimitExceeded',
+    message: 'Rate limit exceeded.',
+    source: 'llm',
+    fatal: false,
+  });
+  messages = apply(messages, other);
+  assert.equal(messages.length, 2);
+  assert.equal(messages[1].error.code, 'RateLimitExceeded');
+});
+
+test('error bubbles never overwrite conversation turns', () => {
+  let messages = apply([], envelope('user', 'User', { content: 'Hello', turn_id: 't1' }));
+  messages = apply(
+    messages,
+    envelope('error', 'System', {
+      error_message: 'Speech synthesis failed.',
+      code: 'VoiceNotAvailable',
+      message: 'Speech synthesis failed.',
+      source: 'tts',
+      turn_id: 't1',
+    }),
+  );
+
+  assert.equal(messages.length, 2);
+  assert.equal(messages[0].turnRole, 'user');
+  assert.equal(messages[0].text, 'Hello');
+  assert.equal(messages[1].kind, 'error');
+});

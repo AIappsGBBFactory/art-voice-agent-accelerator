@@ -15,6 +15,7 @@ export const BubbleEventType = Object.freeze({
   TOOL_START: 'tool_start',
   TOOL_PROGRESS: 'tool_progress',
   TOOL_END: 'tool_end',
+  ERROR: 'error',
 });
 
 const textFrom = (payload = {}) => payload.content ?? payload.message ?? '';
@@ -52,6 +53,20 @@ export const conversationBubbleEventFromPayload = (payload = {}) => {
       contentMode: payload.content_mode || payload.contentMode || 'snapshot',
       sequence: payload.sequence,
       language: payload.language,
+      timestamp: payload.ts || payload.timestamp,
+    };
+  }
+
+  if (type === 'error') {
+    return {
+      type: BubbleEventType.ERROR,
+      turnId: canonicalTurnId(payload),
+      code: payload.code || payload.error_type || 'UnknownError',
+      text: payload.message || payload.error_message || payload.content || 'An error occurred.',
+      details: payload.details,
+      remediation: payload.remediation,
+      source: payload.source,
+      fatal: payload.fatal === true,
       timestamp: payload.ts || payload.timestamp,
     };
   }
@@ -470,6 +485,46 @@ const reduceToolEvent = (messages, event) => {
 };
 
 /**
+ * Append an error bubble. Errors are never merged into an existing turn slot:
+ * a config failure can fire before any turn exists, and collapsing repeats
+ * would hide a recurring failure from the operator.
+ */
+const reduceErrorEvent = (messages, event) => {
+  const list = Array.isArray(messages) ? messages : [];
+  const last = list[list.length - 1];
+
+  // Collapse only an immediately repeated identical error so a retry loop does
+  // not flood the transcript.
+  if (last && last.kind === 'error' && last.code === event.code && last.text === event.text) {
+    return list;
+  }
+
+  return [
+    ...list,
+    {
+      kind: 'error',
+      speaker: 'System',
+      // `status`/`error` are the shape ChatBubble's error card already renders.
+      status: 'error',
+      error: {
+        code: event.code,
+        message: event.text,
+        details: event.details,
+        remediation: event.remediation,
+        source: event.source,
+      },
+      code: event.code,
+      text: event.text,
+      details: event.details,
+      remediation: event.remediation,
+      source: event.source,
+      fatal: event.fatal,
+      timestamp: event.timestamp,
+    },
+  ];
+};
+
+/**
  * Pure reducer for the three canonical bubble slots in a turn:
  * user transcript, assistant response, and grouped tool activity.
  */
@@ -491,6 +546,8 @@ export const reduceConversationBubbles = (messages, event) => {
     case BubbleEventType.TOOL_PROGRESS:
     case BubbleEventType.TOOL_END:
       return reduceToolEvent(messages, event);
+    case BubbleEventType.ERROR:
+      return reduceErrorEvent(messages, event);
     default:
       return messages;
   }

@@ -214,7 +214,12 @@ const ChatBubble = ({ message }) => {
       };
     }
 
-    const { code = "Error", message: errorMessage = "An error occurred", details = "" } = errorData;
+    const {
+      code = "Error",
+      message: errorMessage = "An error occurred",
+      details = "",
+      remediation = "",
+    } = errorData;
 
     return (
       <Box sx={{ width: "100%", display: "flex", justifyContent: "center", px: 1, py: 1 }}>
@@ -271,9 +276,40 @@ const ChatBubble = ({ message }) => {
           />
           <Divider sx={{ borderColor: "rgba(248,250,252,0.2)" }} />
           <CardContent sx={{ pt: 2, pb: 2, color: "rgba(248,250,252,0.95)" }}>
-            <Typography variant="body1" sx={{ fontWeight: 500, mb: details ? 1.5 : 0 }}>
+            <Typography
+              variant="body1"
+              sx={{ fontWeight: 500, mb: details || remediation ? 1.5 : 0 }}
+            >
               {errorMessage}
             </Typography>
+            {remediation && (
+              <Box
+                sx={{
+                  mt: 1,
+                  mb: details ? 1.5 : 0,
+                  p: 1.25,
+                  borderRadius: 2,
+                  backgroundColor: "rgba(248,250,252,0.16)",
+                }}
+              >
+                <Typography
+                  variant="caption"
+                  sx={{
+                    display: "block",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.08em",
+                    fontWeight: 700,
+                    color: "rgba(254,226,226,0.9)",
+                    mb: 0.5,
+                  }}
+                >
+                  How to fix
+                </Typography>
+                <Typography variant="body2" sx={{ color: "rgba(248,250,252,0.95)" }}>
+                  {remediation}
+                </Typography>
+              </Box>
+            )}
             {details && (
               <Typography
                 variant="body2"

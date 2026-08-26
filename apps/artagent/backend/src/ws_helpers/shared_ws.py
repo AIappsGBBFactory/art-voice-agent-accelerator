@@ -411,6 +411,7 @@ async def send_session_envelope(
     if _ws_is_connected(ws):
         try:
             await ws.send_json(envelope)
+            return True
         except Exception as exc:  # noqa: BLE001
             logger.error(
                 "Final websocket fallback failed",
@@ -580,12 +581,10 @@ async def send_tts_audio(
             try:
                 if executor:
                     return await asyncio.wait_for(
-                        loop.run_in_executor(executor, synth_partial),
-                        timeout=synthesis_timeout
+                        loop.run_in_executor(executor, synth_partial), timeout=synthesis_timeout
                     )
                 return await asyncio.wait_for(
-                    loop.run_in_executor(None, synth_partial),
-                    timeout=synthesis_timeout
+                    loop.run_in_executor(None, synth_partial), timeout=synthesis_timeout
                 )
             except asyncio.TimeoutError:
                 logger.error(
@@ -844,7 +843,7 @@ async def send_response_to_acs(
                     style,
                     eff_rate,
                 ),
-                timeout=synthesis_timeout
+                timeout=synthesis_timeout,
             )
         except asyncio.TimeoutError:
             logger.error(
@@ -872,7 +871,7 @@ async def send_response_to_acs(
                         "",
                         "",
                     ),
-                    timeout=synthesis_timeout
+                    timeout=synthesis_timeout,
                 )
             except asyncio.TimeoutError:
                 logger.error(

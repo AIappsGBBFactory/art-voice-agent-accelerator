@@ -89,6 +89,18 @@ from .context import (
     VoiceSessionContext,
 )
 
+# Error classification and surfacing
+from .errors import (
+    WS_CLOSE_CODE_VOICE_ERROR,
+    VoiceErrorInfo,
+    classify_speech_cancellation,
+    classify_voice_error,
+    classify_voicelive_server_error,
+    close_reason_for,
+    emit_exception,
+    emit_voice_error,
+)
+
 __all__ = [
     # Context/Result (shared data classes)
     "OrchestratorContext",
@@ -125,4 +137,13 @@ __all__ = [
     # Voice Session Context (Phase 3)
     "TransportType",
     "VoiceSessionContext",
+    # Error Classification & Surfacing
+    "WS_CLOSE_CODE_VOICE_ERROR",
+    "VoiceErrorInfo",
+    "classify_voice_error",
+    "classify_speech_cancellation",
+    "classify_voicelive_server_error",
+    "close_reason_for",
+    "emit_exception",
+    "emit_voice_error",
 ]

@@ -184,6 +184,47 @@ class TTSPlayback:
         """Get cancel event from context."""
         return self._context.cancel_event
 
+    async def _report_tts_failure(
+        self,
+        *,
+        voice: str | None,
+        exception: BaseException | None = None,
+        error_details: str | None = None,
+    ) -> None:
+        """Classify a TTS failure and surface it to the client and dashboards.
+
+        The Speech SDK reports a bad voice name or a bad key by cancelling
+        rather than raising, which historically produced silence with nothing in
+        the UI. This turns either signal into a rendered error.
+
+        Keyword Args:
+            voice: The voice name that was requested.
+            exception: The exception raised, when synthesis raised.
+            error_details: ``cancellation_details.error_details``, when it did not.
+        """
+        from apps.artagent.backend.voice.shared.errors import (
+            classify_speech_cancellation,
+            classify_voice_error,
+            emit_voice_error,
+        )
+
+        if exception is not None:
+            info = classify_voice_error(exception, source="tts", voice=voice)
+        else:
+            info = classify_speech_cancellation(error_details, voice=voice, source="tts")
+
+        await emit_voice_error(
+            self._ws,
+            info,
+            session_id=self._session_id,
+            call_id=self._context.call_connection_id,
+        )
+
+    @staticmethod
+    def _synth_error_details(synth: Any) -> str | None:
+        """Read the last cancellation detail recorded by the synthesizer."""
+        return getattr(synth, "last_synthesis_error", None)
+
     async def _get_tts_client(self) -> Any:
         """Return the session-owned TTS client, falling back to pool acquisition."""
         synth = self._context.tts_client
@@ -534,6 +575,13 @@ class TTSPlayback:
                         "[%s] TTS synthesizer not initialized (missing speech config) - check Azure credentials",
                         self._session_short,
                     )
+                    await self._report_tts_failure(
+                        voice=voice_name,
+                        error_details=(
+                            "Speech synthesizer is not initialized: the Speech resource "
+                            "key/region or managed identity configuration is missing or invalid."
+                        ),
+                    )
                     return False
 
                 # Streaming path: synthesize and send interleaved (low TTFA).
@@ -555,6 +603,9 @@ class TTSPlayback:
 
             if not pcm_bytes:
                 logger.warning("[%s] TTS returned empty audio", self._session_short)
+                await self._report_tts_failure(
+                    voice=voice_name, error_details=self._synth_error_details(synth)
+                )
                 return False
 
             # Stream to browser (without lock)
@@ -565,6 +616,7 @@ class TTSPlayback:
             return False
         except Exception as e:
             logger.error("[%s] Browser TTS failed: %s", self._session_short, e)
+            await self._report_tts_failure(voice=voice_name, exception=e)
             return False
         finally:
             self._is_playing = False
@@ -638,6 +690,13 @@ class TTSPlayback:
                         "[%s] TTS synthesizer not initialized (missing speech config) - check Azure credentials",
                         self._session_short,
                     )
+                    await self._report_tts_failure(
+                        voice=voice_name,
+                        error_details=(
+                            "Speech synthesizer is not initialized: the Speech resource "
+                            "key/region or managed identity configuration is missing or invalid."
+                        ),
+                    )
                     return False
 
                 # Synthesize audio (under lock)
@@ -669,6 +728,9 @@ class TTSPlayback:
                 logger.error(
                     "[%s] ACS TTS returned empty audio (synthesis failed)", self._session_short
                 )
+                await self._report_tts_failure(
+                    voice=voice_name, error_details=self._synth_error_details(synth)
+                )
                 return False
 
             logger.info(
@@ -687,6 +749,7 @@ class TTSPlayback:
             return False
         except Exception as e:
             logger.error("[%s] ACS TTS failed: %s", self._session_short, e)
+            await self._report_tts_failure(voice=voice_name, exception=e)
             return False
         finally:
             self._is_playing = False
@@ -746,6 +809,10 @@ class TTSPlayback:
                 synthesis_timeout,
                 voice,
                 len(text),
+            )
+            await self._report_tts_failure(
+                voice=voice,
+                error_details=(f"Speech synthesis timed out after {synthesis_timeout:.1f}s."),
             )
             return None
 
@@ -879,6 +946,7 @@ class TTSPlayback:
                         return False
         except Exception as e:
             logger.error("[%s] Browser streaming synthesis failed: %s", self._session_short, e)
+            await self._report_tts_failure(voice=voice, exception=e)
             return False
 
         # Flush remaining tail as the final frame.
@@ -901,6 +969,12 @@ class TTSPlayback:
             frame_index,
             run_id,
         )
+        if not total_bytes and not self._cancel_event.is_set():
+            # Synthesis "succeeded" but produced nothing, which the caller only
+            # experiences as silence. Report the cancellation the SDK recorded.
+            await self._report_tts_failure(
+                voice=voice, error_details=self._synth_error_details(synth)
+            )
         return total_bytes > 0
 
     async def _stream_synth_to_acs(
@@ -963,9 +1037,7 @@ class TTSPlayback:
             if not sent:
                 # Barge-in StopAudio is in effect; stop streaming immediately so
                 # no AudioData reaches ACS after the stop.
-                logger.debug(
-                    "[%s] ACS stream suppressed (barge-in StopAudio)", self._session_short
-                )
+                logger.debug("[%s] ACS stream suppressed (barge-in StopAudio)", self._session_short)
                 return False
             self._mark_acs_audio_queued(len(frame))
             chunks_sent += 1
@@ -997,6 +1069,7 @@ class TTSPlayback:
                         return False
         except Exception as e:
             logger.error("[%s] ACS streaming synthesis failed: %s", self._session_short, e)
+            await self._report_tts_failure(voice=voice, exception=e)
             return False
 
         # Flush remaining tail (sent as-is, matching the blocking path).
@@ -1019,6 +1092,10 @@ class TTSPlayback:
             total_bytes,
             run_id,
         )
+        if not total_bytes and not self._cancel_event.is_set():
+            await self._report_tts_failure(
+                voice=voice, error_details=self._synth_error_details(synth)
+            )
         return total_bytes > 0
 
     async def _stream_to_browser(
@@ -1157,16 +1234,12 @@ class TTSPlayback:
             if not sent:
                 # Barge-in StopAudio is in effect; stop streaming immediately so
                 # no AudioData reaches ACS after the stop.
-                logger.debug(
-                    "[%s] ACS stream suppressed (barge-in StopAudio)", self._session_short
-                )
+                logger.debug("[%s] ACS stream suppressed (barge-in StopAudio)", self._session_short)
                 return False
             self._mark_acs_audio_queued(len(chunk))
             chunks_sent += 1
             if chunks_sent == 1:
-                logger.info(
-                    "[%s] ACS stream: First chunk sent successfully", self._session_short
-                )
+                logger.info("[%s] ACS stream: First chunk sent successfully", self._session_short)
 
             if not first_sent:
                 first_sent = True

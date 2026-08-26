@@ -411,6 +411,7 @@ class VoiceHandler:
             on_user_transcript=handler._on_user_transcript,
             on_tts_request=handler._on_tts_request,
             thread_bridge=handler._thread_bridge,
+            on_error=handler._on_stt_error,
         )
 
         handler._thread_bridge.set_main_loop(event_loop, session_key)
@@ -1081,9 +1082,7 @@ class VoiceHandler:
         4. Notifies thread bridge
         """
         tts_was_playing = bool(self._tts and self._tts.is_playing)
-        transport_playback_pending = bool(
-            self._tts and self._tts.has_pending_transport_playback
-        )
+        transport_playback_pending = bool(self._tts and self._tts.has_pending_transport_playback)
         response_was_active = bool(
             self._route_turn_thread and self._route_turn_thread.has_active_response
         )
@@ -1236,10 +1235,7 @@ class VoiceHandler:
         in memory yet (e.g. before the first turn).
         """
         if self.memory_manager:
-            return (
-                self.memory_manager.get_value_from_corememory("active_agent", default)
-                or default
-            )
+            return self.memory_manager.get_value_from_corememory("active_agent", default) or default
         return default
 
     async def _emit_assistant_cancelled(self) -> None:
@@ -1290,9 +1286,7 @@ class VoiceHandler:
                 broadcast_only=self._transport != TransportType.BROWSER,
             )
         except Exception as e:  # noqa: BLE001 - never let UI signalling break barge-in
-            logger.debug(
-                "[%s] Failed to emit assistant_cancelled: %s", self._session_short, e
-            )
+            logger.debug("[%s] Failed to emit assistant_cancelled: %s", self._session_short, e)
 
     # =========================================================================
     # Turn telemetry bridge (orchestrator -> active ConversationTurnSpan)
@@ -1406,6 +1400,30 @@ class VoiceHandler:
         except Exception as exc:
             logger.debug("[%s] Greeting TTS warmup failed: %s", self._session_short, exc)
             return False
+
+    async def _on_stt_error(self, error_text: str) -> None:
+        """Classify a speech-recognition error and surface it to the client.
+
+        The Speech SDK reports a bad key, a bad region, or a throttled resource
+        through its cancel callback rather than an exception, so without this the
+        call simply stops transcribing with nothing shown in the UI.
+
+        Args:
+            error_text: Raw error text from the Speech SDK cancel callback.
+        """
+        from apps.artagent.backend.voice.shared.errors import (
+            classify_speech_cancellation,
+            emit_voice_error,
+        )
+
+        info = classify_speech_cancellation(error_text, source="stt")
+        await emit_voice_error(
+            self._context.websocket,
+            info,
+            session_id=self._session_id,
+            call_id=self._context.call_connection_id,
+            conn_id=self._context.conn_id,
+        )
 
     async def _on_greeting(self, event: SpeechEvent) -> None:
         """Play greeting via TTS and emit to UI."""

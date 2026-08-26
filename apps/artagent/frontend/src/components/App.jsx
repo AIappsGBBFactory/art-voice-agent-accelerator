@@ -58,6 +58,15 @@ import { flattenSessionEnvelope, isSessionEnvelope } from '../utils/sessionEnvel
 import { resolveTurnId } from '../utils/turnMessages.js';
 import { OrchestrationDiagramModal } from './OrchestrationDiagram.jsx';
 
+// Mirrors WS_CLOSE_CODE_VOICE_ERROR in
+// apps/artagent/backend/voice/shared/errors.py. Private-use close code meaning
+// "the backend rejected this voice session for a config/provider error".
+const WS_CLOSE_CODE_VOICE_ERROR = 4500;
+
+// Same family, but the failure may clear on its own (network blip, rate limit),
+// so the session is still surfaced to the user while reconnect stays enabled.
+const WS_CLOSE_CODE_VOICE_ERROR_RETRYABLE = 4501;
+
 const STREAM_MODE_STORAGE_KEY = 'artagent.streamingMode';
 const STREAM_MODE_FALLBACK = 'voice_live';
 const REALTIME_STREAM_MODE_STORAGE_KEY = 'artagent.realtimeStreamingMode';
@@ -2845,6 +2854,42 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
             socketRef.current = null;
           }
 
+          // 4500 = the backend rejected the session for a configuration or
+          // provider error (bad model deployment, bad voice, auth, quota).
+          // Reconnecting would hit the identical failure, so surface it and stop.
+          // 4501 carries the same detail but is retryable, so it falls through
+          // to the normal backoff below after rendering the error.
+          if (
+            event.code === WS_CLOSE_CODE_VOICE_ERROR ||
+            event.code === WS_CLOSE_CODE_VOICE_ERROR_RETRYABLE
+          ) {
+            const fatal = event.code === WS_CLOSE_CODE_VOICE_ERROR;
+            const [closeCode, ...closeRest] = String(event.reason || "").split(":");
+            const detail = closeRest.join(":").trim();
+            if (fatal) {
+              shouldReconnectRef.current = false;
+              resetCallLifecycle();
+              setCallActive(false);
+              setActiveSpeaker("System");
+            }
+            setMessages((prev) => [
+              ...prev,
+              {
+                kind: "error",
+                speaker: "System",
+                status: "error",
+                error: {
+                  code: detail ? closeCode.trim() : "VoiceSessionFailed",
+                  message: detail || event.reason || "The voice session could not be started.",
+                },
+              },
+            ]);
+            appendLog(`❌ Session rejected: ${event.reason || "configuration error"}`);
+            if (fatal) {
+              return;
+            }
+          }
+
           if (!shouldReconnectRef.current) {
             if (terminationReasonRef.current === "HUMAN_HANDOFF") {
               appendLog("🔌 WS closed after live agent transfer");
@@ -3276,6 +3321,39 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
           text: "Call disconnected",
           ts: payload.ts || payload.timestamp,
         });
+      }
+
+      // Structured backend errors (bad model deployment, missing voice, auth,
+      // quota...). Rendered as an error card so the operator sees the cause and
+      // the remediation instead of silence.
+      if (payload.type === "error") {
+        const errCode = payload.code || payload.error_type || "UnknownError";
+        const errMessage =
+          payload.message || payload.error_message || payload.content || "An error occurred.";
+        applyConversationPayload(payload);
+        setActiveSpeaker("System");
+        appendLog(`❌ ${errCode}: ${errMessage}`);
+        if (payload.remediation) {
+          appendLog(`💡 ${payload.remediation}`);
+        }
+        appendGraphEvent({
+          kind: "event",
+          from: "System",
+          to: currentAgentRef.current || "Concierge",
+          text: `${errCode}: ${errMessage}`,
+          ts: payload.ts || payload.timestamp,
+        });
+        logger.error("Voice pipeline error", payload);
+        if (payload.fatal === true) {
+          shouldReconnectRef.current = false;
+          resetCallLifecycle();
+          setCallActive(false);
+          playbackActiveRef.current = false;
+          if (pcmSinkRef.current) {
+            pcmSinkRef.current.port.postMessage({ type: "clear" });
+          }
+        }
+        return;
       }
 
       if (payload.type === "session_end") {

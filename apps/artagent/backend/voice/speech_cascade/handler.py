@@ -65,6 +65,37 @@ tracer = trace.get_tracer(__name__)
 _handlers_cleanup_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="handler-cleanup")
 
 
+def _cancellation_text(error: Any) -> str:
+    """Reduce a Speech SDK cancellation callback argument to readable text.
+
+    The SDK invokes cancel callbacks with a ``SpeechRecognitionCanceledEventArgs``
+    rather than a string, so the useful cause is nested under
+    ``result.cancellation_details.error_details``. Returning plain text here keeps
+    every downstream consumer (logging, classification, the UI envelope) working
+    with a single, predictable type.
+    """
+    if error is None:
+        return ""
+    if isinstance(error, str):
+        return error
+
+    parts: list[str] = []
+    details = getattr(getattr(error, "result", None), "cancellation_details", None)
+    details = details or getattr(error, "cancellation_details", None)
+    if details is not None:
+        for attr in ("reason", "error_code", "error_details"):
+            value = getattr(details, attr, None)
+            if value is not None and str(value) not in parts:
+                parts.append(str(value))
+    if parts:
+        return " | ".join(parts)
+
+    try:
+        return str(error)
+    except Exception:  # pragma: no cover - defensive
+        return repr(type(error).__name__)
+
+
 class SpeechEventType(Enum):
     """Types of speech recognition events."""
 
@@ -377,9 +408,7 @@ class SpeechSDKThread:
         barge_in_handler: Callable,
         speech_queue: asyncio.Queue,
         *,
-        on_partial_transcript: (
-            Callable[[str, str, str | None, str, int], None] | None
-        ) = None,
+        on_partial_transcript: Callable[[str, str, str | None, str, int], None] | None = None,
     ):
         """
         Initialize Speech SDK Thread.
@@ -500,9 +529,13 @@ class SpeechSDKThread:
             self._utterance_turn_id = None
             self._utterance_sequence = 0
 
-        def on_error(error: str):
-            logger.error(f"[{self._conn_short}] Speech error: {error}")
-            error_event = SpeechEvent(event_type=SpeechEventType.ERROR, text=error)
+        def on_error(error: Any):
+            # The Speech SDK invokes cancel callbacks with a
+            # SpeechRecognitionCanceledEventArgs, not a string, so pull the
+            # human-readable cause out before it travels any further.
+            detail = _cancellation_text(error)
+            logger.error(f"[{self._conn_short}] Speech error: {detail}")
+            error_event = SpeechEvent(event_type=SpeechEventType.ERROR, text=detail)
             self.thread_bridge.queue_speech_result(self.speech_queue, error_event)
 
         try:
@@ -644,6 +677,7 @@ class RouteTurnThread:
         on_user_transcript: Callable[[str, str | None, int | None], Awaitable[None]] | None = None,
         on_tts_request: Callable[[str, SpeechEventType], Awaitable[None]] | None = None,
         thread_bridge: "ThreadBridge | None" = None,
+        on_error: Callable[[str], Awaitable[None]] | None = None,
     ):
         """
         Initialize Route Turn Thread.
@@ -660,6 +694,9 @@ class RouteTurnThread:
             on_user_transcript: Callback for final user transcripts (emitted to transport).
             on_tts_request: Callback for TTS playback requests. Signature:
                 (text, event_type, *, voice_name, voice_style, voice_rate) -> None
+            thread_bridge: Shared cross-thread bridge.
+            on_error: Callback invoked with the raw speech error text so the
+                transport layer can classify it and surface it to the client.
         """
         self.connection_id = connection_id
         self._conn_short = connection_id[-8:] if connection_id else "unknown"
@@ -672,6 +709,7 @@ class RouteTurnThread:
         self.on_announcement = on_announcement
         self.on_user_transcript = on_user_transcript
         self.on_tts_request = on_tts_request
+        self.on_error = on_error
         # Shared cross-thread bridge; used to disarm the pre-speech turn guard
         # once the agent starts speaking / the turn ends.
         self.thread_bridge = thread_bridge
@@ -756,6 +794,14 @@ class RouteTurnThread:
                             )
                     elif speech_event.event_type == SpeechEventType.ERROR:
                         logger.error(f"[{self._conn_short}] Speech error: {speech_event.text}")
+                        if self.on_error:
+                            try:
+                                await self.on_error(speech_event.text or "")
+                            except Exception:
+                                logger.debug(
+                                    f"[{self._conn_short}] Failed to surface speech error",
+                                    exc_info=True,
+                                )
                 except asyncio.CancelledError:
                     continue  # Barge-in cancellation
             except TimeoutError:
@@ -1158,9 +1204,7 @@ class SpeechCascadeHandler:
         on_barge_in: Callable[[], Awaitable[None]] | None = None,
         on_greeting: Callable[[SpeechEvent], Awaitable[None]] | None = None,
         on_announcement: Callable[[SpeechEvent], Awaitable[None]] | None = None,
-        on_partial_transcript: (
-            Callable[[str, str, str | None, str, int], None] | None
-        ) = None,
+        on_partial_transcript: Callable[[str, str, str | None, str, int], None] | None = None,
         on_user_transcript: Callable[[str, str | None, int | None], Awaitable[None]] | None = None,
         on_tts_request: Callable[[str, SpeechEventType], Awaitable[None]] | None = None,
         transcript_emitter: TranscriptEmitter | None = None,

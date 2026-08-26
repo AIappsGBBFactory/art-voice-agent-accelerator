@@ -46,6 +46,7 @@ from apps.artagent.backend.src.ws_helpers.shared_ws import (
     send_agent_inventory,
 )
 from apps.artagent.backend.voice import VoiceLiveSDKHandler
+from apps.artagent.backend.voice.shared.errors import fail_websocket_session
 from fastapi import (
     APIRouter,
     HTTPException,
@@ -196,16 +197,20 @@ async def browser_conversation_endpoint(
     streaming_mode: str | None = Query(None),
     user_email: str | None = Query(None),
     auth_user_id: str | None = Query(
-        None, description="Authenticated operator id (from /.auth/me) when the backend is not behind EasyAuth."
+        None,
+        description="Authenticated operator id (from /.auth/me) when the backend is not behind EasyAuth.",
     ),
     auth_user_email: str | None = Query(
-        None, description="Authenticated operator email (from /.auth/me) when the backend is not behind EasyAuth."
+        None,
+        description="Authenticated operator email (from /.auth/me) when the backend is not behind EasyAuth.",
     ),
     client_traceparent: str | None = Query(
-        None, description="W3C traceparent from the browser App Insights operation, for end-to-end trace correlation."
+        None,
+        description="W3C traceparent from the browser App Insights operation, for end-to-end trace correlation.",
     ),
     client_user_id: str | None = Query(
-        None, description="Persistent anonymous browser/device id (App Insights ai_user). Groups anonymous sessions when EasyAuth is off."
+        None,
+        description="Persistent anonymous browser/device id (App Insights ai_user). Groups anonymous sessions when EasyAuth is off.",
     ),
     scenario: str | None = Query(None, description="Scenario name (e.g., 'banking', 'default')"),
 ) -> None:
@@ -215,7 +220,7 @@ async def browser_conversation_endpoint(
     Supports two modes:
     - Voice Live: VoiceLiveSDKHandler (direct, like media.py)
     - Speech Cascade: VoiceHandler.create() factory
-    
+
     Query Parameters:
     - scenario: Industry scenario (banking, default, etc.)
     - user_email: Demo customer profile email (preloads customer data; not the
@@ -341,9 +346,16 @@ async def browser_conversation_endpoint(
             logger.warning("[%s] WebSocketDisconnect caught: code=%s", session_id, e.code)
             _log_disconnect("conversation", session_id, e)
         except Exception as e:
-            logger.error("[%s] Exception caught before handler started: %s", session_id, e, exc_info=True)
+            logger.error("[%s] Conversation session failed: %s", session_id, e, exc_info=True)
             _log_error("conversation", session_id, e)
-            raise
+            await fail_websocket_session(
+                websocket,
+                e,
+                session_id=session_id,
+                conn_id=conn_id,
+                source="voicelive" if stream_mode == StreamMode.VOICE_LIVE else "config",
+                preclassified=getattr(handler, "_startup_error", None),
+            )
         finally:
             await _cleanup_conversation(
                 websocket, session_id, handler, memory_manager, conn_id, stream_mode
