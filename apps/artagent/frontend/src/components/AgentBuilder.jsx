@@ -591,6 +591,16 @@ const BYOM_MODES = [
   { id: 'byom-foundry-anthropic-messages', label: 'Foundry Anthropic messages — preview (claude-sonnet/haiku)' },
 ];
 
+// Display labels for the TTS voice categories returned by
+// GET /api/v1/agent-builder/voices. The backend sorts voices by category (HD
+// first), which MUI's Autocomplete groupBy relies on.
+const VOICE_CATEGORY_LABELS = {
+  hd: 'HD (high definition)',
+  turbo: 'Turbo (lowest latency)',
+  standard: 'Standard neural',
+  mai: 'MAI-Voice-2 (preview)',
+};
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // STYLES
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1820,6 +1830,11 @@ export default function AgentBuilder({
     return categories;
   }, [availableVoices]);
 
+  const hdVoiceCount = useMemo(
+    () => availableVoices.filter((v) => v.is_hd).length,
+    [availableVoices],
+  );
+
   const templateVarKeys = useMemo(() => {
     const keys = new Set(Object.keys(config.template_vars || {}));
     detectedTemplateVars.forEach((v) => keys.add(v));
@@ -2933,8 +2948,17 @@ export default function AgentBuilder({
                           label={
                             voicesRegionVerified.verified
                               ? `Region-verified (${availableVoices.length})`
-                              : 'Catalog (region not verified)'
+                              : `Catalog (${availableVoices.length}, region not verified)`
                           }
+                          sx={{ height: 20, fontSize: '11px' }}
+                        />
+                      )}
+                      {hdVoiceCount > 0 && (
+                        <Chip
+                          size="small"
+                          variant="outlined"
+                          color="secondary"
+                          label={`${hdVoiceCount} HD`}
                           sx={{ height: 20, fontSize: '11px' }}
                         />
                       )}
@@ -2947,7 +2971,7 @@ export default function AgentBuilder({
                         }
                       }}
                       options={availableVoices}
-                      groupBy={(option) => option.category}
+                      groupBy={(option) => VOICE_CATEGORY_LABELS[option.category] || option.category}
                       getOptionLabel={(option) => option.display_name || option.name}
                       renderInput={(params) => (
                         <TextField
@@ -2966,9 +2990,29 @@ export default function AgentBuilder({
                               </Avatar>
                             </ListItemAvatar>
                             <ListItemText
-                              primary={option.display_name}
+                              primary={
+                                <Stack direction="row" spacing={0.75} alignItems="center">
+                                  <span>{option.display_name || option.name}</span>
+                                  {option.is_hd && (
+                                    <Chip
+                                      size="small"
+                                      label="HD"
+                                      color="secondary"
+                                      sx={{ height: 16, fontSize: '10px' }}
+                                    />
+                                  )}
+                                  {option.region_verified === false && (
+                                    <Chip
+                                      size="small"
+                                      variant="outlined"
+                                      label="unverified"
+                                      sx={{ height: 16, fontSize: '10px' }}
+                                    />
+                                  )}
+                                </Stack>
+                              }
                               secondary={option.name}
-                              primaryTypographyProps={{ variant: 'body2' }}
+                              primaryTypographyProps={{ variant: 'body2', component: 'div' }}
                               secondaryTypographyProps={{ variant: 'caption' }}
                             />
                           </ListItem>

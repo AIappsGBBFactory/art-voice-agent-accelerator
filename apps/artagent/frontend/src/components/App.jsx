@@ -5145,6 +5145,33 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                     }
                     return liveVoices || [];
                   })();
+                  // Region enumeration returns hundreds of voices across every
+                  // supported locale, so group them (HD first) instead of one
+                  // flat list. Backend already sorts by category.
+                  const voiceGroups = (() => {
+                    const labels = {
+                      hd: 'HD (high definition)',
+                      turbo: 'Turbo (lowest latency)',
+                      standard: 'Standard neural',
+                      mai: 'MAI-Voice-2 (preview)',
+                    };
+                    const groups = [];
+                    for (const v of voiceOptions) {
+                      const key = v.category || 'other';
+                      let g = groups.find((x) => x.key === key);
+                      if (!g) {
+                        g = { key, label: labels[key] || key, items: [] };
+                        groups.push(g);
+                      }
+                      g.items.push(v);
+                    }
+                    return groups;
+                  })();
+                  const voiceOptionLabel = (v) => {
+                    const base = v.display_name || v.name;
+                    if (v.is_hd) return `${base} · HD`;
+                    return v.category ? `${base} · ${v.category}` : base;
+                  };
                   const styleOptions = ['chat', 'friendly', 'cheerful', 'empathetic', 'assistant', 'newscast', 'customerservice'];
                   const styleList = liveSettings.voice_style && !styleOptions.includes(liveSettings.voice_style)
                     ? [liveSettings.voice_style, ...styleOptions]
@@ -5505,10 +5532,14 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                           onChange={(e) => set('voice_name', e.target.value)}
                         >
                           <option value="">(default)</option>
-                          {voiceOptions.map((v) => (
-                            <option key={v.name} value={v.name}>
-                              {v.display_name || v.name}{v.category ? ` · ${v.category}` : ''}
-                            </option>
+                          {voiceGroups.map((g) => (
+                            <optgroup key={g.key} label={`${g.label} (${g.items.length})`}>
+                              {g.items.map((v) => (
+                                <option key={v.name} value={v.name}>
+                                  {voiceOptionLabel(v)}
+                                </option>
+                              ))}
+                            </optgroup>
                           ))}
                         </select>
                       </div>

@@ -1,0 +1,411 @@
+"""
+Agent Builder Voice Catalog
+===========================
+
+Guards the ``GET /api/v1/agent-builder/voices`` contract that populates the
+Agent Builder voice picker and the Quick Tune "Voice (TTS)" dropdown.
+
+The bug this covers: the endpoint used to build its response from a small
+hand-written ``AVAILABLE_VOICES`` catalog (14 en-US voices, 4 of them HD) and
+used the live region voice list only as an *intersection filter*. No matter how
+many voices the Speech region actually supported, the picker could never show
+more than the catalog — so HD voices and every non-en-US locale were invisible.
+
+These tests call the endpoint coroutine directly (no network) with the region
+enumeration stubbed, so they exercise the real server-side merge/tag/sort logic.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from types import SimpleNamespace
+
+import pytest
+
+from apps.artagent.backend.api.v1.endpoints import agent_builder
+from apps.artagent.backend.api.v1.endpoints.agent_builder import (
+    AVAILABLE_VOICES,
+    _HD_CATALOG,
+    _classify_voice_name,
+    _locale_from_short_name,
+    list_available_voices,
+)
+
+
+# =============================================================================
+# HELPERS
+# =============================================================================
+
+
+def call(**kwargs):
+    """Invoke the endpoint coroutine synchronously."""
+    return asyncio.run(list_available_voices(**kwargs))
+
+
+def sdk_voice(short_name: str, locale: str, local_name: str, gender: str = "Female"):
+    """Mimic the Speech SDK's VoiceInfo shape for get_voices_async() results."""
+    return SimpleNamespace(
+        short_name=short_name,
+        locale=locale,
+        local_name=local_name,
+        gender=SimpleNamespace(name=gender),
+    )
+
+
+REGION_SAMPLE = [
+    sdk_voice("en-US-AvaMultilingualNeural", "en-US", "Ava"),
+    sdk_voice("en-US-AndrewMultilingualNeural", "en-US", "Andrew", "Male"),
+    sdk_voice("en-US-Ava:DragonHDLatestNeural", "en-US", "Ava"),
+    sdk_voice("en-US-Steffan:DragonHDLatestNeural", "en-US", "Steffan", "Male"),
+    sdk_voice("de-DE-Seraphina:DragonHDLatestNeural", "de-DE", "Seraphina"),
+    sdk_voice("ja-JP-Nanami:DragonHDLatestNeural", "ja-JP", "Nanami"),
+    sdk_voice("zh-CN-Yunfan:DragonHDLatestNeural", "zh-CN", "Yunfan", "Male"),
+    sdk_voice("de-DE-Conrad:DragonHDOmniLatestNeural", "de-DE", "Conrad", "Male"),
+    sdk_voice("en-US-Jimmie:DragonHDFlashLatestNeural", "en-US", "Jimmie", "Male"),
+    sdk_voice("en-US-AlloyTurboMultilingualNeural", "en-US", "Alloy", "Male"),
+    sdk_voice("fr-FR-DeniseNeural", "fr-FR", "Denise"),
+    sdk_voice("pt-BR-FranciscaNeural", "pt-BR", "Francisca"),
+    sdk_voice("sr-Latn-RS-NicholasNeural", "sr-Latn-RS", "Nicholas", "Male"),
+]
+
+
+@pytest.fixture(autouse=True)
+def _clear_voice_cache():
+    """The region voice list is process-cached; isolate every test."""
+    agent_builder._AVAILABLE_VOICES_CACHE["voices"] = None
+    agent_builder._AVAILABLE_VOICES_CACHE["expires"] = 0.0
+    yield
+    agent_builder._AVAILABLE_VOICES_CACHE["voices"] = None
+    agent_builder._AVAILABLE_VOICES_CACHE["expires"] = 0.0
+
+
+@pytest.fixture
+def region(monkeypatch):
+    """Stub the live region enumeration with an arbitrary SDK-shaped voice list."""
+
+    def _install(sdk_voices):
+        converted = [
+            info
+            for info in (agent_builder._sdk_voice_to_info(v) for v in sdk_voices)
+            if info is not None
+        ]
+        monkeypatch.setattr(
+            agent_builder, "_fetch_region_voices", lambda refresh=False: converted
+        )
+        return converted
+
+    return _install
+
+
+@pytest.fixture
+def offline(monkeypatch):
+    """Stub the region enumeration as unreachable (returns None)."""
+    monkeypatch.setattr(agent_builder, "_fetch_region_voices", lambda refresh=False: None)
+
+
+# =============================================================================
+# CLASSIFICATION
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "short_name,category,voice_type,is_hd",
+    [
+        ("en-US-Ava:DragonHDLatestNeural", "hd", "neural-hd", True),
+        # Microsoft's docs use lowercase locales for HD names; case-sensitive
+        # matching here is what used to drop HD voices entirely.
+        ("en-us-ava:dragonhdlatestneural", "hd", "neural-hd", True),
+        ("de-DE-Conrad:DragonHDOmniLatestNeural", "hd", "neural-hd-omni", True),
+        ("zh-CN-Xiaoxiao:DragonHDFlashLatestNeural", "hd", "neural-hd-flash", True),
+        ("en-US-AlloyTurboMultilingualNeural", "turbo", "neural-turbo", False),
+        ("en-US-Ethan:MAI-Voice-2", "mai", "mai", False),
+        ("fr-FR-DeniseNeural", "standard", "neural", False),
+    ],
+)
+def test_classify_voice_name(short_name, category, voice_type, is_hd):
+    assert _classify_voice_name(short_name) == (category, voice_type, is_hd)
+
+
+@pytest.mark.parametrize(
+    "short_name,locale",
+    [
+        ("en-US-AvaMultilingualNeural", "en-US"),
+        ("en-US-Ava:DragonHDLatestNeural", "en-US"),
+        ("ja-JP-Nanami:DragonHDLatestNeural", "ja-JP"),
+        ("sr-Latn-RS-NicholasNeural", "sr-Latn-RS"),
+    ],
+)
+def test_locale_from_short_name(short_name, locale):
+    assert _locale_from_short_name(short_name) == locale
+
+
+# =============================================================================
+# STATIC CATALOG
+# =============================================================================
+
+
+def test_catalog_covers_documented_hd_voices():
+    """The curated HD catalog must cover the documented DragonHD personas, not
+    just the four en-US voices it originally shipped with."""
+    names = {v.name for v in _HD_CATALOG}
+    for expected in (
+        "en-US-Ava:DragonHDLatestNeural",
+        "en-US-Andrew:DragonHDLatestNeural",
+        "en-US-Steffan:DragonHDLatestNeural",
+        "en-US-Aria:DragonHDLatestNeural",
+        "de-DE-Seraphina:DragonHDLatestNeural",
+        "es-ES-Ximena:DragonHDLatestNeural",
+        "fr-FR-Remy:DragonHDLatestNeural",
+        "ja-JP-Nanami:DragonHDLatestNeural",
+        "zh-CN-Yunfan:DragonHDLatestNeural",
+    ):
+        assert expected in names, f"missing documented HD voice {expected}"
+
+    # Regional representation: HD is not an en-US-only family.
+    assert {v.language for v in _HD_CATALOG} >= {"en-US", "de-DE", "es-ES", "fr-FR", "ja-JP", "zh-CN"}
+    assert all(v.is_hd and v.category == "hd" for v in _HD_CATALOG)
+
+
+def test_catalog_entries_are_self_consistent():
+    """Category / voice_type / is_hd are derived from the short name so a typo
+    can't mislabel or hide a voice."""
+    for v in AVAILABLE_VOICES:
+        assert (v.category, v.voice_type, v.is_hd) == _classify_voice_name(v.name)
+
+
+# =============================================================================
+# ENDPOINT — REGION IS THE SOURCE
+# =============================================================================
+
+
+def test_region_voices_are_the_source_not_a_filter(region):
+    """Voices the region supports must be returned even when they aren't in the
+    curated catalog. This is the core regression."""
+    region(REGION_SAMPLE)
+    payload = call()
+
+    names = {v["name"] for v in payload["voices"]}
+    assert payload["verified_against_region"] is True
+    assert payload["source"] == "region-validated"
+    # Not in the curated catalog, but supported by the region → must be offered.
+    assert "fr-FR-DeniseNeural" in names
+    assert "pt-BR-FranciscaNeural" in names
+    assert "sr-Latn-RS-NicholasNeural" in names
+    assert payload["total"] == len(REGION_SAMPLE)
+
+
+def test_hd_voices_are_included_and_tagged(region):
+    region(REGION_SAMPLE)
+    payload = call()
+
+    hd = [v for v in payload["voices"] if v["is_hd"]]
+    assert payload["hd_total"] == len(hd) == 7
+    assert {v["name"] for v in hd} == {
+        "en-US-Ava:DragonHDLatestNeural",
+        "en-US-Steffan:DragonHDLatestNeural",
+        "de-DE-Seraphina:DragonHDLatestNeural",
+        "ja-JP-Nanami:DragonHDLatestNeural",
+        "zh-CN-Yunfan:DragonHDLatestNeural",
+        "de-DE-Conrad:DragonHDOmniLatestNeural",
+        "en-US-Jimmie:DragonHDFlashLatestNeural",
+    }
+    assert all(v["category"] == "hd" for v in hd)
+
+    by_type = {v["name"]: v["voice_type"] for v in hd}
+    assert by_type["en-US-Ava:DragonHDLatestNeural"] == "neural-hd"
+    assert by_type["de-DE-Conrad:DragonHDOmniLatestNeural"] == "neural-hd-omni"
+    assert by_type["en-US-Jimmie:DragonHDFlashLatestNeural"] == "neural-hd-flash"
+
+
+def test_regional_coverage_is_preserved(region):
+    """Non-en-US locales must survive; nothing filters down to a single locale."""
+    region(REGION_SAMPLE)
+    payload = call()
+
+    assert set(payload["locales"]) >= {"de-DE", "en-US", "fr-FR", "ja-JP", "pt-BR", "zh-CN"}
+    assert payload["locale_count"] == len(payload["locales"])
+    hd_locales = {v["language"] for v in payload["voices"] if v["is_hd"]}
+    assert hd_locales >= {"en-US", "de-DE", "ja-JP", "zh-CN"}
+
+
+def test_voices_are_grouped_hd_first_and_sorted_by_category(region):
+    """MUI's Autocomplete groupBy requires options pre-sorted by group."""
+    region(REGION_SAMPLE)
+    payload = call()
+
+    categories = [v["category"] for v in payload["voices"]]
+    assert categories[0] == "hd"
+    # Each category appears as one contiguous run.
+    runs = [c for i, c in enumerate(categories) if i == 0 or categories[i - 1] != c]
+    assert len(runs) == len(set(runs))
+    assert payload["category_counts"]["hd"] == 7
+
+
+def test_metadata_is_populated_for_labelling(region):
+    region(REGION_SAMPLE)
+    payload = call()
+
+    ava_hd = next(v for v in payload["voices"] if v["name"] == "en-US-Ava:DragonHDLatestNeural")
+    assert ava_hd["is_hd"] is True
+    assert ava_hd["language"] == "en-US"
+    assert ava_hd["region_verified"] is True
+    assert ava_hd["gender"] == "Female"
+
+    nanami = next(v for v in payload["voices"] if v["name"] == "ja-JP-Nanami:DragonHDLatestNeural")
+    # Non-default locales carry the locale in the label so the picker is scannable.
+    assert "ja-JP" in nanami["display_name"]
+    assert "HD" in nanami["display_name"]
+
+
+# =============================================================================
+# ENDPOINT — FILTERS
+# =============================================================================
+
+
+def test_category_filter(region):
+    region(REGION_SAMPLE)
+    payload = call(category="hd")
+    assert payload["total"] == 7
+    assert all(v["category"] == "hd" for v in payload["voices"])
+
+
+def test_hd_only_filter(region):
+    region(REGION_SAMPLE)
+    payload = call(hd_only=True)
+    assert payload["total"] == 7
+    assert all(v["is_hd"] for v in payload["voices"])
+
+
+def test_locale_filter_is_case_insensitive(region):
+    region(REGION_SAMPLE)
+    payload = call(locale="ja-jp")
+    assert payload["total"] == 1
+    assert payload["voices"][0]["name"] == "ja-JP-Nanami:DragonHDLatestNeural"
+
+
+# =============================================================================
+# REGION ENUMERATION (SDK SEAM)
+# =============================================================================
+
+
+def test_fetch_region_voices_reads_sdk_and_caches(monkeypatch):
+    """Exercise the real _fetch_region_voices path with a stubbed synthesizer so
+    the SDK → VoiceInfo conversion and the 10-minute cache are covered."""
+    speechsdk = pytest.importorskip("azure.cognitiveservices.speech")
+
+    calls = {"n": 0}
+
+    class _Synth:
+        def __init__(self, speech_config=None, audio_config=None):
+            pass
+
+        def get_voices_async(self):
+            calls["n"] += 1
+            return SimpleNamespace(
+                get=lambda: SimpleNamespace(
+                    reason=speechsdk.ResultReason.VoicesListRetrieved,
+                    voices=list(REGION_SAMPLE),
+                )
+            )
+
+    monkeypatch.setattr(speechsdk, "SpeechSynthesizer", _Synth)
+    monkeypatch.setattr(agent_builder, "_build_voice_query_speech_config", lambda: object())
+
+    voices = agent_builder._fetch_region_voices()
+    assert voices is not None
+    assert len(voices) == len(REGION_SAMPLE)
+    assert sum(1 for v in voices if v.is_hd) == 7
+    assert all(v.region_verified for v in voices)
+
+    # Second call is served from the cache — no extra Azure round-trip.
+    agent_builder._fetch_region_voices()
+    assert calls["n"] == 1
+
+    # refresh=True bypasses the cache.
+    agent_builder._fetch_region_voices(refresh=True)
+    assert calls["n"] == 2
+
+
+def test_fetch_region_voices_returns_none_when_speech_unconfigured(monkeypatch):
+    monkeypatch.setattr(agent_builder, "_build_voice_query_speech_config", lambda: None)
+    assert agent_builder._fetch_region_voices() is None
+
+
+# =============================================================================
+# ENDPOINT — DEGRADED PATHS
+# =============================================================================
+
+
+def test_hd_catalog_backfills_when_region_reports_no_hd(region):
+    """If the region enumerates zero HD voices we surface the documented HD
+    catalog as unverified with an explicit note, rather than silently showing
+    no HD option at all."""
+    region([v for v in REGION_SAMPLE if "dragonhd" not in v.short_name.lower()])
+    payload = call()
+
+    assert payload["hd_from_catalog"] is True
+    assert payload["hd_total"] == len(_HD_CATALOG)
+    assert payload["notes"], "an explanatory note must be surfaced to the UI"
+    assert any("HD" in n for n in payload["notes"])
+    hd = [v for v in payload["voices"] if v["is_hd"]]
+    assert all(v["region_verified"] is False for v in hd)
+
+
+def test_no_hd_backfill_when_region_reports_hd(region):
+    region(REGION_SAMPLE)
+    payload = call()
+    assert payload["hd_from_catalog"] is False
+    assert payload["notes"] == []
+
+
+def test_offline_falls_back_to_catalog_with_hd(offline):
+    """When Azure is unreachable the picker still offers the full HD catalog and
+    says so, instead of pretending the list is authoritative."""
+    payload = call()
+
+    assert payload["verified_against_region"] is False
+    assert payload["source"] == "static-catalog"
+    assert payload["notes"]
+    assert payload["hd_total"] == len(_HD_CATALOG)
+    # Preview MAI voices stay opt-in on the unverified path.
+    assert payload["category_counts"].get("mai", 0) == 0
+    assert all(v["region_verified"] is False for v in payload["voices"])
+
+
+def test_offline_include_unverified_adds_preview_voices(offline):
+    payload = call(include_unverified=True)
+    assert payload["category_counts"]["mai"] > 0
+    assert payload["total"] == len(AVAILABLE_VOICES)
+
+
+def test_include_unverified_supplements_region_list(region):
+    """Opting in must add catalog voices the region didn't enumerate without
+    dropping any region voice."""
+    region(REGION_SAMPLE)
+    verified_names = {v["name"] for v in call()["voices"]}
+    supplemented = call(include_unverified=True)
+    names = {v["name"] for v in supplemented["voices"]}
+
+    assert verified_names <= names
+    assert supplemented["total"] > len(verified_names)
+    assert supplemented["category_counts"]["mai"] > 0
+
+
+def test_response_shape_is_backward_compatible(region):
+    region(REGION_SAMPLE)
+    payload = call()
+    for key in (
+        "status",
+        "total",
+        "voices",
+        "by_category",
+        "default_voice",
+        "verified_against_region",
+        "source",
+        "response_time_ms",
+    ):
+        assert key in payload
+    assert payload["status"] == "success"
+    assert sum(len(v) for v in payload["by_category"].values()) == payload["total"]
+    for voice in payload["voices"]:
+        assert {"name", "display_name", "category", "language"} <= set(voice)

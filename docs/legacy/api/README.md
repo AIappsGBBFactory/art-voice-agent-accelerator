@@ -71,7 +71,7 @@ The V1 API provides REST and WebSocket endpoints organized by domain:
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/v1/agent-builder/tools` | GET | List available tools for agents |
-| `/api/v1/agent-builder/voices` | GET | List available TTS voices |
+| `/api/v1/agent-builder/voices` | GET | List available TTS voices (live region list; HD-tagged) |
 | `/api/v1/agent-builder/defaults` | GET | Get default agent configuration |
 | `/api/v1/agent-builder/templates` | GET | List available agent templates |
 | `/api/v1/agent-builder/templates/{id}` | GET | Get specific template details |

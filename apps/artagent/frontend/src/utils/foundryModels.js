@@ -135,6 +135,10 @@ export async function fetchRegionVoices() {
     return {
       voices: data.voices || [],
       verifiedAgainstRegion: Boolean(data.verified_against_region),
+      hdFromCatalog: Boolean(data.hd_from_catalog),
+      hdTotal: data.hd_total ?? (data.voices || []).filter((v) => v.is_hd).length,
+      locales: data.locales || [],
+      notes: data.notes || [],
       source: data.source || 'static-catalog',
       defaultVoice: data.default_voice || null,
     };
