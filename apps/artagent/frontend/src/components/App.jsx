@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   Box,
   Button,
+  Chip,
   Divider,
   IconButton,
   LinearProgress,
@@ -13,6 +14,8 @@ import BoltRoundedIcon from '@mui/icons-material/BoltRounded';
 import SpeedRoundedIcon from '@mui/icons-material/SpeedRounded';
 import BuildRoundedIcon from '@mui/icons-material/BuildRounded';
 import TuneRoundedIcon from '@mui/icons-material/TuneRounded';
+import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
+import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
 import TemporaryUserForm from './TemporaryUserForm';
 import { AcsStreamingModeSelector, RealtimeStreamingModeSelector } from './StreamingModeSelector.jsx';
 import ProfileButton from './ProfileButton.jsx';
@@ -57,6 +60,7 @@ import { buildAuthQueryParams, getAuthenticatedUser } from '../utils/auth.js';
 import { reduceConversationPayload } from '../utils/conversationBubbles.js';
 import { flattenSessionEnvelope, isSessionEnvelope } from '../utils/sessionEnvelope.js';
 import { createEnvelopeDeduper } from '../utils/envelopeDedupe.js';
+import { deriveSessionContract } from '../utils/sessionContract.js';
 import { resolveTurnId } from '../utils/turnMessages.js';
 import { OrchestrationDiagramModal } from './OrchestrationDiagram.jsx';
 
@@ -316,6 +320,10 @@ function RealTimeVoiceApp() {
   const [sessionCoreMemory, setSessionCoreMemory] = useState(null);
   const [sessionMetadata, setSessionMetadata] = useState(null);
   const [sessionMetrics, setSessionMetrics] = useState(null);
+  // Requested-vs-applied config for the live VoiceLive session, derived from the
+  // `contract` the backend attaches to bootstrap / agent-switch `session_updated`
+  // envelopes. Null until the first one arrives.
+  const [sessionContract, setSessionContract] = useState(null);
   // Session ID must be declared before scenario helpers that use it
   const [sessionId, setSessionId] = useState(() => getOrCreateSessionId());
   
@@ -844,6 +852,12 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
     fetchSessionCoreMemory();
     fetchSessionMetrics();
   }, [fetchSessionScenarioConfig, fetchSessionCoreMemory, fetchSessionMetrics]);
+
+  // A contract describes one session's live configuration; carrying it across a
+  // session switch would report the previous call's config as this one's.
+  useEffect(() => {
+    setSessionContract(null);
+  }, [sessionId]);
 
   // Periodic refresh of core memory for real-time performance monitoring
   useEffect(() => {
@@ -3321,6 +3335,19 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
         if (payload.type !== "event") {
           payload.type = "event";
         }
+
+        // Requested-vs-applied session config. State only — no extra message
+        // row is produced, so this rides the envelope that already renders and
+        // adds nothing to the transcript. A payload with no contract (older
+        // backend, or an envelope that predates the check) leaves the last
+        // known contract in place rather than blanking the panel.
+        const derivedContract = deriveSessionContract(payload);
+        if (derivedContract) {
+          setSessionContract(derivedContract);
+          if (derivedContract.status === "mismatch") {
+            logger.warn("⚠️ Live session config does not match what was requested", derivedContract);
+          }
+        }
       }
 
       if (payload.event_type === "call_connected") {
@@ -3348,6 +3375,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       if (payload.event_type === "call_disconnected") {
         setCallActive(false);
         setActiveSpeaker(null);
+        setSessionContract(null);
         resetCallLifecycle();
         closeRelaySocket("call disconnected");
         appendLog("📞 Call ended");
@@ -6030,6 +6058,45 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                 )}
               </div>
 
+              {/* Live session config indicator. The whole point of the contract
+                  is that a mismatch is noticed without opening anything, so the
+                  verdict lives in the header and the detail is one click away. */}
+              {sessionContract && (
+                <Chip
+                  onClick={() => setShowAgentPanel(true)}
+                  icon={
+                    sessionContract.status === "mismatch" ? (
+                      <WarningAmberRoundedIcon sx={{ fontSize: 15 }} />
+                    ) : (
+                      <CheckCircleRoundedIcon sx={{ fontSize: 15 }} />
+                    )
+                  }
+                  label={
+                    sessionContract.status === "mismatch" ? "Config mismatch" : "Config OK"
+                  }
+                  size="small"
+                  title={
+                    sessionContract.status === "mismatch"
+                      ? sessionContract.issues.join(" • ")
+                      : "The live agent, model and voice match what you configured"
+                  }
+                  sx={{
+                    height: 24,
+                    fontSize: "11px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    border: "1px solid",
+                    borderColor:
+                      sessionContract.status === "mismatch" ? "#fecaca" : "rgba(22,163,74,0.25)",
+                    bgcolor: sessionContract.status === "mismatch" ? "#fee2e2" : "#dcfce7",
+                    color: sessionContract.status === "mismatch" ? "#b91c1c" : "#166534",
+                    "& .MuiChip-icon": {
+                      color: sessionContract.status === "mismatch" ? "#b91c1c" : "#166534",
+                    },
+                  }}
+                />
+              )}
+
               <div style={styles.appHeaderActions}>
                 {hasActiveProfile ? (
                   <ProfileButton
@@ -6238,6 +6305,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       sessionMeta={sessionMetadata}
       sessionMetrics={sessionMetrics}
       scenarioConfig={sessionScenarioConfig}
+      sessionContract={sessionContract}
     />
     {agentUpdateToast && createPortal(
       <Box

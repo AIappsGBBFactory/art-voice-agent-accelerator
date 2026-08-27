@@ -727,8 +727,20 @@ class _SessionMessenger:
         agent_name: str | None,
         session_obj: Any | None,
         transport: str | None = None,
+        contract: dict[str, Any] | None = None,
     ) -> None:
-        """Broadcast session configuration updates to the UI."""
+        """Broadcast session configuration updates to the UI.
+
+        Keyword Args:
+            agent_name: The agent the session is currently running as.
+            session_obj: The ``session.updated`` echo from the service.
+            transport: Transport label (``acs``, ``browser``...).
+            contract: Result of ``LiveOrchestrator._verify_session_contract()``,
+                i.e. the requested-vs-applied comparison for voice and model
+                plus the local agent/model divergences. Attached verbatim so the
+                UI can show what was asked for next to what is actually running
+                without re-deriving (or string-comparing) anything.
+        """
         if not self._can_emit():
             return
 
@@ -739,6 +751,9 @@ class _SessionMessenger:
             "transport": transport,
             "session": _serialize_session_config(session_obj),
         }
+
+        if contract:
+            payload["contract"] = _safe_primitive(contract)
 
         agent_label_display = payload.get("agent_label") or agent_name
         if agent_label_display:

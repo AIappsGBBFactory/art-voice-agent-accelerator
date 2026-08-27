@@ -163,7 +163,7 @@ class _GenesysMessenger:
 
     async def send_session_update(
         self, *, agent_name: str | None, session_obj: Any | None,
-        transport: str | None = None,
+        transport: str | None = None, contract: dict[str, Any] | None = None,
     ) -> None:
         pass
 

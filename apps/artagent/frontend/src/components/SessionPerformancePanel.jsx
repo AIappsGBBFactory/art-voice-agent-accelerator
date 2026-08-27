@@ -18,6 +18,8 @@ import TrendingUpRoundedIcon from '@mui/icons-material/TrendingUpRounded';
 import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
 import RecordVoiceOverRoundedIcon from '@mui/icons-material/RecordVoiceOverRounded';
 import SwapCallsRoundedIcon from '@mui/icons-material/SwapCallsRounded';
+import TuneRoundedIcon from '@mui/icons-material/TuneRounded';
+import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
 
 const PanelCard = ({ title, icon, children, collapsible, defaultOpen = true, alert = null }) => {
   const [expanded, setExpanded] = useState(defaultOpen);
@@ -184,6 +186,144 @@ const formatConnectionStatus = (value) => {
   return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 };
 
+// One "you asked for X, you are running Y" row. `ok` comes from the backend
+// contract, never from comparing the two strings here — the backend tolerates
+// deployment-tier suffixes (gpt-realtime vs gpt-realtime-datazone-standard),
+// and re-comparing would flag that benign case as a substitution.
+const ContractRow = ({ label, requested, applied, ok, note }) => {
+  const verifiable = typeof ok === 'boolean';
+  const mismatch = ok === false;
+  const valueColor = mismatch ? '#dc2626' : verifiable ? '#0f172a' : '#94a3b8';
+
+  return (
+    <Box sx={{ py: 0.75 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.25 }}>
+        <Typography sx={{ color: '#475569', fontWeight: 700, fontSize: '11px' }}>
+          {label}
+        </Typography>
+        {verifiable && (
+          <Chip
+            label={mismatch ? 'MISMATCH' : 'MATCH'}
+            size="small"
+            sx={{
+              height: 16,
+              fontSize: '9px',
+              fontWeight: 700,
+              letterSpacing: '0.4px',
+              bgcolor: mismatch ? '#fee2e2' : '#dcfce7',
+              color: mismatch ? '#b91c1c' : '#166534',
+            }}
+          />
+        )}
+      </Box>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap' }}>
+        <Typography
+          sx={{
+            fontSize: '11px',
+            color: '#64748b',
+            fontFamily: 'Monaco, Menlo, monospace',
+            textDecoration: mismatch ? 'line-through' : 'none',
+          }}
+        >
+          {requested || '—'}
+        </Typography>
+        <Typography sx={{ fontSize: '10px', color: '#94a3b8' }}>→</Typography>
+        <Typography
+          sx={{
+            fontSize: '11px',
+            fontWeight: 700,
+            color: valueColor,
+            fontFamily: 'Monaco, Menlo, monospace',
+          }}
+        >
+          {applied || (verifiable ? '—' : 'not reported')}
+        </Typography>
+      </Box>
+      {note && (
+        <Typography sx={{ fontSize: '10px', color: '#94a3b8', mt: 0.25 }}>{note}</Typography>
+      )}
+    </Box>
+  );
+};
+
+// Exported for rendering tests: this card is the whole point of the contract,
+// so "does a mismatch actually look like a mismatch?" has to be assertable.
+export const LiveSessionConfigCard = ({ contract }) => {
+  const mismatch = contract.status === 'mismatch';
+
+  return (
+    <PanelCard
+      title="Live Session Config"
+      icon={<TuneRoundedIcon sx={{ fontSize: 16, color: mismatch ? '#dc2626' : '#0ea5e9' }} />}
+      alert={mismatch ? 'Not as requested' : null}
+    >
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 1 }}>
+        {mismatch ? (
+          <WarningAmberRoundedIcon sx={{ fontSize: 16, color: '#dc2626' }} />
+        ) : (
+          <CheckCircleRoundedIcon sx={{ fontSize: 16, color: '#16a34a' }} />
+        )}
+        <Typography
+          sx={{ fontSize: '11px', fontWeight: 700, color: mismatch ? '#dc2626' : '#16a34a' }}
+        >
+          {mismatch
+            ? 'The live session is not the one you configured'
+            : 'The live session matches what you configured'}
+        </Typography>
+      </Box>
+
+      <ContractRow
+        label="Agent"
+        requested={contract.boundAgent}
+        applied={contract.activeAgent}
+        ok={contract.agentOk}
+        note={
+          contract.agentOk === false
+            ? 'A previous agent was restored onto this session, so its voice and instructions are live instead of the tuned ones.'
+            : null
+        }
+      />
+      <ContractRow
+        label="Model"
+        requested={contract.model.requested}
+        applied={contract.model.applied}
+        ok={contract.model.ok}
+        note={
+          contract.model.ok && contract.model.appliedSku
+            ? `Same model, served from the "${contract.model.appliedSku}" deployment tier.`
+            : null
+        }
+      />
+      <ContractRow
+        label="Voice"
+        requested={contract.voice.requested}
+        applied={contract.voice.applied}
+        ok={contract.voice.ok}
+      />
+
+      {contract.modelOverrideIgnored && (
+        <ContractRow
+          label="Agent model override"
+          requested={contract.agentRequestedModel}
+          applied={contract.connectionModel}
+          ok={false}
+          note="Voice Live binds the model when the call connects and cannot change it mid-call. Make this agent the scenario's start agent to honor its model."
+        />
+      )}
+
+      {mismatch && contract.issues.length > 0 && (
+        <Alert severity="error" sx={{ mt: 1.5, borderRadius: '10px', py: 0.5 }}>
+          {contract.issues.map((issue, idx) => (
+            <Typography key={idx} sx={{ fontSize: '11px' }}>
+              • {issue}
+            </Typography>
+          ))}
+        </Alert>
+      )}
+    </PanelCard>
+  );
+};
+
 const SessionPerformancePanel = ({
   open,
   onClose,
@@ -192,6 +332,7 @@ const SessionPerformancePanel = ({
   sessionMeta = null,
   sessionMetrics = null,
   scenarioConfig = null,
+  sessionContract = null,
 }) => {
   // Parse core memory data
   const performanceData = useMemo(() => {
@@ -305,6 +446,11 @@ const SessionPerformancePanel = ({
             ))}
           </Alert>
         )}
+
+        {/* Requested vs applied config for the live VoiceLive session. First
+            because "is the thing I configured actually running?" has to be
+            answered before any latency number means anything. */}
+        {sessionContract && <LiveSessionConfigCard contract={sessionContract} />}
 
         {/* Session Overview */}
         <PanelCard

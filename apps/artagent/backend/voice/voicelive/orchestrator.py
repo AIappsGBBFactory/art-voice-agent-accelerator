@@ -516,6 +516,15 @@ class LiveOrchestrator:
         # Normalize active to the actual key in agents dict
         self.active = actual_key
 
+        # The agent this *connection* was established for. `connect()` binds the
+        # generative model (and any BYOM profile) to the start agent and neither
+        # can change for the rest of the call, so this is the only value the
+        # bound model can legitimately be attributed to. `self.active` is not a
+        # substitute: `_sync_from_memo_manager()` below can restore an agent
+        # persisted by an *earlier* connection on the same session_id, which is
+        # exactly the drift the session contract needs to be able to report.
+        self._bound_start_agent: str = actual_key
+
         # Initialize the tool registry
         initialize_tools()
 
@@ -1608,6 +1617,25 @@ class LiveOrchestrator:
         the selected (possibly BYOM) model are the ones actually driving the
         session; ``session_contract_mismatch`` means the service quietly
         substituted or dropped one of them.
+
+        The service-side comparison from
+        :func:`verify_voicelive_session_contract` is returned verbatim (``ok``
+        keeps meaning "the service accepted the voice and model we asked for")
+        and enriched with the two *local* divergences that explain most
+        "my tuning didn't take" reports, neither of which the echo can show:
+
+        ``bound_agent`` / ``active_agent`` / ``agent_ok``
+            The connection was established for ``bound_agent``; if a stale
+            ``active_agent`` was restored from a previous connection on the same
+            session, the live agent — and therefore its voice and instructions —
+            is not the one that was tuned.
+        ``connection_model`` / ``agent_requested_model`` / ``model_override_ignored``
+            Voice Live binds the model at ``connect()`` and cannot change it
+            mid-call, so an agent that asks for a different ``voicelive_model``
+            is silently served by the bound one.
+
+        ``overall_ok`` is the aggregate to render: the service contract held
+        *and* neither local divergence is present.
         """
         if session_obj is None:
             return None
@@ -1629,12 +1657,45 @@ class LiveOrchestrator:
             session_obj=session_obj,
         )
 
+        bound_agent = getattr(self, "_bound_start_agent", None)
+        agent_ok: bool | None = None
+        if bound_agent is not None:
+            agent_ok = bound_agent == self.active
+
+        agent_requested_model: str | None = None
+        try:
+            target_model = ua.get_model_for_mode("voicelive")
+            agent_requested_model = getattr(target_model, "deployment_id", None)
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("Failed to resolve per-agent model for verification", exc_info=True)
+
+        model_override_ignored = bool(
+            agent_requested_model and self._model_name and agent_requested_model != self._model_name
+        )
+
+        result.update(
+            {
+                "active_agent": self.active,
+                "bound_agent": bound_agent,
+                "agent_ok": agent_ok,
+                "connection_model": self._model_name,
+                "agent_requested_model": agent_requested_model,
+                "model_override_ignored": model_override_ignored,
+                "overall_ok": bool(
+                    result["ok"] and agent_ok is not False and not model_override_ignored
+                ),
+            }
+        )
+
         span = trace.get_current_span()
         if result["voice_applied"] is not None:
             span.set_attribute("voicelive.voice_applied", result["voice_applied"])
         if result["voice_requested"] is not None:
             span.set_attribute("voicelive.voice_requested", result["voice_requested"])
         span.set_attribute("voicelive.session_contract_ok", bool(result["ok"]))
+        span.set_attribute("voicelive.session_contract_overall_ok", result["overall_ok"])
+        if agent_ok is False:
+            span.set_attribute("voicelive.bound_agent", bound_agent or "")
 
         if result["ok"]:
             logger.info(
@@ -1654,6 +1715,26 @@ class LiveOrchestrator:
                 result["voice_applied"],
                 result["model_requested"],
                 result["model_applied"],
+            )
+
+        # Logged separately from the service contract: the session config is
+        # exactly what we asked for, we are simply asking on behalf of the wrong
+        # agent. Folding it into the line above would misattribute the cause.
+        if agent_ok is False:
+            logger.warning(
+                "[VoiceLive] session_agent_drift | bound=%s active=%s — the live agent is not "
+                "the one this connection was established for, so its voice and instructions "
+                "are not the tuned ones",
+                bound_agent,
+                self.active,
+            )
+        if model_override_ignored:
+            logger.warning(
+                "[VoiceLive] session_model_override_ignored | agent=%s requested=%s bound=%s — "
+                "Voice Live binds the model at connect() and cannot change it mid-call",
+                self.active,
+                agent_requested_model,
+                self._model_name,
             )
         return result
 
@@ -1677,12 +1758,19 @@ class LiveOrchestrator:
 
         # Keep the contract KPI on every echo — a service-side voice/model
         # substitution is just as worth catching on a context refresh.
-        self._verify_session_contract(session_obj)
+        contract = self._verify_session_contract(session_obj)
 
         if context_only:
             # Nothing was reconfigured, so there is nothing to re-bootstrap:
             # leave playback, capture, any in-flight response, and the
             # pending-greeting / handoff state exactly as they are.
+            #
+            # The contract is deliberately NOT broadcast here either: a
+            # context-only refresh happens after every assistant turn, so
+            # emitting an envelope would restore the per-turn UI spam that the
+            # early-return exists to prevent. It is still logged and still
+            # recorded on the span; the UI picks the contract up on the next
+            # bootstrap / agent-switch echo.
             return
 
         if self.messenger:
@@ -1691,6 +1779,7 @@ class LiveOrchestrator:
                     agent_name=self.active,
                     session_obj=session_obj,
                     transport=self._transport,
+                    contract=contract,
                 )
             except Exception:
                 logger.debug("Failed to emit session update envelope", exc_info=True)
