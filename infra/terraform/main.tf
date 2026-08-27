@@ -107,7 +107,10 @@ locals {
   # allowed to diverge from the resource group location via var.openai_location.
   openai_region = coalesce(var.openai_location, azurerm_resource_group.main.location)
 
-  # Voice Live model names to exclude from base deployments when using separate Voice Live account
+  # Voice Live model names to exclude from base deployments when using separate Voice Live account.
+  # Deliberately does NOT include voice_live_byom_model_deployments: those are chat
+  # models the primary Foundry account serves for Cascade, and they must stay there
+  # even though a copy is also placed on the Voice Live account for BYOM.
   voice_live_model_names = [for d in var.voice_live_model_deployments : d.name]
 
   # Resource naming with Azure standard abbreviations
@@ -154,9 +157,24 @@ locals {
     deployment.name => deployment
   }
 
-  combined_model_deployments_map = local.should_enable_voice_live_here ? merge(local.base_model_deployments_map, local.voice_live_model_deployments_map) : local.base_model_deployments_map
+  # Chat models for BYOM, keyed by name so a model listed in both variables
+  # resolves to one deployment rather than colliding on the module's for_each.
+  voice_live_byom_model_deployments_map = {
+    for deployment in var.voice_live_byom_model_deployments :
+    deployment.name => deployment
+  }
+
+  combined_model_deployments_map = local.should_enable_voice_live_here ? merge(local.base_model_deployments_map, local.voice_live_model_deployments_map, local.voice_live_byom_model_deployments_map) : local.base_model_deployments_map
   combined_model_deployments     = [for deployment in values(local.combined_model_deployments_map) : deployment]
-  voice_live_model_deployments   = var.voice_live_model_deployments
+
+  # The Voice Live account hosts its exclusive realtime/transcription models plus
+  # the BYOM chat models, so byom-azure-openai-chat-completion has something to serve.
+  voice_live_model_deployments = [
+    for deployment in values(merge(
+      local.voice_live_model_deployments_map,
+      local.voice_live_byom_model_deployments_map,
+    )) : deployment
+  ]
 
   voice_live_project_display = "AI Foundry Voice Live ${var.environment_name}"
   voice_live_project_desc    = "AI Foundry Voice Live project for ${var.environment_name} environment"

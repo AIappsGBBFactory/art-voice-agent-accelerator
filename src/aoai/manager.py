@@ -1466,6 +1466,20 @@ class AzureOpenAIManager:
                 params["verbosity"] = verbosity
                 if verbosity > 0:
                     logger.debug(f"Verbosity set to {verbosity} (0=minimal for lowest latency)")
+        elif getattr(model_config, "supports_reasoning_effort", False):
+            # gpt-5 family: accepts reasoning_effort but is not reasoning-only, so
+            # an explicitly configured value is honored while an unset one sends
+            # nothing and leaves the deployment default alone. Deliberately no
+            # invented default here — "none" is not accepted by every gpt-5
+            # variant, and forcing one would turn a latency tweak into a 400.
+            reasoning_effort = getattr(model_config, "reasoning_effort", None)
+            if reasoning_effort:
+                params["reasoning_effort"] = reasoning_effort
+                logger.debug(
+                    "Applying configured reasoning_effort=%s for %s",
+                    reasoning_effort,
+                    getattr(model_config, "deployment_id", "?"),
+                )
 
         store = getattr(model_config, "store", None)
         if store is not None:

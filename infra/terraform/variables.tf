@@ -177,6 +177,42 @@ variable "voice_live_model_deployments" {
   ]
 }
 
+variable "voice_live_byom_model_deployments" {
+  description = <<-EOT
+    Chat-completion model deployments placed on the Voice Live account for BYOM.
+
+    Voice Live's `byom-azure-openai-chat-completion` profile drives a deployment
+    on the Voice Live account over /chat/completions, so a chat model has to
+    exist THERE — deploying it only on the primary Foundry account leaves the
+    profile with nothing it can serve. Kept separate from
+    `voice_live_model_deployments` because these are shareable chat models that
+    the primary account usually wants too, whereas the realtime/transcription
+    models in that variable are Voice Live exclusive.
+
+    See: https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-how-to-use-byom
+  EOT
+  type = list(object({
+    name     = string
+    version  = string
+    sku_name = string
+    capacity = number
+  }))
+  default = [
+    {
+      name     = "gpt-5.4"
+      version  = "2026-03-05"
+      sku_name = "GlobalStandard"
+      capacity = 250
+    },
+    {
+      name     = "gpt-5-mini"
+      version  = "2025-08-07"
+      sku_name = "GlobalStandard"
+      capacity = 250
+    }
+  ]
+}
+
 variable "model_deployments" {
   description = "Azure OpenAI model deployments optimized for high performance"
   type = list(object({

@@ -161,6 +161,22 @@ class ModelConfig:
         family = self.model_family or self._detect_model_family()
         return family in ("o1", "o3", "o4")
 
+    @property
+    def supports_reasoning_effort(self) -> bool:
+        """True when the deployment accepts a ``reasoning_effort`` value.
+
+        Broader than :attr:`is_reasoning_model`: the o-series are reasoning-only
+        models, but the gpt-5 family also accepts ``reasoning_effort`` — including
+        ``"none"``/``"minimal"`` to suppress reasoning, which is what a real-time
+        voice agent wants since reasoning latency is paid on every turn.
+
+        Without this, ``reasoning_effort`` set on a gpt-5 agent was accepted by the
+        schema and then silently dropped when building the request, so there was no
+        way to pin "no reasoning" for the models Voice Live BYOM runs on.
+        """
+        family = self.model_family or self._detect_model_family()
+        return family in ("o1", "o3", "o4", "gpt-5")
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ModelConfig:
         """Create ModelConfig from dict."""
