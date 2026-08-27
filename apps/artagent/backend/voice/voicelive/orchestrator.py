@@ -1973,7 +1973,15 @@ class LiveOrchestrator:
                 # span, which already carries the tool name, args, and timing — no
                 # separate child span is needed.
                 result = await execute_tool(name, args)
+            except (asyncio.CancelledError, KeyboardInterrupt):
+                raise
             except Exception as exc:
+                # CRITICAL: Do NOT re-raise here. This exception bubbles up through
+                # handle_event() into the handler's top-level _event_loop(), whose
+                # broad except clause treats ANY exception as fatal and shuts down
+                # the entire VoiceLive session (self._shutdown.set()). A single
+                # failed tool call must not kill the call — it must be reported
+                # back to the model as a tool error so the conversation continues.
                 notify_status = "error"
                 notify_error = str(exc)
                 tool_span.set_status(trace.StatusCode.ERROR, str(exc))
@@ -1981,6 +1989,10 @@ class LiveOrchestrator:
                     "tool.execution_error",
                     {"error.type": type(exc).__name__, "error.message": str(exc)},
                 )
+                logger.exception(
+                    "Tool execution raised an exception | tool=%s call_id=%s", name, call_id
+                )
+                result = {"success": False, "error": notify_error}
                 if self.messenger:
                     try:
                         await self.messenger.notify_tool_end(
@@ -1992,7 +2004,6 @@ class LiveOrchestrator:
                         )
                     except Exception:
                         logger.debug("Tool end messenger notification failed", exc_info=True)
-                raise
 
             elapsed_ms = (time.perf_counter() - start_ts) * 1000
             tool_span.set_attribute("execution.duration_ms", elapsed_ms)
