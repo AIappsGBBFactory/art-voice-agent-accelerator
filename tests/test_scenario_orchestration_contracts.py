@@ -1219,6 +1219,40 @@ class TestQuickTunePreservesScenario:
         assert start_agent == "BankingConcierge"
         assert banking_config.scenario.start_agent == "BankingConcierge"
 
+    def test_scenario_less_session_leaves_the_global_map_untouched(self, registry):
+        """A session with no scenario must not have its routing rewritten.
+
+        The handoff-map overlay exists so declarative scenario edges win, but it
+        applies to every session that connects — not just tuned ones. With no
+        scenario resolved, ``config.handoff_map`` is derived from agent handoff
+        triggers rather than from a scenario, so overlaying it would silently
+        shadow the global routing that scenario-less deployments rely on. The
+        ``has_scenario`` guard is what prevents that, and this pins it.
+        """
+        from apps.artagent.backend.voice.shared import (
+            OrchestratorConfigResult,
+            build_effective_registry,
+        )
+
+        agents, app_state_map = registry
+
+        config = OrchestratorConfigResult()
+        assert config.has_scenario is False
+        # Populated but must be ignored: without a scenario this is agent-derived.
+        config.handoff_map = {
+            "handoff_concierge": "SomeOtherAgent",
+            "handoff_unrelated": "Stranger",
+        }
+
+        _merged, _start_agent, handoff_map = build_effective_registry(
+            config,
+            base_agents=agents,
+            app_state_handoff_map=app_state_map,
+        )
+
+        assert handoff_map == app_state_map
+        assert "handoff_unrelated" not in handoff_map
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
