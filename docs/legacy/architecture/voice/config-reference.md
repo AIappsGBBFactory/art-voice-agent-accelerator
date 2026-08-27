@@ -315,31 +315,28 @@ These values are hard-coded and cannot be changed via environment:
 
 ### Available Voices
 
-```python
-AVAILABLE_VOICES = {
-    "standard": [
-        "en-US-AvaMultilingualNeural",
-        "en-US-AndrewMultilingualNeural",
-        "en-US-EmmaMultilingualNeural",
-        "en-US-BrianMultilingualNeural",
-    ],
-    "turbo": [
-        "en-US-AlloyTurboMultilingualNeural",
-        "en-US-EchoTurboMultilingualNeural",
-        "en-US-FableTurboMultilingualNeural",
-        "en-US-OnyxTurboMultilingualNeural",
-        "en-US-NovaTurboMultilingualNeural",
-        "en-US-ShimmerTurboMultilingualNeural",
-    ],
-    "hd": [
-        "en-US-Adam:DragonHDLatestNeural",
-        "en-US-Andrew:DragonHDLatestNeural",
-        "en-US-Ava:DragonHDLatestNeural",
-        "en-US-Brian:DragonHDLatestNeural",
-        "en-US-Emma:DragonHDLatestNeural",
-    ],
-}
-```
+`GET /api/v1/agent-builder/voices` builds its list from the **live region voice
+list** (Speech SDK `get_voices_async`), so it reflects every voice the connected
+Speech resource can synthesize — typically several hundred across 100+ locales,
+including the DragonHD / HD Omni / HD Flash families. The static
+`AVAILABLE_VOICES` catalog in `agent_builder.py` is only a fallback for when
+Azure can't be reached, plus a safety net if the region enumerates no HD voices.
+
+Each entry is tagged so the UI can label it:
+
+| Field | Meaning |
+|-------|---------|
+| `category` | `hd` \| `turbo` \| `standard` \| `mai` — the picker's group |
+| `voice_type` | `neural`, `neural-turbo`, `neural-hd`, `neural-hd-omni`, `neural-hd-flash`, `mai` |
+| `is_hd` | `true` for any high-definition voice (rendered as an `HD` chip) |
+| `language` | BCP-47 locale, e.g. `en-US`, `ja-JP` |
+| `region_verified` | `false` when the voice came from the static catalog rather than the region list |
+
+Query parameters: `category`, `locale`, `hd_only`, `include_unverified`, `refresh`.
+
+HD voice naming follows `<locale>-<Persona>:<HdModel>`, e.g.
+`en-US-Ava:DragonHDLatestNeural`. See
+[High-definition voices in Azure Speech](https://learn.microsoft.com/azure/ai-services/speech-service/high-definition-voices).
 
 ### Supported Languages
 

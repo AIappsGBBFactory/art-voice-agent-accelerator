@@ -240,6 +240,16 @@ const ALL_VOICELIVE_PRESET_IDS = new Set(
   [...VOICELIVE_MODEL_PRESETS, ...REGION_GATED_VOICELIVE_PRESETS].map((p) => p.id),
 );
 
+// Display labels for the TTS voice categories returned by
+// GET /api/v1/agent-builder/voices. The backend sorts voices by category (HD
+// first), which MUI's Autocomplete groupBy relies on.
+const VOICE_CATEGORY_LABELS = {
+  hd: 'HD (high definition)',
+  turbo: 'Turbo (lowest latency)',
+  standard: 'Standard neural',
+  mai: 'MAI-Voice-2 (preview)',
+};
+
 // Classify a VoiceLive model by its audio architecture. This is the #1 confusion
 // point: within VoiceLive, the chosen model — not a separate toggle — decides whether
 // audio goes straight into the model or runs through a transcription cascade.
@@ -1105,6 +1115,10 @@ export default function AgentBuilderContent({
   // Available options from backend
   const [availableTools, setAvailableTools] = useState([]);
   const [availableVoices, setAvailableVoices] = useState([]);
+  const hdVoiceCount = useMemo(
+    () => availableVoices.filter((v) => v.is_hd).length,
+    [availableVoices],
+  );
   const [availableTemplates, setAvailableTemplates] = useState([]);
   // Set of lowercased deployment_ids actually deployed in the connected Azure
   // region (from /models). null = not yet loaded. Used to region-gate the
@@ -1371,6 +1385,8 @@ export default function AgentBuilderContent({
         setVoicesRegionVerified({
           verified: Boolean(data.verified_against_region),
           source: data.source || 'static-catalog',
+          hdFromCatalog: Boolean(data.hd_from_catalog),
+          notes: data.notes || [],
         });
       }
     } catch (err) {
@@ -3117,8 +3133,17 @@ export default function AgentBuilderContent({
                           label={
                             voicesRegionVerified.verified
                               ? `Region-verified (${availableVoices.length})`
-                              : 'Catalog (region not verified)'
+                              : `Catalog (${availableVoices.length}, region not verified)`
                           }
+                          sx={{ height: 20, fontSize: '11px' }}
+                        />
+                      )}
+                      {hdVoiceCount > 0 && (
+                        <Chip
+                          size="small"
+                          variant="outlined"
+                          color="secondary"
+                          label={`${hdVoiceCount} HD`}
                           sx={{ height: 20, fontSize: '11px' }}
                         />
                       )}
@@ -3127,9 +3152,43 @@ export default function AgentBuilderContent({
                     {!isCustomVoice ? (
                       <Autocomplete
                         options={availableVoices}
+                        groupBy={(opt) => VOICE_CATEGORY_LABELS[opt.category] || opt.category}
                         getOptionLabel={(opt) => opt.display_name || opt.name}
                         value={availableVoices.find((v) => v.name === config.voice?.name) || null}
                         onChange={(e, v) => v && handleNestedConfigChange('voice', 'name', v.name)}
+                        renderOption={(props, option) => {
+                          const { key, ...restProps } = props;
+                          return (
+                            <Box component="li" {...restProps} key={key}>
+                              <Stack sx={{ minWidth: 0, flex: 1 }}>
+                                <Stack direction="row" spacing={0.75} alignItems="center">
+                                  <Typography variant="body2" noWrap>
+                                    {option.display_name || option.name}
+                                  </Typography>
+                                  {option.is_hd && (
+                                    <Chip
+                                      size="small"
+                                      label="HD"
+                                      color="secondary"
+                                      sx={{ height: 16, fontSize: '10px' }}
+                                    />
+                                  )}
+                                  {option.region_verified === false && (
+                                    <Chip
+                                      size="small"
+                                      variant="outlined"
+                                      label="unverified"
+                                      sx={{ height: 16, fontSize: '10px' }}
+                                    />
+                                  )}
+                                </Stack>
+                                <Typography variant="caption" color="text.secondary" noWrap>
+                                  {option.name}
+                                </Typography>
+                              </Stack>
+                            </Box>
+                          );
+                        }}
                         renderInput={(params) => <TextField {...params} label="Voice" />}
                       />
                     ) : (

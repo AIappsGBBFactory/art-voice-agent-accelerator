@@ -98,12 +98,24 @@ class ToolInfo(BaseModel):
 
 
 class VoiceInfo(BaseModel):
-    """Voice information for frontend selection."""
+    """Voice information for frontend selection.
+
+    ``category`` is the coarse bucket the UI groups by (hd / turbo / standard /
+    mai). ``voice_type`` is the finer-grained Azure Speech family so the UI can
+    distinguish e.g. DragonHD from DragonHD Omni, mirroring the ``arch`` /
+    ``category`` tagging used for model deployments in this module.
+    """
 
     name: str
     display_name: str
-    category: str  # turbo, standard, hd
+    category: str  # turbo, standard, hd, mai
     language: str = "en-US"
+    # neural | neural-turbo | neural-hd | neural-hd-omni | neural-hd-flash | mai
+    voice_type: str = "neural"
+    is_hd: bool = False
+    gender: str | None = None
+    # True when the voice was confirmed present in the live region voice list.
+    region_verified: bool = False
 
 
 class ModelConfigSchema(BaseModel):
@@ -343,39 +355,156 @@ class AgentTemplateInfo(BaseModel):
 # ═══════════════════════════════════════════════════════════════════════════════
 # AVAILABLE VOICES CATALOG
 # ═══════════════════════════════════════════════════════════════════════════════
+# NOTE: this catalog is a *fallback / supplement*, not the source of truth.
+# The authoritative list is the live region voice list (Speech SDK
+# ``get_voices_async``), which enumerates every locale the connected Speech
+# resource supports. The catalog exists so the builder still shows something
+# useful when Azure can't be reached, and so HD voices remain selectable if the
+# region enumeration doesn't surface them (see ``_HD_CATALOG`` below).
+
+# Azure Speech HD voice families. HD voice short names use the
+# ``<locale>-<Persona>:<HdModel>`` form, e.g. ``en-US-Ava:DragonHDLatestNeural``.
+# https://learn.microsoft.com/azure/ai-services/speech-service/high-definition-voices
+_HD_SUFFIX_TYPES = (
+    (":dragonhdomni", "neural-hd-omni"),
+    (":dragonhdflash", "neural-hd-flash"),
+    (":dragonhd", "neural-hd"),
+)
+
+_CATEGORY_ORDER = {"hd": 0, "turbo": 1, "standard": 2, "mai": 3}
+
+
+def _classify_voice_name(short_name: str) -> tuple[str, str, bool]:
+    """Classify an Azure Speech voice short name → (category, voice_type, is_hd).
+
+    Matching is case-insensitive because Microsoft's docs and the service use
+    inconsistent casing for HD short names (``en-us-Ava:DragonHDLatestNeural``
+    vs ``en-US-Ava:DragonHDLatestNeural``). Case-sensitive matching here is what
+    silently dropped every HD voice from the builder.
+    """
+    lowered = (short_name or "").lower()
+    for suffix, voice_type in _HD_SUFFIX_TYPES:
+        if suffix in lowered:
+            return "hd", voice_type, True
+    if ":mai-voice" in lowered:
+        return "mai", "mai", False
+    if "turbo" in lowered:
+        return "turbo", "neural-turbo", False
+    return "standard", "neural", False
+
+
+def _locale_from_short_name(short_name: str) -> str:
+    """Best-effort locale extraction from a voice short name.
+
+    Handles the standard ``en-US-AvaNeural`` shape plus script-qualified locales
+    (``sr-Latn-RS-NicholasNeural``) and HD's ``en-US-Ava:DragonHDLatestNeural``.
+    """
+    base = (short_name or "").split(":", 1)[0]
+    parts = base.split("-")
+    if len(parts) >= 3 and len(parts[1]) == 4 and parts[1].isalpha():
+        # Script subtag, e.g. sr-Latn-RS-...
+        return "-".join(parts[:3])
+    if len(parts) >= 2:
+        return "-".join(parts[:2])
+    return base or "en-US"
+
+
+def _hd_voice(short_name: str, persona: str, gender: str | None = None) -> VoiceInfo:
+    """Build a catalog entry for an HD voice from its documented short name."""
+    category, voice_type, is_hd = _classify_voice_name(short_name)
+    locale = _locale_from_short_name(short_name)
+    label = "HD Omni" if voice_type == "neural-hd-omni" else (
+        "HD Flash" if voice_type == "neural-hd-flash" else "HD"
+    )
+    suffix = "" if locale == "en-US" else f" · {locale}"
+    return VoiceInfo(
+        name=short_name,
+        display_name=f"{persona}{suffix} ({label})",
+        category=category,
+        language=locale,
+        voice_type=voice_type,
+        is_hd=is_hd,
+        gender=gender,
+    )
+
+
+# Full documented DragonHD catalog (GA + preview). Previously only four en-US
+# HD voices were listed, which is why the picker looked like HD barely existed.
+_HD_CATALOG = [
+    _hd_voice("de-DE-Florian:DragonHDLatestNeural", "Florian", "Male"),
+    _hd_voice("de-DE-Seraphina:DragonHDLatestNeural", "Seraphina", "Female"),
+    _hd_voice("en-US-Adam:DragonHDLatestNeural", "Adam", "Male"),
+    _hd_voice("en-US-Alloy:DragonHDLatestNeural", "Alloy", "Male"),
+    _hd_voice("en-US-Andrew:DragonHDLatestNeural", "Andrew", "Male"),
+    _hd_voice("en-US-Andrew2:DragonHDLatestNeural", "Andrew 2", "Male"),
+    _hd_voice("en-US-Andrew3:DragonHDLatestNeural", "Andrew 3", "Male"),
+    _hd_voice("en-US-Aria:DragonHDLatestNeural", "Aria", "Female"),
+    _hd_voice("en-US-Ava:DragonHDLatestNeural", "Ava", "Female"),
+    _hd_voice("en-US-Ava3:DragonHDLatestNeural", "Ava 3", "Female"),
+    _hd_voice("en-US-Brian:DragonHDLatestNeural", "Brian", "Male"),
+    _hd_voice("en-US-Davis:DragonHDLatestNeural", "Davis", "Male"),
+    _hd_voice("en-US-Emma:DragonHDLatestNeural", "Emma", "Female"),
+    _hd_voice("en-US-Emma2:DragonHDLatestNeural", "Emma 2", "Female"),
+    _hd_voice("en-US-Jenny:DragonHDLatestNeural", "Jenny", "Female"),
+    _hd_voice("en-US-Nova:DragonHDLatestNeural", "Nova", "Female"),
+    _hd_voice("en-US-Phoebe:DragonHDLatestNeural", "Phoebe", "Female"),
+    _hd_voice("en-US-Serena:DragonHDLatestNeural", "Serena", "Female"),
+    _hd_voice("en-US-Steffan:DragonHDLatestNeural", "Steffan", "Male"),
+    _hd_voice("es-ES-Tristan:DragonHDLatestNeural", "Tristan", "Male"),
+    _hd_voice("es-ES-Ximena:DragonHDLatestNeural", "Ximena", "Female"),
+    _hd_voice("fr-FR-Remy:DragonHDLatestNeural", "Remy", "Male"),
+    _hd_voice("fr-FR-Vivienne:DragonHDLatestNeural", "Vivienne", "Female"),
+    _hd_voice("ja-JP-Masaru:DragonHDLatestNeural", "Masaru", "Male"),
+    _hd_voice("ja-JP-Nanami:DragonHDLatestNeural", "Nanami", "Female"),
+    _hd_voice("zh-CN-Xiaochen:DragonHDLatestNeural", "Xiaochen", "Female"),
+    _hd_voice("zh-CN-Yunfan:DragonHDLatestNeural", "Yunfan", "Male"),
+]
 
 AVAILABLE_VOICES = [
     # Turbo voices - lowest latency
     VoiceInfo(
-        name="en-US-AlloyTurboMultilingualNeural", display_name="Alloy (Turbo)", category="turbo"
+        name="en-US-AlloyTurboMultilingualNeural",
+        display_name="Alloy (Turbo)",
+        category="turbo",
+        voice_type="neural-turbo",
     ),
     VoiceInfo(
-        name="en-US-EchoTurboMultilingualNeural", display_name="Echo (Turbo)", category="turbo"
+        name="en-US-EchoTurboMultilingualNeural",
+        display_name="Echo (Turbo)",
+        category="turbo",
+        voice_type="neural-turbo",
     ),
     VoiceInfo(
-        name="en-US-FableTurboMultilingualNeural", display_name="Fable (Turbo)", category="turbo"
+        name="en-US-FableTurboMultilingualNeural",
+        display_name="Fable (Turbo)",
+        category="turbo",
+        voice_type="neural-turbo",
     ),
     VoiceInfo(
-        name="en-US-OnyxTurboMultilingualNeural", display_name="Onyx (Turbo)", category="turbo"
+        name="en-US-OnyxTurboMultilingualNeural",
+        display_name="Onyx (Turbo)",
+        category="turbo",
+        voice_type="neural-turbo",
     ),
     VoiceInfo(
-        name="en-US-NovaTurboMultilingualNeural", display_name="Nova (Turbo)", category="turbo"
+        name="en-US-NovaTurboMultilingualNeural",
+        display_name="Nova (Turbo)",
+        category="turbo",
+        voice_type="neural-turbo",
     ),
     VoiceInfo(
         name="en-US-ShimmerTurboMultilingualNeural",
         display_name="Shimmer (Turbo)",
         category="turbo",
+        voice_type="neural-turbo",
     ),
     # Standard voices
     VoiceInfo(name="en-US-AvaMultilingualNeural", display_name="Ava", category="standard"),
     VoiceInfo(name="en-US-AndrewMultilingualNeural", display_name="Andrew", category="standard"),
     VoiceInfo(name="en-US-EmmaMultilingualNeural", display_name="Emma", category="standard"),
     VoiceInfo(name="en-US-BrianMultilingualNeural", display_name="Brian", category="standard"),
-    # HD voices - highest quality
-    VoiceInfo(name="en-US-Ava:DragonHDLatestNeural", display_name="Ava HD", category="hd"),
-    VoiceInfo(name="en-US-Andrew:DragonHDLatestNeural", display_name="Andrew HD", category="hd"),
-    VoiceInfo(name="en-US-Brian:DragonHDLatestNeural", display_name="Brian HD", category="hd"),
-    VoiceInfo(name="en-US-Emma:DragonHDLatestNeural", display_name="Emma HD", category="hd"),
+    # HD voices - highest quality (full documented DragonHD catalog)
+    *_HD_CATALOG,
     # MAI-Voice-2 (preview) - multilingual, high-fidelity expressive synthesis.
     # https://learn.microsoft.com/azure/ai-services/speech-service/mai-voices
     # English (US)
@@ -442,16 +571,25 @@ AVAILABLE_VOICES = [
     VoiceInfo(name="zh-CN-Mei:MAI-Voice-2", display_name="Mei · zh-CN (MAI-Voice-2)", category="mai", language="zh-CN"),
 ]
 
+# Keep category / voice_type / is_hd consistent with the short name so a typo in
+# a hand-written catalog entry can't mislabel (or hide) a voice.
+for _v in AVAILABLE_VOICES:
+    _v.category, _v.voice_type, _v.is_hd = _classify_voice_name(_v.name)
+del _v
+
+_CATALOG_BY_NAME = {v.name.lower(): v for v in AVAILABLE_VOICES}
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # REGION VOICE AVAILABILITY
 # ─────────────────────────────────────────────────────────────────────────────
-# The Speech SDK's get_voices_async() is the authoritative source for which voices
-# a given Speech resource supports in its region. We use it to validate the curated
-# catalog so the UI never offers a voice that fails at synthesis time (e.g. a
-# preview MAI voice not deployed in this region). Result is cached to avoid hitting
-# Azure on every /voices call.
-_AVAILABLE_VOICES_CACHE: dict[str, Any] = {"names": None, "expires": 0.0}
+# The Speech SDK's get_voices_async() is the authoritative *source* (not merely a
+# filter) for which voices a given Speech resource supports. A region typically
+# exposes several hundred voices across 100+ locales, so building the picker from
+# it — rather than from a hand-maintained en-US catalog — is what gives the
+# builder real HD and regional coverage. Result is cached to avoid hitting Azure
+# on every /voices call.
+_AVAILABLE_VOICES_CACHE: dict[str, Any] = {"voices": None, "expires": 0.0}
 _AVAILABLE_VOICES_TTL_S = 600.0  # 10 minutes
 
 # Model deployments change rarely (they're provisioned out-of-band in Azure), so
@@ -494,12 +632,58 @@ def _build_voice_query_speech_config():
         return None
 
 
-def _fetch_available_voice_names() -> set[str] | None:
-    """Return the set of voice short_names the Speech resource supports in its
-    region (cached for ~10 min), or None if it can't be determined."""
+def _sdk_voice_to_info(v: Any) -> VoiceInfo | None:
+    """Convert a Speech SDK ``VoiceInfo`` into our API model.
+
+    Falls back to the curated catalog's friendlier display name when the voice
+    is one we already describe, so hand-tuned labels aren't lost when the live
+    list becomes the source.
+    """
+    short_name = getattr(v, "short_name", None)
+    if not short_name:
+        return None
+    category, voice_type, is_hd = _classify_voice_name(short_name)
+    locale = getattr(v, "locale", None) or _locale_from_short_name(short_name)
+
+    gender = getattr(v, "gender", None)
+    gender_name = getattr(gender, "name", None) or (str(gender) if gender else None)
+    if gender_name in (None, "Unknown"):
+        gender_name = None
+
+    curated = _CATALOG_BY_NAME.get(short_name.lower())
+    if curated is not None:
+        display_name = curated.display_name
+    else:
+        persona = getattr(v, "local_name", None) or short_name.split(":", 1)[0].split("-")[-1]
+        suffix = "" if locale == "en-US" else f" · {locale}"
+        badge = {
+            "neural-hd": " (HD)",
+            "neural-hd-omni": " (HD Omni)",
+            "neural-hd-flash": " (HD Flash)",
+            "neural-turbo": " (Turbo)",
+            "mai": " (MAI-Voice-2)",
+        }.get(voice_type, "")
+        display_name = f"{persona}{suffix}{badge}"
+
+    return VoiceInfo(
+        name=short_name,
+        display_name=display_name,
+        category=category,
+        language=locale,
+        voice_type=voice_type,
+        is_hd=is_hd,
+        gender=gender_name,
+        region_verified=True,
+    )
+
+
+def _fetch_region_voices(refresh: bool = False) -> list[VoiceInfo] | None:
+    """Return every voice the Speech resource supports in its region (cached for
+    ~10 min), or None if it can't be determined."""
     now = time.time()
-    if _AVAILABLE_VOICES_CACHE["names"] is not None and now < _AVAILABLE_VOICES_CACHE["expires"]:
-        return _AVAILABLE_VOICES_CACHE["names"]
+    cached = _AVAILABLE_VOICES_CACHE["voices"]
+    if not refresh and cached is not None and now < _AVAILABLE_VOICES_CACHE["expires"]:
+        return cached
     try:
         import azure.cognitiveservices.speech as speechsdk
 
@@ -508,15 +692,17 @@ def _fetch_available_voice_names() -> set[str] | None:
             return None
         synth = speechsdk.SpeechSynthesizer(speech_config=cfg, audio_config=None)
         result = synth.get_voices_async().get()
-        if (
-            result.reason == speechsdk.ResultReason.VoicesListRetrieved
-            and result.voices
-        ):
-            names = {v.short_name for v in result.voices}
-            _AVAILABLE_VOICES_CACHE["names"] = names
+        if result.reason == speechsdk.ResultReason.VoicesListRetrieved and result.voices:
+            voices = [i for i in (_sdk_voice_to_info(v) for v in result.voices) if i is not None]
+            _AVAILABLE_VOICES_CACHE["voices"] = voices
             _AVAILABLE_VOICES_CACHE["expires"] = now + _AVAILABLE_VOICES_TTL_S
-            logger.info("Region supports %d TTS voices (cached)", len(names))
-            return names
+            logger.info(
+                "Region supports %d TTS voices across %d locales (%d HD) — cached",
+                len(voices),
+                len({v.language for v in voices}),
+                sum(1 for v in voices if v.is_hd),
+            )
+            return voices
         logger.warning(
             "Voice list not retrieved (reason=%s); treating region support as unknown",
             getattr(result, "reason", None),
@@ -525,6 +711,20 @@ def _fetch_available_voice_names() -> set[str] | None:
     except Exception as e:
         logger.warning("Could not enumerate available voices from Azure: %s", e)
         return None
+
+
+def _voice_sort_key(v: VoiceInfo, preferred_locale: str) -> tuple:
+    """Order voices so the picker opens on the most useful options.
+
+    Grouped by category (HD first) — MUI's ``groupBy`` requires the options to be
+    sorted by group — then the resource's own locale, then alphabetically.
+    """
+    return (
+        _CATEGORY_ORDER.get(v.category, 99),
+        0 if v.language == preferred_locale else 1,
+        v.language,
+        v.display_name.lower(),
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -617,81 +817,107 @@ async def list_available_tools(
 )
 async def list_available_voices(
     category: str | None = None,
+    locale: str | None = None,
+    hd_only: bool = False,
     use_cache: bool = True,
     include_unverified: bool = False,
+    refresh: bool = False,
 ) -> dict[str, Any]:
     """
-    List TTS voices, validated against what the Speech resource supports in its region.
+    List the TTS voices the connected Speech resource actually supports.
 
-    The curated catalog (AVAILABLE_VOICES) is cross-checked against the live region
-    voice list (Speech SDK ``get_voices_async``) so we never offer a voice that the
-    region will reject at synthesis time — e.g. a preview MAI-Voice-2 voice that
-    isn't deployed in this region.
+    The live region voice list (Speech SDK ``get_voices_async``) is the *source*
+    for this endpoint: it enumerates every voice the resource can synthesize,
+    across every locale it supports — typically several hundred, including the
+    DragonHD / HD Omni / HD Flash families. The curated catalog
+    (``AVAILABLE_VOICES``) is only a fallback for when Azure can't be reached,
+    plus a safety net for HD voices (see ``hd_from_catalog`` below).
 
     Args:
         category: Filter by category (turbo, standard, hd, mai).
-        use_cache: Retained for backward compatibility (no longer changes behavior;
-            region availability is cached internally for ~10 min).
-        include_unverified: If True, skip region validation and return the full
-            curated catalog (including preview voices that may not be available).
+        locale: Filter by BCP-47 locale (e.g. ``en-US``, ``ja-JP``). Case-insensitive.
+        hd_only: Return only high-definition voices.
+        use_cache: Retained for backward compatibility (region availability is
+            cached internally for ~10 min; pass ``refresh=true`` to bypass).
+        include_unverified: Also include curated catalog voices the region did
+            not enumerate (e.g. preview MAI-Voice-2 voices). These may fail at
+            synthesis time, so they are flagged ``region_verified: false``.
+        refresh: Force a fresh region voice enumeration.
     """
     start = time.time()
 
-    # The authoritative source for "what voices does THIS Speech resource support
-    # in its region" is the SDK's get_voices_async(). We use it to validate the
-    # curated catalog so we never surface a voice the region rejects at synth time
-    # (e.g. a preview MAI voice not deployed in this region).
-    #   • available_names is a set of supported short_names, or None if we can't
-    #     reach the resource (no creds / network / SDK).
-    #   • include_unverified=True bypasses validation and returns the full catalog.
-    available_names = None if include_unverified else _fetch_available_voice_names()
-    verified = available_names is not None
+    region_voices = _fetch_region_voices(refresh=refresh)
+    verified = region_voices is not None
+    notes: list[str] = []
 
-    voices: list[VoiceInfo] = []
-    for v in AVAILABLE_VOICES:
-        is_preview = v.category == "mai"
-        if available_names is not None:
-            # We know exactly what the region supports — filter strictly.
-            if v.name in available_names:
-                voices.append(v)
-        else:
-            # Can't verify region support. Keep broadly-available voices, but drop
-            # preview/MAI voices (the "may or may not be available" ones) unless the
-            # caller explicitly opts in.
-            if is_preview and not include_unverified:
+    by_name: dict[str, VoiceInfo] = {}
+    if region_voices:
+        for v in region_voices:
+            by_name[v.name.lower()] = v
+
+    # HD safety net. HD short names use a ``persona:model`` form that the region
+    # enumeration has historically been inconsistent about (and about casing).
+    # If the region reports zero HD voices we surface the documented GA HD
+    # catalog as unverified rather than silently showing no HD option at all —
+    # the previous behaviour, and the reason HD looked missing entirely.
+    hd_from_catalog = False
+    if verified and not any(v.is_hd for v in by_name.values()):
+        hd_from_catalog = True
+        for v in _HD_CATALOG:
+            by_name.setdefault(v.name.lower(), v.model_copy(update={"region_verified": False}))
+        notes.append(
+            "The Speech region did not enumerate any HD voices. Documented HD voices "
+            "are listed as unverified and may fail at synthesis time in this region."
+        )
+
+    if not verified:
+        # Can't reach Azure. Fall back to the curated catalog, keeping the
+        # broadly-available voices and gating preview (MAI) voices behind opt-in.
+        for v in AVAILABLE_VOICES:
+            if v.category == "mai" and not include_unverified:
                 continue
-            voices.append(v)
+            by_name.setdefault(v.name.lower(), v.model_copy(update={"region_verified": False}))
+        notes.append(
+            "Could not reach Azure Speech to enumerate region voices; showing the "
+            "static catalog. Voice availability is not guaranteed."
+        )
+    elif include_unverified:
+        for v in AVAILABLE_VOICES:
+            by_name.setdefault(v.name.lower(), v.model_copy(update={"region_verified": False}))
+
+    preferred_locale = _locale_from_short_name(DEFAULT_TTS_VOICE)
+    voices = sorted(by_name.values(), key=lambda v: _voice_sort_key(v, preferred_locale))
 
     if category:
         voices = [v for v in voices if v.category == category]
+    if locale:
+        wanted = locale.lower()
+        voices = [v for v in voices if v.language.lower() == wanted]
+    if hd_only:
+        voices = [v for v in voices if v.is_hd]
 
-    # Group by category
     by_category: dict[str, list[dict[str, Any]]] = {}
     for voice in voices:
-        if voice.category not in by_category:
-            by_category[voice.category] = []
-        by_category[voice.category].append(voice.model_dump() if hasattr(voice, 'model_dump') else {
-            "name": voice.name,
-            "display_name": voice.display_name,
-            "category": voice.category,
-            "language": voice.language,
-        })
+        by_category.setdefault(voice.category, []).append(voice.model_dump())
+
+    locales = sorted({v.language for v in voices})
 
     return {
         "status": "success",
         "total": len(voices),
-        "voices": [v.model_dump() if hasattr(v, 'model_dump') else {
-            "name": v.name,
-            "display_name": v.display_name,
-            "category": v.category,
-            "language": v.language,
-        } for v in voices],
+        "voices": [v.model_dump() for v in voices],
         "by_category": by_category,
+        "category_counts": {k: len(v) for k, v in by_category.items()},
+        "hd_total": sum(1 for v in voices if v.is_hd),
+        "locales": locales,
+        "locale_count": len(locales),
         "default_voice": DEFAULT_TTS_VOICE,
-        # "verified" = these voices were confirmed against the live region voice
-        # list; "unverified" = couldn't reach Azure, so the curated list is used.
+        # "verified" = the list came from the live region voice list;
+        # "unverified" = couldn't reach Azure, so the curated catalog is used.
         "verified_against_region": verified,
+        "hd_from_catalog": hd_from_catalog,
         "source": "region-validated" if verified else "static-catalog",
+        "notes": notes,
         "response_time_ms": round((time.time() - start) * 1000, 2),
     }
 
