@@ -532,24 +532,36 @@ check_cognitive_services_region() {
     return 1
 }
 
-# Check if Azure OpenAI is available in a region with specific model support
-# Usage: check_openai_model_region <location> <model_pattern>
+# Check whether a region actually offers first-party Azure OpenAI models to the
+# current subscription.
+#
+# Availability is gated by BOTH region and subscription entitlement, so neither of
+# the obvious proxies is reliable:
+#   - `account list-skus --kind OpenAI` reports the *service*, not the models.
+#   - `usage list` reports quota, which for Global/DataZone tiers is a
+#     subscription-wide pool and is reported identically in every region.
+# Only the model catalog answers "can I deploy a model here".
+# Usage: check_openai_model_region <location> [model_pattern]
 check_openai_model_region() {
     local location="$1"
     local model_pattern="${2:-}"
     
-    # Check if OpenAI service is available in the region
-    local skus
-    skus=$(az cognitiveservices account list-skus \
-        --kind "OpenAI" \
+    local models
+    models=$(az cognitiveservices model list \
         --location "$location" \
-        --query "[].name" \
+        --query "[?model.format=='OpenAI'].model.name" \
         -o tsv 2>/dev/null || echo "")
     
-    if [[ -n "$skus" && "$skus" != "null" ]]; then
-        return 0
+    if [[ -z "$models" || "$models" == "null" ]]; then
+        return 1
     fi
-    return 1
+    
+    # When a specific model is requested, require that exact model to be present.
+    if [[ -n "$model_pattern" ]]; then
+        grep -qix -- "$model_pattern" <<<"$models" || return 1
+    fi
+    
+    return 0
 }
 
 # ============================================================================
@@ -890,6 +902,7 @@ check_regional_availability() {
     log ""
     
     local warnings=0
+    local openai_models_missing=0
     local use_live_checks="${PREFLIGHT_LIVE_CHECKS:-true}"
     
     # Skip live checks in CI unless explicitly enabled
@@ -946,22 +959,56 @@ check_regional_availability() {
     
     # -------------------------------------------------------------------------
     # Azure OpenAI - Query via Azure CLI
+    #
+    # A region can expose the OpenAI service and full OpenAI quota yet still offer
+    # zero deployable first-party models to this subscription. When that happens
+    # every azurerm_cognitive_deployment fails during apply with
+    # SpecialFeatureOrQuotaIdRequired, so this specific case is fatal rather than
+    # informational - failing here saves a full provision cycle.
     # -------------------------------------------------------------------------
+    local openai_location="${TF_VAR_openai_location:-}"
+    if [[ -z "$openai_location" ]]; then
+        openai_location=$(azd env get-value TF_VAR_openai_location 2>/dev/null | head -n1 || echo "")
+        [[ "$openai_location" == ERROR:* ]] && openai_location=""
+    fi
+    # Mirror the precedence generate_tfvars_json uses, so a region pinned in the
+    # params files is checked here instead of silently falling back to $location.
+    if [[ -z "$openai_location" ]] && command -v jq &>/dev/null; then
+        local preflight_dir params_file
+        preflight_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        for params_file in \
+            "$preflight_dir/../../../../infra/terraform/params/main.tfvars.${AZURE_ENV_NAME:-}.json" \
+            "$preflight_dir/../../../../infra/terraform/params/main.tfvars.default.json"; do
+            [[ -f "$params_file" ]] || continue
+            openai_location=$(jq -r '.openai_location // empty' "$params_file" 2>/dev/null || echo "")
+            [[ -n "$openai_location" ]] && break
+        done
+    fi
+    [[ -z "$openai_location" ]] && openai_location="$location"
+    
     if [[ "$use_live_checks" == "true" ]]; then
-        log "  Querying Azure for OpenAI availability..."
-        if check_openai_model_region "$location"; then
-            log "  ✓ Azure OpenAI Service (live check)"
+        log "  Querying Azure for OpenAI model availability in $openai_location..."
+        if check_openai_model_region "$openai_location"; then
+            log "  ✓ Azure OpenAI models (live check)"
         else
-            warn "  ⚠ Azure OpenAI may not be available in $location"
-            warn "    Consider: eastus, eastus2, westus2, swedencentral, westeurope"
-            warnings=$((warnings + 1))
+            fail "  ✖ No Azure OpenAI models are available to this subscription in $openai_location"
+            fail "    Model deployments would fail with SpecialFeatureOrQuotaIdRequired."
+            fail "    Pin just the AI Foundry account to a region that has them, leaving"
+            fail "    the rest of the stack in $location:"
+            fail "        azd env set TF_VAR_openai_location <region>"
+            fail "    List deployable models for a candidate region with:"
+            fail "        az cognitiveservices model list -l <region> \\"
+            fail "          --query \"[?model.format=='OpenAI'].model.name\" -o tsv"
+            openai_models_missing=1
         fi
     else
         local openai_regions=("eastus" "eastus2" "westus" "westus2" "westus3" "northcentralus" "southcentralus" "canadaeast" "westeurope" "northeurope" "swedencentral" "switzerlandnorth" "uksouth" "francecentral" "australiaeast" "japaneast" "southeastasia" "eastasia" "koreacentral" "brazilsouth")
-        if [[ " ${openai_regions[*]} " =~ " ${location} " ]]; then
+        if [[ " ${openai_regions[*]} " =~ " ${openai_location} " ]]; then
             log "  ✓ Azure OpenAI Service (cached)"
+            log "    Note: cached data covers regions only. Model availability also"
+            log "    depends on subscription entitlement - enable live checks to verify."
         else
-            warn "  ⚠ Azure OpenAI may not be available in $location"
+            warn "  ⚠ Azure OpenAI may not be available in $openai_location"
             warnings=$((warnings + 1))
         fi
     fi
@@ -1098,7 +1145,11 @@ check_regional_availability() {
         success "All services available in $location"
     fi
     
-    # Regional availability is informational - don't fail the build
+    # Regional availability is otherwise informational, but a region with zero
+    # deployable OpenAI models is a guaranteed apply-time failure, not a risk.
+    if [[ "$openai_models_missing" -eq 1 ]]; then
+        return 1
+    fi
     return 0
 }
 
@@ -1190,8 +1241,11 @@ run_preflight_checks() {
         log ""
     fi
     
-    # 6. Check regional service availability (informational, non-blocking)
-    check_regional_availability
+    # 6. Check regional service availability. Mostly informational, but a region
+    #    that offers no deployable Azure OpenAI models is fatal.
+    if ! check_regional_availability; then
+        failed=1
+    fi
     
     # 7. Check resource quotas (informational, non-blocking)
     check_resource_quotas

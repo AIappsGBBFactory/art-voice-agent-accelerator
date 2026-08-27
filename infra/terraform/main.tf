@@ -102,6 +102,11 @@ locals {
 
   voice_live_available_regions = ["eastus2", "westus2", "swedencentral", "southeastasia"]
 
+  # Region that actually hosts the Azure OpenAI model deployments. Not every region
+  # that can host the rest of the stack offers first-party OpenAI models, so this is
+  # allowed to diverge from the resource group location via var.openai_location.
+  openai_region = coalesce(var.openai_location, azurerm_resource_group.main.location)
+
   # Voice Live model names to exclude from base deployments when using separate Voice Live account
   voice_live_model_names = [for d in var.voice_live_model_deployments : d.name]
 
@@ -132,7 +137,7 @@ locals {
   foundry_project_display = "AI Foundry ${var.environment_name}"
   foundry_project_desc    = "AI Foundry project for ${var.environment_name} environment"
 
-  voice_live_supported_region      = contains(local.voice_live_available_regions, azurerm_resource_group.main.location)
+  voice_live_supported_region      = contains(local.voice_live_available_regions, local.openai_region)
   voice_live_primary_region        = var.voice_live_location
   should_enable_voice_live_here    = var.enable_voice_live && local.voice_live_supported_region
   should_create_voice_live_account = var.enable_voice_live && !local.voice_live_supported_region

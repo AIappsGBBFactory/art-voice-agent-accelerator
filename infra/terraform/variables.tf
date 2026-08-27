@@ -26,7 +26,13 @@ variable "location" {
 }
 
 variable "openai_location" {
-  description = "Optional secondary Azure OpenAI location to use if defined; will be prioritized over var.location for OpenAI resources."
+  description = <<-EOT
+    Optional Azure region for the AI Foundry account and its OpenAI model deployments;
+    prioritized over var.location for OpenAI resources. Set this when the primary
+    location cannot host first-party Azure OpenAI models (availability varies by
+    region and subscription entitlement) so the rest of the stack can stay put.
+    Verify with: az cognitiveservices model list -l <region> --query "[?model.format=='OpenAI']"
+  EOT
   type        = string
   default     = null
 }
@@ -183,32 +189,32 @@ variable "model_deployments" {
     {
       name     = "gpt-4o"
       version  = "2024-11-20"
-      sku_name = "DataZoneStandard"
-      capacity = 150
+      sku_name = "GlobalStandard"
+      capacity = 400
     },
     {
       name     = "gpt-4o-mini"
       version  = "2024-07-18"
-      sku_name = "DataZoneStandard"
-      capacity = 150
+      sku_name = "GlobalStandard"
+      capacity = 1000
     },
     {
-      name     = "o3-mini"
-      version  = "2025-01-31"
-      sku_name = "DataZoneStandard"
-      capacity = 50
+      name     = "gpt-4.1-mini"
+      version  = "2025-04-14"
+      sku_name = "GlobalStandard"
+      capacity = 2000
     },
     {
-      name     = "gpt-5.1"
-      version  = "2025-11-13"
-      sku_name = "DataZoneStandard"
-      capacity = 150
+      name     = "gpt-5.4"
+      version  = "2026-03-05"
+      sku_name = "GlobalStandard"
+      capacity = 1000
     },
     {
       name     = "text-embedding-3-large"
       version  = "1"
       sku_name = "GlobalStandard"
-      capacity = 100
+      capacity = 500
     },
   ]
 }

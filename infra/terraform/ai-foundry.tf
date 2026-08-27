@@ -2,7 +2,7 @@ module "ai_foundry" {
   source = "./modules/ai"
 
   resource_group_id = azurerm_resource_group.main.id
-  location          = azurerm_resource_group.main.location
+  location          = local.openai_region
   tags              = local.tags
 
   disable_local_auth            = var.disable_local_auth
@@ -19,6 +19,7 @@ module "ai_foundry" {
 
   # Connect the project to Application Insights for GenAI tracing / Monitoring
   # (Foundry portal Traces + Application analytics; continuous eval source).
+  enable_application_insights_connection = true
   application_insights_id                = azurerm_application_insights.main.id
   application_insights_connection_string = azurerm_application_insights.main.connection_string
 }
