@@ -18,7 +18,6 @@ import numpy as np
 # Import agents loader for dynamic handoff_map building
 from apps.artagent.backend.registries.agentstore.loader import (
     build_agent_summaries,
-    build_handoff_map,
     discover_agents,
 )
 from apps.artagent.backend.registries.agentstore.base import (
@@ -47,6 +46,7 @@ from apps.artagent.backend.src.ws_helpers.shared_ws import (
 # Import config resolver for scenario-aware agent loading
 from apps.artagent.backend.voice.shared import (
     DEFAULT_START_AGENT,
+    build_effective_registry,
     resolve_from_app_state,
     resolve_orchestrator_config,
 )
@@ -1220,23 +1220,18 @@ class VoiceLiveSDKHandler:
                         )
                         agent_source = "discovered"
 
-                    # Merge scenario agents if scenario is active
+                    # Merge scenario overrides + the Quick Tune session agent into a
+                    # connection-ready registry. Shared with the warm-up path so the
+                    # start agent (and therefore the bound model / BYOM profile)
+                    # cannot diverge between them.
+                    session_agent = get_session_agent(self.session_id)
                     if orchestrator_config and orchestrator_config.has_scenario:
-                        if orchestrator_config.agents:
-                            merged_agents = dict(agents)
-                            merged_agents.update(orchestrator_config.agents)
-                            agents = merged_agents
                         logger.info(
                             "Loaded scenario configuration | scenario=%s start_agent=%s",
                             orchestrator_config.scenario_name,
                             orchestrator_config.start_agent,
                         )
-
-                    # Session Agent Check (Agent Builder) - Priority 1
-                    session_agent = get_session_agent(self.session_id)
                     if session_agent:
-                        agents = dict(agents)
-                        agents[session_agent.name] = session_agent
                         logger.info(
                             "Session agent found (Agent Builder) | name=%s voice=%s session_id=%s",
                             session_agent.name,
@@ -1244,14 +1239,20 @@ class VoiceLiveSDKHandler:
                             self.session_id,
                         )
 
-                    # Determine effective start agent
-                    effective_start_agent = DEFAULT_START_AGENT
-                    if session_agent:
-                        effective_start_agent = session_agent.name
-                    elif orchestrator_config and orchestrator_config.start_agent:
-                        effective_start_agent = orchestrator_config.start_agent
-                    elif hasattr(self._settings, "start_agent") and self._settings.start_agent:
-                        effective_start_agent = self._settings.start_agent
+                    agents, effective_start_agent, effective_handoff_map = (
+                        build_effective_registry(
+                            orchestrator_config,
+                            base_agents=agents,
+                            session_agent=session_agent,
+                            app_state_handoff_map=getattr(app_state, "handoff_map", None),
+                        )
+                    )
+                    if not session_agent and not getattr(
+                        orchestrator_config, "start_agent", None
+                    ):
+                        effective_start_agent = (
+                            getattr(self._settings, "start_agent", None) or DEFAULT_START_AGENT
+                        )
 
                     # Load user profile (fast in-memory lookup)
                     user_profile = None
@@ -1271,6 +1272,7 @@ class VoiceLiveSDKHandler:
                         orchestrator_config,
                         session_agent,
                         effective_start_agent,
+                        effective_handoff_map,
                         user_profile,
                         agent_source,
                         app_state,
@@ -1285,6 +1287,7 @@ class VoiceLiveSDKHandler:
                     orchestrator_config,
                     session_agent,
                     effective_start_agent,
+                    effective_handoff_map,
                     user_profile,
                     agent_source,
                     app_state,
@@ -1446,17 +1449,6 @@ class VoiceLiveSDKHandler:
                         "voicelive.client_id", user_profile.get("client_id", "unknown")
                     )
 
-                # Determine handoff map - prefer from app.state or orchestrator config,
-                # fallback to dynamically building from current agents
-                effective_handoff_map: dict[str, str] = {}
-                if app_state and hasattr(app_state, "handoff_map") and app_state.handoff_map:
-                    effective_handoff_map = app_state.handoff_map
-                elif orchestrator_config and orchestrator_config.handoff_map:
-                    effective_handoff_map = orchestrator_config.handoff_map
-                else:
-                    # Build dynamically from agent declarations (single source of truth)
-                    effective_handoff_map = build_handoff_map(agents)
-
                 # Get MemoManager from websocket state (set by media_handler)
                 memo_manager = getattr(self.websocket.state, "cm", None)
                 if memo_manager:
@@ -1473,6 +1465,10 @@ class VoiceLiveSDKHandler:
                     transport=self._transport,
                     model_name=connection_model,
                     memo_manager=memo_manager,
+                    # Hand over the scenario we actually connected with; otherwise the
+                    # orchestrator re-resolves without a scenario name and loses the
+                    # declarative handoff instructions and routing.
+                    orchestrator_config=orchestrator_config,
                 )
                 span.set_attribute("voicelive.start_agent", effective_start_agent)
 
@@ -2938,23 +2934,17 @@ async def _resolve_voicelive_warmup_config(
         session_id=session_id,
         scenario_name=scenario_name,
     )
-    if orchestrator_config and orchestrator_config.has_scenario and orchestrator_config.agents:
-        merged_agents = dict(agents)
-        merged_agents.update(orchestrator_config.agents)
-        agents = merged_agents
-
     session_agent = get_session_agent(session_id)
-    if session_agent:
-        agents = dict(agents)
-        agents[session_agent.name] = session_agent
-
-    effective_start_agent = DEFAULT_START_AGENT
-    if session_agent:
-        effective_start_agent = session_agent.name
-    elif orchestrator_config and orchestrator_config.start_agent:
-        effective_start_agent = orchestrator_config.start_agent
-    elif getattr(settings, "start_agent", None):
-        effective_start_agent = settings.start_agent
+    # Same merge as the start path — a warm connection is only adopted when its
+    # model and BYOM query match, and both derive from the start agent.
+    agents, effective_start_agent, _ = build_effective_registry(
+        orchestrator_config,
+        base_agents=agents,
+        session_agent=session_agent,
+        app_state_handoff_map=getattr(app_state, "handoff_map", None),
+    )
+    if not session_agent and not getattr(orchestrator_config, "start_agent", None):
+        effective_start_agent = getattr(settings, "start_agent", None) or DEFAULT_START_AGENT
 
     connection_model = settings.azure_voicelive_model
     byom_query: dict[str, str] | None = None

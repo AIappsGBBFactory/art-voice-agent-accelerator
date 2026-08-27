@@ -28,12 +28,12 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from apps.artagent.backend.registries.agentstore.loader import (
-    build_handoff_map,
     discover_agents,
 )
 from apps.artagent.backend.src.orchestration.session_agents import get_session_agent
 from apps.artagent.backend.voice.shared import (
     DEFAULT_START_AGENT,
+    build_effective_registry,
     resolve_from_app_state,
     resolve_orchestrator_config,
 )
@@ -506,6 +506,7 @@ class GenesysVoiceLiveHandler:
             transport="genesys",
             model_name=connection_model,
             memo_manager=memo_manager,
+            orchestrator_config=orchestrator_config,
         )
 
         register_voicelive_orchestrator(self.session_id, self._orchestrator)
@@ -549,37 +550,24 @@ class GenesysVoiceLiveHandler:
             scenario_name=scenario_name,
         )
 
-        # Merge scenario agents
-        if orchestrator_config and orchestrator_config.has_scenario and orchestrator_config.agents:
-            merged = dict(agents)
-            merged.update(orchestrator_config.agents)
-            agents = merged
-
-        # Session agent (Agent Builder)
+        # Shared merge: scenario overrides overlay the full registry, the session
+        # agent (Agent Builder / Quick Tune) replaces its slot and becomes the start
+        # agent, and scenario handoff edges overlay the global map.
         session_agent = get_session_agent(self.session_id)
-        if session_agent:
-            agents = dict(agents)
-            agents[session_agent.name] = session_agent
-
-        # Determine start agent
-        effective_start_agent = DEFAULT_START_AGENT
-        if session_agent:
-            effective_start_agent = session_agent.name
-        elif orchestrator_config and orchestrator_config.start_agent:
-            effective_start_agent = orchestrator_config.start_agent
-
-        # Build handoff map
-        handoff_map: dict[str, str] = {}
-        if app_state and hasattr(app_state, "handoff_map") and app_state.handoff_map:
-            handoff_map = app_state.handoff_map
-        elif orchestrator_config and orchestrator_config.handoff_map:
-            handoff_map = orchestrator_config.handoff_map
-        else:
-            handoff_map = build_handoff_map(agents)
+        agents, effective_start_agent, handoff_map = build_effective_registry(
+            orchestrator_config,
+            base_agents=agents,
+            session_agent=session_agent,
+            app_state_handoff_map=getattr(app_state, "handoff_map", None),
+        )
+        if not session_agent and not getattr(orchestrator_config, "start_agent", None):
+            effective_start_agent = DEFAULT_START_AGENT
 
         logger.info(
             "[Genesys] Agents resolved | count=%d start=%s session=%s",
-            len(agents), effective_start_agent, self.session_id,
+            len(agents),
+            effective_start_agent,
+            self.session_id,
         )
         return agents, orchestrator_config, effective_start_agent, handoff_map
 
