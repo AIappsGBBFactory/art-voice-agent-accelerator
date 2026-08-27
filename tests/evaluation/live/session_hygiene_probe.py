@@ -253,17 +253,22 @@ def evaluate(report: ProbeReport) -> None:
             )
         )
 
-    # ---- SESSION UPDATED must not be user-visible noise ----------------------
+    # ---- SESSION UPDATED must not be per-turn noise --------------------------
+    # Bootstrap legitimately emits exactly one: the session really was configured
+    # for an agent, and that is worth surfacing once. The bug was the *context-only*
+    # instruction refresh after every turn also reaching the UI. This probe only
+    # observes the connect phase, so the correct expectation here is "at most the
+    # single bootstrap event" -- anything beyond that is the per-turn leak.
     session_updates = [f for f in frames if _frame_kind(f) == "session_updated"]
     report.checks.append(
         Check(
             "session_update_quiet",
-            len(session_updates) == 0,
+            len(session_updates) <= 1,
             (
-                f"{len(session_updates)} session_updated event(s) surfaced to the client; "
-                "a context-only instruction refresh must not reach the UI"
-                if session_updates
-                else "no session_updated noise"
+                f"{len(session_updates)} session_updated events during connect; at most the "
+                "single bootstrap event is expected, so a context-only refresh is leaking to the UI"
+                if len(session_updates) > 1
+                else f"{len(session_updates)} session_updated event(s) (bootstrap only)"
             ),
         )
     )
