@@ -303,6 +303,151 @@ def test_contract_is_not_a_mismatch_when_echo_is_silent():
     assert result["ok"] is True
 
 
+# -----------------------------------------------------------------------------
+# Deployment SKU tolerance — Azure echoes the *deployment* name, not the model
+# -----------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "applied, expected_sku",
+    [
+        ("gpt-realtime", None),
+        ("gpt-realtime-datazone-standard", "datazone-standard"),
+        ("gpt-realtime-globalstandard", "globalstandard"),
+        ("gpt-realtime-global-standard", "global-standard"),
+        ("gpt-realtime-standard", "standard"),
+        ("gpt-realtime-provisioned-managed", "provisioned-managed"),
+        ("GPT-Realtime-DataZone-Standard", "datazone-standard"),
+    ],
+)
+def test_contract_tolerates_deployment_sku_suffix(applied: str, expected_sku: str | None):
+    """The tier suffix on a deployment name is not a model substitution.
+
+    Production requests ``gpt-realtime`` and Azure echoes
+    ``gpt-realtime-datazone-standard`` — the same model on a data-zone
+    deployment. Flagging that fired a WARNING on 100% of ``session.updated``
+    events and pinned ``voicelive.session_contract_ok`` to False.
+    """
+    result = verify_voicelive_session_contract(
+        requested_voice=None,
+        requested_model="gpt-realtime",
+        session_obj=_EchoSession(model=applied),
+    )
+
+    assert result["model_ok"] is True
+    assert result["ok"] is True
+    # The raw echo is preserved so operators can still see which tier applied.
+    assert result["model_applied"] == applied.lower()
+    assert result["model_applied_base"] == "gpt-realtime"
+    assert result["model_applied_sku"] == expected_sku
+
+
+@pytest.mark.parametrize(
+    "applied",
+    [
+        "gpt-4o-realtime-preview",
+        "gpt-realtime-mini",
+        "gpt-realtime-preview",
+        "gpt-4o-mini-realtime-preview",
+    ],
+)
+def test_contract_still_detects_genuine_model_substitution(applied: str):
+    """SKU tolerance must not degrade into a prefix/substring match.
+
+    ``gpt-realtime-mini`` shares the requested model's prefix but is a different,
+    cheaper model — exactly the substitution this check exists to catch. Only
+    suffixes on the recognized deployment-tier allowlist are forgiven.
+    """
+    result = verify_voicelive_session_contract(
+        requested_voice=None,
+        requested_model="gpt-realtime",
+        session_obj=_EchoSession(model=applied),
+    )
+
+    assert result["model_ok"] is False
+    assert result["ok"] is False
+
+
+def test_contract_sku_normalization_is_symmetric():
+    """Our own configured deployment name may be the SKU-qualified one."""
+    result = verify_voicelive_session_contract(
+        requested_voice=None,
+        requested_model="gpt-realtime-datazone-standard",
+        session_obj=_EchoSession(model="gpt-realtime"),
+    )
+
+    assert result["model_ok"] is True
+    assert result["model_requested"] == "gpt-realtime-datazone-standard"
+    assert result["model_requested_base"] == "gpt-realtime"
+    assert result["model_requested_sku"] == "datazone-standard"
+
+
+def test_contract_sku_fields_are_none_when_model_is_absent():
+    """Absent echo stays 'not verifiable', and the added fields follow suit."""
+    result = verify_voicelive_session_contract(
+        requested_voice=None,
+        requested_model=None,
+        session_obj=_EchoSession(model=None),
+    )
+
+    assert result["model_ok"] is None
+    assert result["model_applied"] is None
+    assert result["model_applied_base"] is None
+    assert result["model_applied_sku"] is None
+    assert result["model_requested_base"] is None
+    assert result["model_requested_sku"] is None
+    assert result["ok"] is True
+
+
+def test_contract_preserves_public_result_keys():
+    """Callers depend on these exact keys; new fields are additive only."""
+    result = verify_voicelive_session_contract(
+        requested_voice="alloy",
+        requested_model="gpt-realtime",
+        session_obj=_EchoSession(voice="alloy", model="gpt-realtime-datazone-standard"),
+    )
+
+    assert {
+        "voice_requested",
+        "voice_applied",
+        "voice_ok",
+        "model_requested",
+        "model_applied",
+        "model_ok",
+        "ok",
+    } <= set(result)
+
+
+def test_contract_still_fails_when_voice_is_wrong_despite_sku_match():
+    """SKU tolerance on the model must not rescue a genuine voice mismatch."""
+    result = verify_voicelive_session_contract(
+        requested_voice="alloy",
+        requested_model="gpt-realtime",
+        session_obj=_EchoSession(voice="echo", model="gpt-realtime-datazone-standard"),
+    )
+
+    assert result["model_ok"] is True
+    assert result["voice_ok"] is False
+    assert result["ok"] is False
+
+
+def test_orchestrator_does_not_warn_on_sku_suffixed_model():
+    """The production regression, end-to-end through the orchestrator."""
+    agent = _make_agent(voice=VoiceConfig(name="en-US-AlloyTurboMultilingualNeural"))
+    orch = _make_orchestrator(agent, _FakeConnection())
+
+    result = orch._verify_session_contract(
+        _EchoSession(
+            voice=agent.build_voicelive_voice(),
+            model="gpt-realtime-datazone-standard",
+        )
+    )
+
+    assert result is not None
+    assert result["ok"] is True
+    assert result["model_ok"] is True
+
+
 def test_orchestrator_verifies_against_active_agent_voice():
     agent = _make_agent(voice=VoiceConfig(name="en-US-AvaMultilingualNeural"))
     orch = _make_orchestrator(agent, _FakeConnection())
