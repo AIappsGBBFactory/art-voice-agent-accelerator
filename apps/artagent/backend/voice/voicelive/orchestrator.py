@@ -525,6 +525,20 @@ class LiveOrchestrator:
         # exactly the drift the session contract needs to be able to report.
         self._bound_start_agent: str = actual_key
 
+        # Whether that start agent was *pinned* for this connection by a
+        # session-scoped (Quick Tune / Agent Builder) agent, as opposed to being
+        # the scenario or deployment default. Read straight off the constructor
+        # argument rather than the `_orchestrator_config` property, because the
+        # property lazily re-resolves (session lookup + scenario load) and must
+        # not be triggered from __init__ on the connection-establishment path.
+        #
+        # `_sync_from_memo_manager()` below consults it: a deliberately tuned
+        # agent is configuration for *this* connection and outranks any agent
+        # persisted by a previous one.
+        self._start_agent_authoritative: bool = bool(
+            getattr(orchestrator_config, "start_agent_authoritative", False)
+        )
+
         # Initialize the tool registry
         initialize_tools()
 
@@ -604,6 +618,79 @@ class LiveOrchestrator:
             )
         return self._cached_orchestrator_config
 
+    def _memo_restore_conflict(self, agent_name: str) -> str | None:
+        """Say why a MemoManager-restored agent must not take over this connection.
+
+        ``_sync_from_memo_manager()`` runs once, from ``__init__``, at which point
+        the Voice Live WebSocket is already established. Restoring an agent is
+        therefore never a neutral act: the connection was opened *for* a specific
+        start agent, and ``connect()`` has already frozen the generative model and
+        the BYOM profile around that agent for the rest of the call.
+
+        Two restores are unsafe, and both were observed as the same production
+        report ("I tuned the agent and only the model took"):
+
+        ``session_agent_authoritative``
+            A Quick Tune / Agent Builder agent was pinned for this connection
+            (see :attr:`_start_agent_authoritative`). It is configuration the
+            caller just chose; an agent left behind by an *earlier* connection on
+            the same ``session_id`` is stale state and must not displace it —
+            doing so silently swaps in the other agent's voice and instructions.
+
+        ``model_bound``
+            The restored agent asks for a different Voice Live model than the one
+            bound at ``connect()``. The model cannot change mid-call, so the agent
+            would be served by a model it did not ask for: the observed failure is
+            a session that greets and then never answers again. A wrong-but-
+            serviceable agent beats a mute call.
+
+        Everything else is genuine continuity and is allowed — notably resuming on
+        the agent a previous connection handed off to, when the bound model can
+        still serve it.
+
+        Args:
+            agent_name: Registry key of the agent MemoManager wants to restore.
+
+        Returns:
+            A short machine-greppable reason, or ``None`` when the restore is safe.
+        """
+        if agent_name == self.active:
+            return None
+
+        if self._start_agent_authoritative:
+            return "session_agent_authoritative"
+
+        agent = self.agents.get(agent_name)
+        if agent is None:
+            return None
+
+        try:
+            # self.agents holds UnifiedAgent directly; ``_agent`` is the adapter
+            # shape used elsewhere in this file. Same unwrap as _switch_to().
+            ua = getattr(agent, "_agent", agent)
+            target_deployment = getattr(ua.get_model_for_mode("voicelive"), "deployment_id", None)
+        except Exception:  # pragma: no cover - defensive
+            logger.debug(
+                "Failed to resolve per-agent model for restore check | agent=%s",
+                agent_name,
+                exc_info=True,
+            )
+            return None
+
+        if not target_deployment or not self._model_name:
+            # Nothing to compare against — never turn an unknown into a refusal.
+            return None
+
+        # SKU-tolerant, exactly like the session contract: Azure deployment names
+        # append the provisioned tier (``gpt-realtime`` →
+        # ``gpt-realtime-datazone-standard``) and that is the same model.
+        requested_base, _ = _model_base_and_sku(target_deployment.strip().lower())
+        bound_base, _ = _model_base_and_sku(self._model_name.strip().lower())
+        if requested_base == bound_base:
+            return None
+
+        return "model_bound"
+
     def _sync_from_memo_manager(self) -> None:
         """
         Sync orchestrator state from MemoManager.
@@ -616,6 +703,11 @@ class LiveOrchestrator:
         - If we sync visited_agents, we'd show return_greeting but model has no context
         - This causes the model to behave inconsistently (greeting says "welcome back"
           but model doesn't know what happened before)
+
+        The restored ``active_agent`` gets the same per-connection scepticism, one
+        step short of the outright refusal ``visited_agents`` gets: it is applied
+        only when :meth:`_memo_restore_conflict` finds nothing that makes it unsafe
+        for *this* connection. See that method for where the line sits.
         """
         if not self._memo_manager:
             return
@@ -638,8 +730,24 @@ class LiveOrchestrator:
             sync_state_to_memo(self._memo_manager, active_agent=self.active)
             self._scenario_switch_pending = False
         elif state.active_agent:
-            self.active = state.active_agent
-            logger.debug("[LiveOrchestrator] Synced active_agent: %s", self.active)
+            conflict = self._memo_restore_conflict(state.active_agent)
+            if conflict:
+                logger.warning(
+                    "[LiveOrchestrator] active_agent restore refused | reason=%s memo_active=%s "
+                    "keeping=%s bound_model=%s — the agent this connection was established for "
+                    "stays live",
+                    conflict,
+                    state.active_agent,
+                    self.active,
+                    self._model_name,
+                )
+                # Re-anchor the persisted state on the agent that is actually
+                # live, so the next connection on this session_id does not
+                # inherit the same stale value and re-run this refusal.
+                sync_state_to_memo(self._memo_manager, active_agent=self.active)
+            else:
+                self.active = state.active_agent
+                logger.debug("[LiveOrchestrator] Synced active_agent: %s", self.active)
 
         # IMPORTANT: Do NOT sync visited_agents for VoiceLive
         # Each VoiceLive connection starts fresh - syncing visited_agents causes
@@ -678,9 +786,24 @@ class LiveOrchestrator:
         if state.pending_handoff:
             target = state.pending_handoff.get("target_agent")
             if target and target in self.agents:
-                logger.info("[LiveOrchestrator] Pending handoff detected: %s", target)
-                self.active = target
-                # Clear the pending handoff
+                # Same per-connection check as the active_agent restore above:
+                # a queued handoff is memo state too, and landing on an agent the
+                # bound model cannot serve is a mute call however it was reached.
+                conflict = self._memo_restore_conflict(target)
+                if conflict:
+                    logger.warning(
+                        "[LiveOrchestrator] Pending handoff refused | reason=%s target=%s "
+                        "keeping=%s bound_model=%s",
+                        conflict,
+                        target,
+                        self.active,
+                        self._model_name,
+                    )
+                else:
+                    logger.info("[LiveOrchestrator] Pending handoff detected: %s", target)
+                    self.active = target
+                # Clear the pending handoff either way — leaving it queued would
+                # just re-run the same refusal on the next connection.
                 sync_state_to_memo(
                     self._memo_manager, active_agent=self.active, clear_pending_handoff=True
                 )

@@ -84,6 +84,12 @@ class OrchestratorConfigResult:
         scenario: Optional loaded scenario config
         scenario_name: Name of the active scenario (if any)
         template_vars: Global template variables from scenario
+        start_agent_authoritative: ``True`` when ``start_agent`` was *pinned* for
+            this connection by a session-scoped (Quick Tune / Agent Builder) agent
+            rather than merely inherited from the scenario or the deployment
+            default. Set by :func:`build_effective_registry`. Orchestrators use it
+            to know that the start agent is a deliberate, caller-visible choice —
+            and therefore that restored session state must not silently replace it.
     """
 
     start_agent: str = DEFAULT_START_AGENT
@@ -92,6 +98,7 @@ class OrchestratorConfigResult:
     scenario: ScenarioConfig | None = None
     scenario_name: str | None = None
     template_vars: dict[str, Any] = field(default_factory=dict)
+    start_agent_authoritative: bool = False
 
     @property
     def has_scenario(self) -> bool:
@@ -467,6 +474,9 @@ def build_effective_registry(
       untuned original, and becomes the start agent — the only way a per-agent
       model or BYOM profile can take effect, since VoiceLive binds both at connect.
     * The active scenario is preserved and merely repointed at the tuned agent.
+    * ``config.start_agent_authoritative`` is set when a session agent took over, so
+      downstream orchestrators can distinguish a deliberately pinned start agent from
+      a scenario default.
     * Scenario handoff edges are overlaid **on top of** the global handoff map, so
       declarative routing wins while agents outside the scenario stay routable.
 
@@ -503,6 +513,11 @@ def build_effective_registry(
             start_agent = existing_key or session_agent_name
             agents[start_agent] = session_agent
             _repoint_scenario_start_agent(config, start_agent)
+            # Record *that* the choice was deliberate, not just what it was. The
+            # start agent alone is indistinguishable from a scenario default, and
+            # an orchestrator that cannot tell the two apart will happily let
+            # restored session state overwrite a freshly tuned agent.
+            config.start_agent_authoritative = True
             logger.info(
                 "Session agent is authoritative | agent=%s scenario=%s replaced_slot=%s",
                 start_agent,
