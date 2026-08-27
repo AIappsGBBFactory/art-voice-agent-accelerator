@@ -56,6 +56,7 @@ import { setVoiceSession, getSessionTraceparent, getDeviceId, trackEvent, trackM
 import { buildAuthQueryParams, getAuthenticatedUser } from '../utils/auth.js';
 import { reduceConversationPayload } from '../utils/conversationBubbles.js';
 import { flattenSessionEnvelope, isSessionEnvelope } from '../utils/sessionEnvelope.js';
+import { createEnvelopeDeduper } from '../utils/envelopeDedupe.js';
 import { resolveTurnId } from '../utils/turnMessages.js';
 import { OrchestrationDiagramModal } from './OrchestrationDiagram.jsx';
 
@@ -1610,6 +1611,13 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
   const relayReconnectTimeoutRef = useRef(null);
   const handleSocketMessageRef = useRef(null);
   const openRelaySocketRef = useRef(null);
+  // The conversation socket and the dashboard relay are both registered under
+  // the same session_id server-side, so a single broadcast reaches this client
+  // more than once. Held in a ref so it survives re-renders without causing any.
+  const envelopeDeduperRef = useRef(null);
+  if (envelopeDeduperRef.current === null) {
+    envelopeDeduperRef.current = createEnvelopeDeduper();
+  }
   const callLifecycleRef = useRef({
     pending: false,
     active: false,
@@ -2005,6 +2013,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       }
     }
     setMessages([]);
+    envelopeDeduperRef.current?.clear();
     setActiveSpeaker(null);
     stopRecognitionRef.current?.();
     setCallActive(false);
@@ -3159,6 +3168,17 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       // handled separately by the pure turn-scoped reducer below.
       if (isSessionEnvelope(payload)) {
         const envelope = payload;
+        // Drop copies of an envelope already handled via another socket bound
+        // to this session. Checked before flattening because the id lives at
+        // the envelope top level and flattening only spreads envelope.payload.
+        if (!envelopeDeduperRef.current.shouldProcess(envelope.id)) {
+          logger.debug("📭 Dropped duplicate envelope:", {
+            id: envelope.id,
+            type: envelope.type,
+            topic: envelope.topic,
+          });
+          return;
+        }
         logger.debug("📨 Received envelope message:", {
           type: envelope.type,
           sender: envelope.sender,
@@ -4072,32 +4092,26 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
 
       relay.onmessage = ({ data }) => {
         lifecycle.lastEnvelopeAt = Date.now();
+        const handler = handleSocketMessageRef.current;
+        if (!handler) {
+          return;
+        }
+
+        // Forward relay frames verbatim. The shared handler owns envelope
+        // normalization (flattenSessionEnvelope) and duplicate suppression;
+        // reshaping here would diverge from the conversation socket and strip
+        // the top-level id, ts and topic the handler relies on.
         try {
-          const obj = JSON.parse(data);
-          let processedObj = obj;
-
-          if (obj && obj.type && obj.sender && obj.payload && obj.ts) {
-            logger.debug("📨 Relay received envelope message:", {
-              type: obj.type,
-              sender: obj.sender,
-              topic: obj.topic,
+          const result = handler({ data });
+          if (result && typeof result.catch === "function") {
+            result.catch((error) => {
+              logger.error("Relay message handling error:", error);
+              appendLog("Relay message handling error");
             });
-
-            processedObj = {
-              type: obj.type,
-              sender: obj.sender,
-              ...obj.payload,
-            };
-            logger.debug("📨 Transformed relay envelope:", processedObj);
-          }
-
-          const handler = handleSocketMessageRef.current;
-          if (handler) {
-            handler({ data: JSON.stringify(processedObj) });
           }
         } catch (error) {
-          logger.error("Relay parse error:", error);
-          appendLog("Relay parse error");
+          logger.error("Relay message handling error:", error);
+          appendLog("Relay message handling error");
         }
       };
 

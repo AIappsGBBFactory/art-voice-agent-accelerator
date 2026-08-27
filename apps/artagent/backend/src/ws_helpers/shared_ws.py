@@ -32,6 +32,7 @@ from apps.artagent.backend.registries.agentstore.loader import build_agent_summa
 from apps.artagent.backend.src.services.acs.acs_helpers import play_response_with_queue
 from apps.artagent.backend.src.services.speech_services import SpeechSynthesizer
 from apps.artagent.backend.src.ws_helpers.envelopes import (
+    ensure_envelope_id,
     make_envelope,
     make_event_envelope,
     make_status_envelope,
@@ -321,6 +322,11 @@ async def send_session_envelope(
     manager = getattr(ws.app.state, "conn_manager", None)
     resolved_conn_id = conn_id or getattr(ws.state, "conn_id", None)
     resolved_session_id = session_id or getattr(ws.state, "session_id", None)
+
+    # One id per logical emission, assigned before any fan-out, so clients can
+    # discard the duplicate copies they receive when they hold more than one
+    # connection for the same session.
+    ensure_envelope_id(envelope)
 
     if manager and resolved_session_id and broadcast_only:
         try:
@@ -1197,6 +1203,8 @@ async def broadcast_session_envelope(
     target_session = session_id or envelope.get("session_id")
     if not target_session:
         raise ValueError("session_id must be provided for envelope broadcasts")
+
+    ensure_envelope_id(envelope)
 
     sent_count = await app_state.conn_manager.broadcast_session(
         target_session,

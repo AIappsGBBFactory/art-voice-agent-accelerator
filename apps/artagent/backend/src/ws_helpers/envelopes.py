@@ -8,6 +8,7 @@ Provides standardized envelope format with minimal complexity.
 
 from datetime import UTC, datetime
 from typing import Any, Literal
+from uuid import uuid4
 
 EnvelopeType = Literal[
     "event", "status", "assistant", "assistant_streaming", "exit", "error", "debug"
@@ -22,6 +23,30 @@ def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def new_envelope_id() -> str:
+    """Return a fresh globally unique envelope identifier."""
+
+    return uuid4().hex
+
+
+def ensure_envelope_id(envelope: dict[str, Any]) -> str:
+    """Guarantee an envelope carries a stable ``id`` and return it.
+
+    A single logical emission is fanned out to every connection registered under
+    a session (and republished to other replicas), so the id must be assigned
+    once on the shared envelope dict rather than per delivery. Idempotent, so
+    envelopes already built via :func:`make_envelope` keep their original id.
+    """
+
+    existing = envelope.get("id")
+    if isinstance(existing, str) and existing:
+        return existing
+
+    envelope_id = new_envelope_id()
+    envelope["id"] = envelope_id
+    return envelope_id
+
+
 def make_envelope(
     *,
     etype: EnvelopeType,
@@ -34,6 +59,7 @@ def make_envelope(
 ) -> dict[str, Any]:
     """Build standard WebSocket message envelope."""
     return {
+        "id": new_envelope_id(),
         "type": etype,
         "topic": topic,
         "session_id": session_id,
