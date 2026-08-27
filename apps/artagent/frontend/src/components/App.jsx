@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom';
 import {
   Box,
   Button,
-  Chip,
   Divider,
   IconButton,
   LinearProgress,
@@ -14,8 +13,6 @@ import BoltRoundedIcon from '@mui/icons-material/BoltRounded';
 import SpeedRoundedIcon from '@mui/icons-material/SpeedRounded';
 import BuildRoundedIcon from '@mui/icons-material/BuildRounded';
 import TuneRoundedIcon from '@mui/icons-material/TuneRounded';
-import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
-import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
 import TemporaryUserForm from './TemporaryUserForm';
 import { AcsStreamingModeSelector, RealtimeStreamingModeSelector } from './StreamingModeSelector.jsx';
 import ProfileButton from './ProfileButton.jsx';
@@ -1311,6 +1308,8 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
   const [quickTuneTip, setQuickTuneTip] = useState(null);
   // Whether the interactive "how orchestration works" diagram modal is open.
   const [showOrchestrationDiagram, setShowOrchestrationDiagram] = useState(false);
+  // Stable identity so the (memoized) diagram modal doesn't re-render with App.
+  const closeOrchestrationDiagram = useCallback(() => setShowOrchestrationDiagram(false), []);
   // Snapshot of the current resolved agent config (base for the PUT merge).
   const liveBaseConfigRef = useRef(null);
   // Live model deployments from the connected Foundry resource ({cascade, voicelive}),
@@ -5992,6 +5991,62 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                     }}>
                       {activeScenarioData?.name || activeScenarioKey || 'banking'}
                     </span>
+                    {/* Live session config verdict. It describes this session, so it
+                        sits with the session metadata rather than as its own header
+                        item — a top-level chip pushed the header actions out of
+                        alignment. Styled as a peer of the scenario pill. */}
+                    {sessionContract && (
+                      <span
+                        onClick={(e) => {
+                          // The parent tag opens the session-id editor.
+                          e.stopPropagation();
+                          setShowAgentPanel(true);
+                        }}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setShowAgentPanel(true);
+                          }
+                        }}
+                        title={
+                          sessionContract.status === "mismatch"
+                            ? sessionContract.issues.join(" • ")
+                            : "The live agent, model and voice match what you configured"
+                        }
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                          padding: "2px 8px",
+                          borderRadius: "4px",
+                          background:
+                            sessionContract.status === "mismatch"
+                              ? "rgba(220,38,38,0.1)"
+                              : "rgba(22,163,74,0.1)",
+                          color:
+                            sessionContract.status === "mismatch" ? "#dc2626" : "#16a34a",
+                          fontSize: "10px",
+                          fontWeight: 600,
+                          textTransform: "uppercase",
+                          letterSpacing: "0.5px",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <span
+                          aria-hidden="true"
+                          style={{
+                            width: "6px",
+                            height: "6px",
+                            borderRadius: "50%",
+                            background: "currentColor",
+                          }}
+                        />
+                        {sessionContract.status === "mismatch" ? "Config mismatch" : "Config OK"}
+                      </span>
+                    )}
                   </div>
                   <code style={styles.sessionTagValue}>{sessionId}</code>
                   {sessionUpdateError && !editingSessionId && (
@@ -6057,45 +6112,6 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                   </div>
                 )}
               </div>
-
-              {/* Live session config indicator. The whole point of the contract
-                  is that a mismatch is noticed without opening anything, so the
-                  verdict lives in the header and the detail is one click away. */}
-              {sessionContract && (
-                <Chip
-                  onClick={() => setShowAgentPanel(true)}
-                  icon={
-                    sessionContract.status === "mismatch" ? (
-                      <WarningAmberRoundedIcon sx={{ fontSize: 15 }} />
-                    ) : (
-                      <CheckCircleRoundedIcon sx={{ fontSize: 15 }} />
-                    )
-                  }
-                  label={
-                    sessionContract.status === "mismatch" ? "Config mismatch" : "Config OK"
-                  }
-                  size="small"
-                  title={
-                    sessionContract.status === "mismatch"
-                      ? sessionContract.issues.join(" • ")
-                      : "The live agent, model and voice match what you configured"
-                  }
-                  sx={{
-                    height: 24,
-                    fontSize: "11px",
-                    fontWeight: 700,
-                    cursor: "pointer",
-                    border: "1px solid",
-                    borderColor:
-                      sessionContract.status === "mismatch" ? "#fecaca" : "rgba(22,163,74,0.25)",
-                    bgcolor: sessionContract.status === "mismatch" ? "#fee2e2" : "#dcfce7",
-                    color: sessionContract.status === "mismatch" ? "#b91c1c" : "#166534",
-                    "& .MuiChip-icon": {
-                      color: sessionContract.status === "mismatch" ? "#b91c1c" : "#166534",
-                    },
-                  }}
-                />
-              )}
 
               <div style={styles.appHeaderActions}>
                 {hasActiveProfile ? (
@@ -6263,7 +6279,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
           )}
         <OrchestrationDiagramModal
           open={showOrchestrationDiagram}
-          onClose={() => setShowOrchestrationDiagram(false)}
+          onClose={closeOrchestrationDiagram}
           initialMode={liveSettingsMode}
         />
         {showDemoForm && typeof document !== 'undefined' &&

@@ -1102,6 +1102,8 @@ export default function AgentBuilderContent({
   const [audioSubTab, setAudioSubTab] = useState('cascade');
   // Interactive "how orchestration works" diagram dialog.
   const [showOrchestrationDiagram, setShowOrchestrationDiagram] = useState(false);
+  // Stable identity so the (memoized) diagram modal doesn't re-render with the builder.
+  const closeOrchestrationDiagram = useCallback(() => setShowOrchestrationDiagram(false), []);
   const [isEditMode, setIsEditMode] = useState(editMode);
   // Guard so the live-agent deep-link only auto-applies once per open.
   const liveEditAppliedRef = useRef(false);
@@ -3114,7 +3116,7 @@ export default function AgentBuilderContent({
                 {/* Interactive "how orchestration works" diagram — same modal as Quick Tune */}
                 <OrchestrationDiagramModal
                   open={showOrchestrationDiagram}
-                  onClose={() => setShowOrchestrationDiagram(false)}
+                  onClose={closeOrchestrationDiagram}
                   initialMode={audioSubTab}
                 />
 
