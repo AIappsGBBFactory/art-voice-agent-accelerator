@@ -83,6 +83,8 @@ DEFAULT_TEMPERATURE=0.7
 | `AZURE_VOICELIVE_ENDPOINT` | string | `""` | VoiceLive service endpoint |
 | `AZURE_VOICELIVE_API_KEY` | string | `""` | API key (prefer managed identity) |
 | `AZURE_VOICELIVE_MODEL` | string | `"gpt-4o"` | Model: `gpt-4o`, `gpt-4.1`, `gpt-5`, `phi` |
+| `AZURE_VOICELIVE_REGION` | string | `""` | Optional. Overrides the region attributed to the Voice Live account in the builder |
+| `AZURE_OPENAI_REGION` | string | `""` | Optional. Overrides the region attributed to the primary Foundry account |
 
 **Alternative Names (legacy):**
 
@@ -91,6 +93,26 @@ DEFAULT_TEMPERATURE=0.7
 | `AZURE_VOICELIVE_ENDPOINT` | `AZURE_VOICE_LIVE_ENDPOINT` |
 | `AZURE_VOICELIVE_API_KEY` | `AZURE_VOICE_API_KEY` |
 | `AZURE_VOICELIVE_MODEL` | `AZURE_VOICE_LIVE_MODEL` |
+| `AZURE_VOICELIVE_REGION` | `AZURE_VOICE_LIVE_REGION` |
+
+### Region attribution
+
+Voice Live is offered in only a subset of Azure regions, so its account is
+routinely provisioned in a different geography from both the primary AI Foundry
+account (which serves the SpeechCascade LLM and Speech) and the app itself.
+Every turn then pays that distance, which no setting in the Quick Tune panel can
+compensate for — so `GET /api/v1/agent-builder/models` and
+`GET /api/v1/agent-builder/voices` return which resource and region produced each
+list, and the panel renders it plus an advisory when the regions differ.
+
+The region is resolved at runtime from the account actually connected to: Azure
+AI Services stamps `x-ms-region` on the deployments listing the backend already
+makes, so no extra call, management-plane permission or configuration is
+involved. The `*_REGION` variables above are a fallback for when that listing
+can't be reached. The app's own region comes from the Container Apps-provided
+`CONTAINER_APP_ENV_DNS_SUFFIX` (`<hash>.<region>.azurecontainerapps.io`),
+falling back to `AZURE_LOCATION`. When a region can't be determined the panel
+omits the attribution rather than guessing.
 
 ---
 

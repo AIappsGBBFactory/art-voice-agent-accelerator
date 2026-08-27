@@ -409,3 +409,43 @@ def test_response_shape_is_backward_compatible(region):
     assert sum(len(v) for v in payload["by_category"].values()) == payload["total"]
     for voice in payload["voices"]:
         assert {"name", "display_name", "category", "language"} <= set(voice)
+
+
+# =============================================================================
+# RESOURCE / REGION ATTRIBUTION
+# =============================================================================
+# The Speech resource that synthesizes these voices is a specific account in a
+# specific region, and it is frequently not the region the backend runs in. The
+# picker has to be able to say which one, so the user can weigh the round trip
+# every Cascade TTS/STT hop pays.
+
+
+def test_voices_payload_names_the_speech_resource_and_region(region, monkeypatch):
+    monkeypatch.setenv(
+        "AZURE_SPEECH_ENDPOINT", "https://contoso-aif.cognitiveservices.azure.com/"
+    )
+    monkeypatch.setenv("AZURE_SPEECH_REGION", "northcentralus")
+    monkeypatch.setenv("CONTAINER_APP_ENV_DNS_SUFFIX", "calmstone.westus2.azurecontainerapps.io")
+    region(REGION_SAMPLE)
+
+    payload = call()
+
+    assert payload["resource_name"] == "contoso-aif"
+    assert payload["endpoint_host"] == "contoso-aif.cognitiveservices.azure.com"
+    assert payload["region"] == "northcentralus"
+    assert payload["region_key"] == "northcentralus"
+    assert payload["region_source"] == "config"
+    assert payload["app_region_key"] == "westus2"
+
+
+def test_voices_payload_leaves_region_unknown_when_unconfigured(region, monkeypatch):
+    """Never guess a region — the UI hides the attribution instead."""
+    monkeypatch.delenv("AZURE_SPEECH_ENDPOINT", raising=False)
+    monkeypatch.delenv("AZURE_SPEECH_REGION", raising=False)
+    region(REGION_SAMPLE)
+
+    payload = call()
+
+    assert payload["region"] == ""
+    assert payload["region_source"] == ""
+    assert payload["resource_name"] == ""
