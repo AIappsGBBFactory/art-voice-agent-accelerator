@@ -120,11 +120,18 @@ resource "azapi_resource" "conn_aisearch" {
 # diagnostic settings (RequestResponse / AzureOpenAIRequestUsage / Trace). Both are
 # needed for full end-to-end model-processing validation.
 resource "azapi_resource" "conn_appinsights" {
-  count                     = (var.application_insights_id != null && var.application_insights_id != "" && var.application_insights_connection_string != null && var.application_insights_connection_string != "") ? 1 : 0
+  count                     = var.enable_application_insights_connection ? 1 : 0
   type                      = "Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01"
   name                      = local.appinsights_name_from_id
   parent_id                 = azapi_resource.ai_foundry_project.id
   schema_validation_enabled = false
+
+  lifecycle {
+    precondition {
+      condition     = var.application_insights_id != null && var.application_insights_id != "" && var.application_insights_connection_string != null && var.application_insights_connection_string != ""
+      error_message = "enable_application_insights_connection is true but application_insights_id / application_insights_connection_string were not supplied."
+    }
+  }
 
   depends_on = [
     azapi_resource.ai_foundry_project

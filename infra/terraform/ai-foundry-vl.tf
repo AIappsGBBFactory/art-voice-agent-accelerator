@@ -20,6 +20,7 @@ module "ai_foundry_voice_live" {
 
   # Connect the Voice Live project to Application Insights for GenAI tracing /
   # Monitoring (Foundry portal Traces + Application analytics).
+  enable_application_insights_connection = true
   application_insights_id                = azurerm_application_insights.main.id
   application_insights_connection_string = azurerm_application_insights.main.connection_string
 }

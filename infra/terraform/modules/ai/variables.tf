@@ -99,6 +99,16 @@ variable "log_analytics_workspace_id" {
   default     = null
 }
 
+# Terraform must know how many `conn_appinsights` instances to create during plan,
+# but `application_insights_id` / `application_insights_connection_string` are computed
+# attributes of an Application Insights resource created in the same apply (unknown at
+# plan time). Gate the resource on this statically-known flag instead.
+variable "enable_application_insights_connection" {
+  description = "Create the project-level Application Insights connection. Must be known at plan time; set true only when application_insights_id and application_insights_connection_string are supplied."
+  type        = bool
+  default     = false
+}
+
 variable "application_insights_id" {
   description = "Optional Application Insights resource ID to connect to the AI Foundry project for GenAI tracing/observability (Foundry portal Traces + Monitoring blades)."
   type        = string
