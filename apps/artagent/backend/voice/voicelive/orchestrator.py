@@ -37,6 +37,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import time
 from collections import deque
@@ -345,6 +346,19 @@ class LiveOrchestrator:
         self._pending_greeting_agent: str | None = None
         # Bounded deque to preserve last N user utterances for better handoff context
         self._user_message_history: deque[str] = deque(maxlen=5)
+        # User turns carried over from a *previous* connection (restored from
+        # MemoManager in _sync_from_memo_manager). Kept out of the live deque so
+        # the recap stays frozen for the connection's lifetime, which is what
+        # keeps the rendered instructions constant across turns.
+        #
+        # These are also injected as native conversation items at bootstrap
+        # (start -> _switch_to -> _inject_conversation_history, which sees them
+        # because __init__ restores them first), so this block is defence in
+        # depth rather than the sole carrier: that injection is best-effort and
+        # only ever runs on the switch path. It costs nothing in steady state
+        # because it never changes, but it does mean the model currently sees
+        # these turns twice — as items and as prose. See _build_conversation_recap.
+        self._restored_user_messages: tuple[str, ...] = ()
         self._last_user_message: str | None = None  # Keep for backward compatibility
         # Track assistant responses for conversation history persistence
         self._last_assistant_message: str | None = None
@@ -403,6 +417,13 @@ class LiveOrchestrator:
         # (_schedule_throttled_session_update) and inline from the tool-call
         # path, so two updates can legitimately be in flight at once.
         self._pending_context_session_updates: int = 0
+
+        # Fingerprint of the instruction blob last *successfully* pushed, as
+        # (active_agent, sha256). The rendered prompt is ~24KB and over 99% of it
+        # is identical from one turn to the next, so re-uploading it after every
+        # turn is pure waste. Comparing against this lets _update_session_context()
+        # skip the network round-trip entirely when nothing changed.
+        self._last_pushed_instructions: tuple[str, str] | None = None
 
         if self.messenger:
             try:
@@ -552,6 +573,11 @@ class LiveOrchestrator:
             stored_history = self._memo_manager.get_value_from_corememory("user_message_history")
             if stored_history and isinstance(stored_history, list):
                 self._user_message_history = deque(stored_history, maxlen=5)
+                # Snapshot separately so the recap stays frozen for this
+                # connection: turns spoken *on* this connection are appended to
+                # the deque later and must NOT end up here, because the service
+                # already holds those as conversation items.
+                self._restored_user_messages = tuple(self._user_message_history)
                 if stored_history:
                     self._last_user_message = stored_history[-1]
                 logger.debug(
@@ -640,6 +666,8 @@ class LiveOrchestrator:
 
         # Clear user message history
         self._user_message_history.clear()
+        self._restored_user_messages = ()
+        self._last_pushed_instructions = None
         self._last_user_message = None
         self._last_assistant_message = None
 
@@ -694,6 +722,10 @@ class LiveOrchestrator:
 
         # Clear cached HandoffService so it's recreated with new scenario
         self._handoff_service = None
+
+        # A new scenario means new handoff instructions, so the fingerprint of the
+        # last pushed blob no longer describes what the session should be running.
+        self._last_pushed_instructions = None
 
         # Refresh the cached orchestrator config for the new scenario.
         # CRITICAL: Without this, _update_session_context() uses the OLD cached config
@@ -795,6 +827,9 @@ class LiveOrchestrator:
                 # genuine bootstrap and must run the audio reset, even if a
                 # throttled context update is still unaccounted for.
                 self._pending_context_session_updates = 0
+                # apply_voicelive_session pushes its own instructions, so whatever
+                # we last fingerprinted no longer describes the live session.
+                self._last_pushed_instructions = None
                 await agent.apply_voicelive_session(
                     self.conn,
                     system_vars=system_vars,
@@ -923,17 +958,22 @@ class LiveOrchestrator:
 
     async def _update_session_context(self) -> None:
         """
-        Update VoiceLive session instructions with current context.
+        Push the active agent's instructions onto the live VoiceLive session.
 
-        This is called BEFORE each model response to ensure the model's instructions
-        reflect the latest conversation context. Without this, the realtime model
-        tends to forget what was discussed in previous turns.
+        Called before a model response so the instructions reflect anything that
+        changed out-of-band (slots written by a tool, a refreshed session profile,
+        a new scenario handoff block).
 
-        The update includes:
+        The rendered blob is large (~24KB for a typical agent) and almost always
+        identical to the previous turn's, so the push is gated on a fingerprint of
+        the fully-rendered text: when nothing changed, no ``session.update()`` is
+        sent at all. In steady state that means zero per-turn uploads.
+
+        The instructions include:
         - Base agent instructions (from prompt template)
-        - Explicit conversation recap (critical for context retention)
-        - Collected slots (e.g., user's name, account info)
-        - Tool outputs (e.g., CRM lookup results)
+        - Scenario handoff instructions
+        - Cross-connection context that the service does not hold itself
+          (see :meth:`_build_conversation_recap`)
         """
         if not self.conn or not self.active:
             return
@@ -1006,6 +1046,25 @@ class LiveOrchestrator:
             if not updated_instructions:
                 return
 
+            # Nothing changed since the last successful push, so the round-trip
+            # would be a pure no-op: the same ~24KB blob back onto the wire, plus
+            # a `session.updated` echo the handler then has to classify. Skip it.
+            #
+            # CRITICAL: return *before* touching _pending_context_session_updates.
+            # No update means no echo, so crediting the counter here would leave a
+            # dangling credit that the next genuine bootstrap echo would consume —
+            # and that echo would then skip the audio reset it needs.
+            fingerprint = (
+                self.active,
+                hashlib.sha256(updated_instructions.encode("utf-8")).hexdigest(),
+            )
+            if fingerprint == self._last_pushed_instructions:
+                logger.debug(
+                    "[LiveOrchestrator] Session instructions unchanged - skipping update | agent=%s",
+                    self.active,
+                )
+                return
+
             # Update session with new instructions
             from azure.ai.voicelive.models import RequestSession
 
@@ -1025,6 +1084,11 @@ class LiveOrchestrator:
                     0, self._pending_context_session_updates - 1
                 )
                 raise
+
+            # Only record the fingerprint once the service has actually taken the
+            # payload. Caching a failed push would suppress the retry and leave
+            # the session running on stale instructions.
+            self._last_pushed_instructions = fingerprint
 
             logger.debug(
                 "[LiveOrchestrator] Updated session | agent=%s history_len=%d slots=%s",
@@ -1125,52 +1189,81 @@ class LiveOrchestrator:
 
     def _build_conversation_recap(self) -> str:
         """
-        Build an explicit conversation recap to inject into instructions.
+        Build the context block that VoiceLive's own conversation state does not
+        reliably cover.
 
-        This ensures the realtime model remembers what was discussed,
-        even if it tends to forget context between turns.
+        Deliberately narrow. VoiceLive keeps conversation state server-side: every
+        user audio turn becomes a conversation item (the orchestrator handles
+        ``conversation.item.input_audio_transcription.completed``), every assistant
+        turn is an item, and tool results are pushed as ``FunctionCallOutputItem``
+        in :meth:`_handle_response_done`. Re-listing any of that in the
+        instructions is duplication that costs a ~24KB upload every turn, so the
+        turn-by-turn transcript and the "your last response" recap are gone.
+
+        What remains:
+
+        - **Turns restored from a previous connection.** These *are* also injected
+          as native conversation items at bootstrap — ``start()`` calls
+          :meth:`_switch_to`, which calls :meth:`_inject_conversation_history`,
+          and ``__init__`` has already restored them by then. So this block is
+          defence in depth, not the sole carrier. It is retained because that
+          injection is best-effort (its failures are swallowed at debug level) and
+          only ever runs on the switch path — :meth:`_inject_conversation_history`
+          has exactly one call site and never runs mid-call. Being frozen at
+          restore time, it costs nothing in steady state.
+
+          FOLLOW-UP: because the injection already covers them, the model
+          currently sees these turns twice — as conversation items and as prose
+          here. This block is plausibly removable; that is a separate change with
+          its own verification, not a drive-by cleanup.
+
+        - **Collected slots.** Written from tool results into MemoManager and
+          re-read after a reconnect, by which point the originating
+          ``function_call_output`` items are gone. Nothing re-injects these the
+          way ``_inject_conversation_history`` re-injects turns, and no agent
+          prompt template renders them, so this block really is their only channel.
+
+        Both are constant or change only when a tool writes a slot, which is what
+        lets the fingerprint check in :meth:`_update_session_context` short-circuit
+        the per-turn push.
         """
         parts = []
 
-        # Add conversation history recap
-        if self._user_message_history and len(self._user_message_history) > 0:
-            parts.append("## CONVERSATION CONTEXT (DO NOT FORGET)")
-            parts.append("The user has said the following in this conversation:")
-            for i, msg in enumerate(self._user_message_history, 1):
+        # Carried over from a previous connection only — turns spoken on this
+        # connection are already conversation items on the service side.
+        if self._restored_user_messages:
+            parts.append("## EARLIER IN THIS CONVERSATION")
+            parts.append("Before this point the user told you:")
+            for i, msg in enumerate(self._restored_user_messages, 1):
                 parts.append(f'  {i}. "{msg}"')
             parts.append("")
             parts.append(
-                "IMPORTANT: Remember and refer back to what the user has already told you. Do NOT ask them to repeat information they've already provided."
+                "IMPORTANT: Do NOT ask the user to repeat information they've already provided."
             )
 
         # Add collected slots/information
         slots = self._system_vars.get("slots", {})
         if slots:
-            parts.append("")
+            if parts:
+                parts.append("")
             parts.append("## COLLECTED INFORMATION")
             for key, value in slots.items():
                 if value:
                     parts.append(f"  - {key}: {value}")
 
-        # Add last assistant response for context
-        if self._last_assistant_message:
-            parts.append("")
-            parts.append("## YOUR LAST RESPONSE")
-            # Truncate if too long
-            last_resp = self._last_assistant_message
-            if len(last_resp) > 200:
-                last_resp = last_resp[:200] + "..."
-            parts.append(f'You last said: "{last_resp}"')
-
         return "\n".join(parts) if parts else ""
 
     def _schedule_throttled_session_update(self) -> None:
         """
-        Schedule a throttled session context update in the background.
+        Schedule a throttled session context refresh in the background.
 
-        This avoids calling session.update() on the hot path,
-        which can add significant latency to each turn.
-        The actual network call is performed in a background task.
+        The network push itself is now change-gated in
+        :meth:`_update_session_context`, so in steady state this schedules work
+        that sends nothing. The throttle still earns its keep: re-rendering the
+        agent's Jinja prompt is ~24KB of string work, and both
+        :meth:`_refresh_session_context` and the render would otherwise run on
+        every ``response.done``. It also bounds bursts when the tool-call path
+        pushes an update inline at the same time.
         """
         now = time.perf_counter()
         elapsed = now - self._last_session_update_time
@@ -1975,6 +2068,8 @@ class LiveOrchestrator:
                     # Drop any outstanding context-only credits: an agent switch
                     # is a genuine bootstrap whose echo must run the audio reset.
                     self._pending_context_session_updates = 0
+                    # The new agent's instructions replace the ones we fingerprinted.
+                    self._last_pushed_instructions = None
                     await agent.apply_voicelive_session(
                         self.conn,
                         system_vars=system_vars,

@@ -207,6 +207,10 @@ async def test_each_concurrent_context_update_suppresses_one_echo():
     orch, _conn, audio, messenger = _make_orchestrator()
 
     await orch._update_session_context()
+    # The push is change-gated, so an identical second refresh is skipped by
+    # design. Mutate the context to make this a genuinely distinct update —
+    # exactly what a tool writing a slot mid-turn produces.
+    orch._system_vars["slots"] = {"account_last4": "4321"}
     await orch._update_session_context()
     assert orch._pending_context_session_updates == 2
 

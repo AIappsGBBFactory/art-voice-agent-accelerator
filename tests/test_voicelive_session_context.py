@@ -46,6 +46,10 @@ def _make_orchestrator(agent, scenario=None):
     orch.messenger = None
     # Correlates a context-only session.update with its session.updated echo.
     orch._pending_context_session_updates = 0
+    # Fingerprint of the last successfully pushed instruction blob.
+    orch._last_pushed_instructions = None
+    # Turns carried over from a previous connection (none for these tests).
+    orch._restored_user_messages = ()
     # Bypass the cached property's resolve_orchestrator_config() lookup.
     orch._cached_orchestrator_config = SimpleNamespace(
         scenario=scenario, scenario_name="banking" if scenario else None
