@@ -30,6 +30,23 @@ Live picker lets a user select a model that does not exist on the Voice Live
 account, which produces a connection that never responds. For that reason the
 voicelive mode never falls back to the primary catalog: if the Voice Live
 endpoint is unset it returns an empty list with `source="unavailable"`.
+
+Resource and region attribution
+-------------------------------
+Because those are two different accounts, and Voice Live ships in only a subset
+of regions, they are routinely provisioned in different geographies from each
+other AND from the app — so a turn can pay a hop nothing in the UI would
+otherwise reveal. `GET /models` and `GET /voices` therefore tag every list with
+the account and region that produced it (`resource_name`, `endpoint_host`,
+`region`, `region_key`, `region_source`) plus the app's own region
+(`app_region`, `app_region_key`) to compare against.
+
+The region is read from the account actually connected to: Azure AI Services
+stamps `x-ms-region` on the deployments listing already being made, so no extra
+call, management-plane permission or configuration is required. `region_source`
+distinguishes that (`"resource"`) from the configured fallback (`"config"`), and
+is `""` when the region could not be determined — in which case the UI omits the
+attribution rather than guessing.
 """
 
 from __future__ import annotations
@@ -903,6 +920,12 @@ async def list_available_voices(
 
     locales = sorted({v.language for v in voices})
 
+    # Which Speech resource + region synthesized this list. In the default
+    # topology Speech is the same AI Foundry account that serves the Cascade
+    # LLM, so this is also the region every Cascade STT/TTS hop travels to.
+    speech_endpoint = os.getenv("AZURE_SPEECH_ENDPOINT") or ""
+    speech_region = (os.getenv("AZURE_SPEECH_REGION") or "").strip()
+
     return {
         "status": "success",
         "total": len(voices),
@@ -919,6 +942,9 @@ async def list_available_voices(
         "hd_from_catalog": hd_from_catalog,
         "source": "region-validated" if verified else "static-catalog",
         "notes": notes,
+        "resource_name": _endpoint_resource_name(speech_endpoint),
+        "endpoint_host": _endpoint_host(speech_endpoint),
+        **_region_payload(speech_region, source="config"),
         "response_time_ms": round((time.time() - start) * 1000, 2),
     }
 
@@ -1025,10 +1051,13 @@ def _resolve_deployment_source(mode: str) -> dict[str, Any]:
     user pick a model that AVL cannot serve: the socket connects but the model
     never responds and the session dies on the ~900s idle timeout.
 
-    Returns ``{endpoint, api_key, resource_name, restrict_modes, fell_back}``.
+    Returns ``{endpoint, api_key, resource_name, restrict_modes, fell_back, region_hint}``.
+    ``region_hint`` is a configured fallback only — the authoritative region is
+    the one the account reports on the deployments listing (``x-ms-region``).
     """
     aoai_endpoint = _normalize_control_plane_endpoint(os.getenv("AZURE_OPENAI_ENDPOINT") or "")
     aoai_key = os.getenv("AZURE_OPENAI_KEY") or None
+    aoai_region_hint = _configured_primary_region(aoai_endpoint)
 
     if mode != "voicelive":
         return {
@@ -1037,6 +1066,7 @@ def _resolve_deployment_source(mode: str) -> dict[str, Any]:
             "resource_name": _endpoint_resource_name(aoai_endpoint),
             "restrict_modes": None,
             "fell_back": False,
+            "region_hint": aoai_region_hint,
         }
 
     vl_endpoint = _normalize_control_plane_endpoint(
@@ -1050,6 +1080,7 @@ def _resolve_deployment_source(mode: str) -> dict[str, Any]:
             "resource_name": _endpoint_resource_name(aoai_endpoint),
             "restrict_modes": ["voicelive"],
             "fell_back": True,
+            "region_hint": aoai_region_hint,
         }
 
     vl_key = (
@@ -1058,24 +1089,109 @@ def _resolve_deployment_source(mode: str) -> dict[str, Any]:
         # Only reuse the AOAI key when both modes point at the same account.
         or (aoai_key if vl_endpoint == aoai_endpoint else None)
     )
+    vl_region_hint = (
+        os.getenv("AZURE_VOICELIVE_REGION") or os.getenv("AZURE_VOICE_LIVE_REGION") or ""
+    ).strip() or (aoai_region_hint if vl_endpoint == aoai_endpoint else "")
     return {
         "endpoint": vl_endpoint,
         "api_key": vl_key,
         "resource_name": _endpoint_resource_name(vl_endpoint),
         "restrict_modes": ["voicelive"],
         "fell_back": False,
+        "region_hint": vl_region_hint,
     }
+
+
+def _configured_primary_region(aoai_endpoint: str) -> str:
+    """Configured region for the primary Azure OpenAI / AI Foundry account.
+
+    ``AZURE_SPEECH_REGION`` is only a valid stand-in when Speech and Azure
+    OpenAI are the same Foundry account (the default topology here, where both
+    endpoints are exposed by one AIServices resource). When they are separate
+    accounts it describes a different resource entirely, so reporting it would
+    attribute the wrong region to the model list.
+    """
+    explicit = (os.getenv("AZURE_OPENAI_REGION") or "").strip()
+    if explicit:
+        return explicit
+    speech_endpoint = os.getenv("AZURE_SPEECH_ENDPOINT") or ""
+    same_account = bool(aoai_endpoint) and (
+        _endpoint_resource_name(speech_endpoint) == _endpoint_resource_name(aoai_endpoint)
+    )
+    if same_account:
+        return (os.getenv("AZURE_SPEECH_REGION") or "").strip()
+    return ""
 
 
 def _endpoint_resource_name(endpoint: str) -> str:
     """Extract the account name from an endpoint host (for UI attribution)."""
-    host = (endpoint or "").split("://")[-1].split("/")[0]
+    host = _endpoint_host(endpoint)
     return host.split(".")[0] if host else ""
+
+
+def _endpoint_host(endpoint: str) -> str:
+    """Extract the bare host from an endpoint URL (for UI attribution)."""
+    return (endpoint or "").split("://")[-1].split("/")[0].split("?")[0]
+
+
+# Azure AI Services / Azure OpenAI stamp the serving region onto every
+# data-plane response. Reading it off the deployments listing we already make is
+# the only region signal that needs no extra call, no management-plane
+# permission and no new configuration: the region of the account the app is
+# ACTUALLY connected to, as that account reports it.
+_REGION_HEADER = "x-ms-region"
+
+
+def _region_key(value: str | None) -> str:
+    """Canonicalize a region for comparison.
+
+    Azure reports regions in two shapes — the display form from
+    ``x-ms-region`` ("Sweden Central") and the slug form from configuration
+    ("swedencentral"). Comparing them raw makes an identical region look like a
+    cross-region hop, so every equality check goes through this.
+    """
+    return "".join(ch for ch in (value or "").lower() if ch.isalnum())
+
+
+def _app_region() -> str:
+    """Region the backend itself runs in, or "" when it can't be determined.
+
+    Container Apps injects ``CONTAINER_APP_ENV_DNS_SUFFIX`` as
+    ``<hash>.<region>.azurecontainerapps.io``, so the region the app serves from
+    is already in the environment — no new deployment output needed. An
+    environment configured with a custom DNS suffix no longer encodes the
+    region, hence the explicit suffix check before parsing. ``AZURE_LOCATION``
+    covers local/non-Container-Apps hosting.
+    """
+    suffix = (os.getenv("CONTAINER_APP_ENV_DNS_SUFFIX") or "").strip().lower()
+    if suffix.endswith("azurecontainerapps.io"):
+        labels = suffix.split(".")
+        # <hash>.<region>.azurecontainerapps.io -> the label before "azurecontainerapps"
+        if len(labels) >= 3:
+            return labels[-3]
+    return (os.getenv("AZURE_LOCATION") or "").strip()
+
+
+def _region_payload(region: str, *, source: str) -> dict[str, Any]:
+    """Build the region attribution block shared by /models and /voices.
+
+    ``source`` is ``"resource"`` when the region came from the account itself
+    (``x-ms-region``), ``"config"`` when it came from configuration, and ``""``
+    when unknown — the UI stays silent rather than guessing on ``""``.
+    """
+    app_region = _app_region()
+    return {
+        "region": region,
+        "region_key": _region_key(region),
+        "region_source": source if region else "",
+        "app_region": app_region,
+        "app_region_key": _region_key(app_region),
+    }
 
 
 def _fetch_real_deployments(
     endpoint: str | None = None, api_key: str | None = None
-) -> list[dict[str, Any]] | None:
+) -> dict[str, Any] | None:
     """List the ACTUAL model deployments on the given Foundry/Azure OpenAI
     resource via the data-plane REST API.
 
@@ -1083,8 +1199,10 @@ def _fetch_real_deployments(
     entries like ``gpt-4-0125-Preview`` / ``dall-e-3-3.0``), NOT what's actually
     deployed — so this is the correct source for "what models can I use". Reuses
     the same endpoint + key/Entra credential as the OpenAI client (no resource
-    group / management plane needed). Returns a list of
-    ``{deployment_id, model_name, created_at}`` or None when unavailable.
+    group / management plane needed). Returns
+    ``{"deployments": [{deployment_id, model_name, created_at}, ...], "region": str}``
+    or None when unavailable. ``region`` is the serving region the account
+    reported via ``x-ms-region``, or "" when the header was absent.
 
     ``endpoint``/``api_key`` default to the primary Azure OpenAI resource; pass
     the Voice Live account's values to list what VoiceLive can actually serve.
@@ -1145,10 +1263,14 @@ def _fetch_real_deployments(
                 "created_at": it.get("created_at") or it.get("created"),
             })
         if out:
+            region = (r.headers.get(_REGION_HEADER) or "").strip()
             logger.info(
-                "Listed %d real deployments via data-plane (api-version=%s)", len(out), ver
+                "Listed %d real deployments via data-plane (api-version=%s, region=%s)",
+                len(out),
+                ver,
+                region or "unknown",
             )
-            return out
+            return {"deployments": out, "region": region}
     return None
 
 
@@ -1159,7 +1281,8 @@ def _fetch_real_deployments(
     description=(
         "Get list of available OpenAI model deployments. Pass mode=voicelive to "
         "list the deployments on the Voice Live (AVL) resource instead of the "
-        "primary AI Foundry resource."
+        "primary AI Foundry resource. The response names the resource and region "
+        "that served the list so callers can surface cross-region latency."
     ),
     tags=["Agent Builder"],
 )
@@ -1190,15 +1313,29 @@ async def list_available_models(refresh: bool = False, mode: str | None = None) 
         cached["response_time_ms"] = round((time.time() - start) * 1000, 2)
         return cached
 
-    def _cache_and_return(payload: dict[str, Any]) -> dict[str, Any]:
-        """Store a successful payload in the per-mode TTL cache and return it."""
+    def _cache_and_return(
+        payload: dict[str, Any], *, discovered_region: str = ""
+    ) -> dict[str, Any]:
+        """Store a successful payload in the per-mode TTL cache and return it.
+
+        ``discovered_region`` is what the account itself reported on the
+        deployments listing; it always wins over the configured hint, which only
+        covers the paths where no listing was retrieved.
+        """
+        region = discovered_region or source["region_hint"]
         payload = {
             **payload,
             "mode": resolved_mode,
             "resource_name": source["resource_name"],
+            # Host of the account actually serving this mode's model list, so the
+            # UI can attribute the list to a specific resource unambiguously.
+            "endpoint_host": _endpoint_host(source["endpoint"]),
             # True when VoiceLive was asked for but no dedicated AVL resource is
             # configured, so the primary account was used instead.
             "resource_fallback": source["fell_back"],
+            **_region_payload(
+                region, source="resource" if discovered_region else "config"
+            ),
         }
         _AVAILABLE_MODELS_CACHE[resolved_mode] = {
             "payload": payload,
@@ -1211,7 +1348,8 @@ async def list_available_models(refresh: bool = False, mode: str | None = None) 
         # mode. This is what the user can really use (vs client.models.list()'s
         # 300+ region base-model catalog). Falls back to the catalog below.
         real = _fetch_real_deployments(source["endpoint"], source["api_key"])
-        if real:
+        if real and real["deployments"]:
+            deployments = real["deployments"]
             models = [
                 _build_model_entry(
                     d["deployment_id"],
@@ -1219,7 +1357,7 @@ async def list_available_models(refresh: bool = False, mode: str | None = None) 
                     d.get("created_at"),
                     restrict_modes=source["restrict_modes"],
                 )
-                for d in real
+                for d in deployments
             ]
             by_category: dict[str, list[dict[str, Any]]] = {}
             for model in models:
@@ -1228,15 +1366,18 @@ async def list_available_models(refresh: bool = False, mode: str | None = None) 
                 (m["deployment_id"] for m in models if "gpt-4o" in m["deployment_id"].lower()),
                 None,
             ) or (models[0]["deployment_id"] if models else "gpt-4o")
-            return _cache_and_return({
-                "status": "success",
-                "total": len(models),
-                "models": models,
-                "by_category": by_category,
-                "default_model": default_model,
-                "source": "deployments",
-                "response_time_ms": round((time.time() - start) * 1000, 2),
-            })
+            return _cache_and_return(
+                {
+                    "status": "success",
+                    "total": len(models),
+                    "models": models,
+                    "by_category": by_category,
+                    "default_model": default_model,
+                    "source": "deployments",
+                    "response_time_ms": round((time.time() - start) * 1000, 2),
+                },
+                discovered_region=real["region"],
+            )
 
         if resolved_mode == "voicelive":
             # Never fall back to the primary AOAI catalog for VoiceLive: offering
@@ -1248,15 +1389,19 @@ async def list_available_models(refresh: bool = False, mode: str | None = None) 
                 "so the builder falls back to the managed Voice Live catalog.",
                 source["endpoint"] or "<unset>",
             )
-            return _cache_and_return({
-                "status": "success",
-                "total": 0,
-                "models": [],
-                "by_category": {},
-                "default_model": os.getenv("AZURE_VOICELIVE_MODEL") or "gpt-realtime",
-                "source": "unavailable",
-                "response_time_ms": round((time.time() - start) * 1000, 2),
-            })
+            return _cache_and_return(
+                {
+                    "status": "success",
+                    "total": 0,
+                    "models": [],
+                    "by_category": {},
+                    "default_model": os.getenv("AZURE_VOICELIVE_MODEL") or "gpt-realtime",
+                    "source": "unavailable",
+                    "response_time_ms": round((time.time() - start) * 1000, 2),
+                },
+                # An empty listing can still have reported the account's region.
+                discovered_region=real["region"] if real else "",
+            )
 
         # Import Azure OpenAI client
         from src.aoai.client import get_client as get_aoai_client

@@ -51,6 +51,7 @@ import {
 } from '../utils/session.js';
 import logger from '../utils/logger.js';
 import { fetchFoundryModels, fetchVoiceLiveModels, deriveModelOptions, MANAGED_VOICELIVE_MODELS } from '../utils/foundryModels.js';
+import { crossRegionHint, describeModelSource, resourceAttribution } from '../utils/foundryRegions.js';
 import { setVoiceSession, getSessionTraceparent, getDeviceId, trackEvent, trackMetric, trackException } from '../utils/telemetry.js';
 import { buildAuthQueryParams, getAuthenticatedUser } from '../utils/auth.js';
 import { reduceConversationPayload } from '../utils/conversationBubbles.js';
@@ -1284,6 +1285,9 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
   const [liveSettingsBusy, setLiveSettingsBusy] = useState(false);
   const [liveSettingsLoading, setLiveSettingsLoading] = useState(false);
   const [liveVoices, setLiveVoices] = useState([]);
+  // Resource + region attribution for the TTS voice list — the Speech account
+  // every Cascade synth/recognition hop travels to. null until loaded.
+  const [liveVoiceSource, setLiveVoiceSource] = useState(null);
   // Which settings surface the popover is showing: 'voicelive' | 'cascade'.
   // Defaults from the active stream mode but the user can switch freely.
   const [liveSettingsMode, setLiveSettingsMode] = useState('voicelive');
@@ -1298,6 +1302,10 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
   // used to populate the Quick Tune model dropdown (esp. for BYOM). null = not
   // loaded / query failed → fall back to the static presets.
   const [liveModelOptions, setLiveModelOptions] = useState(null);
+  // Resource + region attribution for the CASCADE model list (which account
+  // served it, in which region). deriveModelOptions above keeps only the option
+  // ids, so this holds the metadata the Quick Tune panel attributes the list to.
+  const [liveModelSource, setLiveModelSource] = useState(null);
   // Deployments on the Voice Live (AVL) resource — a SEPARATE Azure account from
   // the primary Foundry one above. VoiceLive/BYOM can only serve what's deployed
   // here, so the VoiceLive dropdown must never use the primary resource's list.
@@ -2125,12 +2133,14 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       // Neither throws; null on failure → static presets remain the fallback.
       fetchFoundryModels().then((live) => {
         setLiveModelOptions(live ? deriveModelOptions(live.models) : null);
+        setLiveModelSource(live);
       });
       fetchVoiceLiveModels().then(setVoiceLiveModelInfo);
 
       if (voicesRes && voicesRes.ok) {
         const vd = await voicesRes.json();
         setLiveVoices(Array.isArray(vd.voices) ? vd.voices : []);
+        setLiveVoiceSource(resourceAttribution(vd));
       }
 
       // Prefer the live session-agent config; fall back to the agent's template.
@@ -4915,18 +4925,27 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                   const voiceLiveDeployed = voiceLiveModelInfo?.options || [];
                   const voiceLiveDeployedIds = new Set(voiceLiveDeployed.map((o) => o.id));
                   const liveModeList = isVoiceLive ? voiceLiveDeployed : liveModelOptions?.cascade;
+                  // Which Azure account + region actually backs the list on screen.
+                  // These are usually two DIFFERENT accounts in two different
+                  // geographies (Voice Live ships in only a subset of regions),
+                  // and neither is necessarily where this app runs — so every
+                  // turn can pay a hop the panel otherwise never mentions.
+                  const activeModelSource = isVoiceLive ? voiceLiveModelInfo : liveModelSource;
+                  const otherModelSource = isVoiceLive ? liveModelSource : voiceLiveModelInfo;
                   let modelPresets;
                   let modelSourceLabel = '';
                   let usingManaged = false;
                   if (isVoiceLive && !byomOn) {
                     modelPresets = MANAGED_VOICELIVE_MODELS.map((m) => m.id);
-                    modelSourceLabel = ' · managed Voice Live';
+                    // Managed models are Microsoft-hosted, so the AVL account isn't
+                    // their source — but the socket still terminates there, so its
+                    // region is still the distance the audio travels.
+                    modelSourceLabel = describeModelSource(activeModelSource, { managed: true });
                     usingManaged = true;
                   } else if (liveModeList && liveModeList.length) {
                     modelPresets = liveModeList.map((o) => o.id);
-                    modelSourceLabel = isVoiceLive
-                      ? ` · ${voiceLiveModelInfo?.resourceName || 'Voice Live'} deployments`
-                      : ' · connected Foundry resource';
+                    modelSourceLabel = describeModelSource(activeModelSource)
+                      || (isVoiceLive ? ' · Voice Live deployments' : ' · connected Foundry resource');
                   } else {
                     modelPresets = isVoiceLive
                       ? MANAGED_VOICELIVE_MODELS.map((m) => m.id)
@@ -4987,6 +5006,29 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                     return null;
                   })();
                   const applyBlocked = Boolean(needsByomForModel || byomProfileConflict);
+                  // Geographic distance advisory. Unlike the guards above this
+                  // never blocks Apply — the configuration is valid, it just
+                  // costs round-trip latency the user can't tune away, so it
+                  // renders informational rather than in the error styling.
+                  const regionAdvisory = crossRegionHint({
+                    active: {
+                      label: isVoiceLive ? 'Voice Live' : 'Cascade models',
+                      region: activeModelSource?.region,
+                      resourceFallback: activeModelSource?.resourceFallback,
+                    },
+                    app: activeModelSource?.appRegion,
+                    other: {
+                      label: isVoiceLive ? 'Cascade models' : 'Voice Live',
+                      region: otherModelSource?.region,
+                    },
+                  });
+                  // The Speech resource is a separate leg: in Cascade every synth
+                  // and recognition round-trips to it, and it need not share the
+                  // app's region either.
+                  const voiceRegionAdvisory = crossRegionHint({
+                    active: { label: 'Voices', region: liveVoiceSource?.region },
+                    app: liveVoiceSource?.appRegion,
+                  });
                   const rowStyle = { marginBottom: '14px' };
                   const labelStyle = {
                     display: 'flex',
@@ -5292,6 +5334,26 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                               : '🔤 Cascaded STT→LLM→TTS inside VoiceLive'}
                           </div>
                         )}
+                        {/* Which Azure account served this list. Cascade and VoiceLive
+                            read DIFFERENT resources, so name the one in use rather than
+                            leaving the swap invisible. */}
+                        {(activeModelSource?.resourceName || activeModelSource?.region) && (
+                          <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '6px', lineHeight: 1.5 }}>
+                            {usingManaged ? 'Connects via ' : 'Served by '}
+                            <strong style={{ color: '#64748b' }}>
+                              {activeModelSource.resourceName || 'the connected resource'}
+                            </strong>
+                            {activeModelSource.region && ` · ${activeModelSource.region}`}
+                            {activeModelSource.appRegion
+                              && ` · app in ${activeModelSource.appRegion}`}
+                            {activeModelSource.resourceFallback && (
+                              <span style={{ display: 'block' }}>
+                                No dedicated Voice Live account — the primary Foundry
+                                resource serves both modes.
+                              </span>
+                            )}
+                          </div>
+                        )}
                         {needsByomForModel && (
                           <div
                             style={{
@@ -5394,6 +5456,48 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                               <strong>{chosenModel}</strong> {byomProfileConflict.body}
                               {' '}Applying this pair connects fine and keeps transcribing, but the
                               agent never responds.
+                            </div>
+                          </div>
+                        )}
+                        {/* Advisory, not a blocker: the config is valid, it just costs
+                            distance. Informational indigo rather than the red used above
+                            for the settings that actually break the session. */}
+                        {regionAdvisory && (
+                          <div
+                            style={{
+                              marginTop: '8px',
+                              padding: '10px 12px',
+                              borderRadius: '10px',
+                              background: 'linear-gradient(135deg, #eef2ff, #e0e7ff)',
+                              border: '1px solid #a5b4fc',
+                              boxShadow: '0 2px 8px rgba(79,70,229,0.12)',
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                fontSize: '11px',
+                                fontWeight: 800,
+                                color: '#4338ca',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.4px',
+                                marginBottom: '6px',
+                              }}
+                            >
+                              <span style={{ fontSize: '13px' }}>🌍</span>
+                              {regionAdvisory.title}
+                            </div>
+                            <div style={{ fontSize: '11px', lineHeight: 1.5, color: '#3730a3' }}>
+                              {regionAdvisory.lines.map((line) => (
+                                <p key={line} style={{ margin: '0 0 4px' }}>{line}</p>
+                              ))}
+                              <p style={{ margin: 0, opacity: 0.85 }}>
+                                Voice Live is only offered in some regions, so this is often
+                                unavoidable — but it explains latency the settings below
+                                can&apos;t improve.
+                              </p>
                             </div>
                           </div>
                         )}
@@ -5509,7 +5613,9 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                       )}
 
                       {/* VOICE */}
-                      <div style={sectionLabel}>Voice (TTS)</div>
+                      <div style={sectionLabel}>
+                        Voice (TTS){!isVoiceLive ? describeModelSource(liveVoiceSource) : ''}
+                      </div>
                       <div style={rowStyle}>
                         <select
                           style={selectStyle}
@@ -5527,6 +5633,15 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                             </optgroup>
                           ))}
                         </select>
+                        {/* In VoiceLive the audio is synthesized inside the Voice Live
+                            session, so the standalone Speech region doesn't apply. */}
+                        {!isVoiceLive && voiceRegionAdvisory && (
+                          <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '6px', lineHeight: 1.5 }}>
+                            🌍 Synthesized in {liveVoiceSource.region}, while this app runs in
+                            {' '}{liveVoiceSource.appRegion} — each turn&apos;s speech crosses that
+                            distance too.
+                          </div>
+                        )}
                       </div>
                       <div style={rowStyle}>
                         <div style={labelStyle}><span>Style</span></div>

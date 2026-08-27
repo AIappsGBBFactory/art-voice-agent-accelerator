@@ -17,6 +17,9 @@
  * empty list) they return null so callers can fall back to their static presets.
  */
 import { API_BASE_URL } from '../config/constants.js';
+import { pickAttribution, resourceAttribution } from './foundryRegions.js';
+
+export { crossRegionHint, describeModelSource, regionKeyOf } from './foundryRegions.js';
 
 /**
  * Classify a model by its VoiceLive audio architecture. Mirrors the backend
@@ -102,8 +105,8 @@ export const isManagedVoiceLiveModel = (deploymentId) => {
  * deployment Voice Live can't reach: the session connects but the agent never
  * responds. Always pass 'voicelive' for the VoiceLive model list.
  *
- * Returns { models, source, byCategory, resourceName, resourceFallback } or
- * null on failure/empty.
+ * Returns { models, source, byCategory, ...resourceAttribution } or null on
+ * failure/empty. See `foundryRegions.js` for the attribution fields.
  */
 export async function fetchFoundryModels(mode) {
   try {
@@ -117,8 +120,7 @@ export async function fetchFoundryModels(mode) {
       models,
       source: data.source || 'azure_openai',
       byCategory: data.by_category || {},
-      resourceName: data.resource_name || '',
-      resourceFallback: Boolean(data.resource_fallback),
+      ...resourceAttribution(data),
     };
   } catch {
     return null;
@@ -128,18 +130,14 @@ export async function fetchFoundryModels(mode) {
 /**
  * Fetch the deployments on the Voice Live (AVL) resource and return them as
  * ready-to-render VoiceLive dropdown options, or null when unavailable.
- * Returns { options, resourceName, resourceFallback }.
+ * Returns { options, ...resourceAttribution }.
  */
 export async function fetchVoiceLiveModels() {
   const live = await fetchFoundryModels('voicelive');
   if (!live) return null;
   const { voicelive } = deriveModelOptions(live.models);
   if (!voicelive.length) return null;
-  return {
-    options: voicelive,
-    resourceName: live.resourceName,
-    resourceFallback: live.resourceFallback,
-  };
+  return { options: voicelive, ...pickAttribution(live) };
 }
 
 /**
@@ -204,6 +202,9 @@ export async function fetchRegionVoices() {
       notes: data.notes || [],
       source: data.source || 'static-catalog',
       defaultVoice: data.default_voice || null,
+      // Which Speech resource + region synthesizes these voices — the leg every
+      // Cascade TTS/STT hop travels to.
+      ...resourceAttribution(data),
     };
   } catch {
     return null;
