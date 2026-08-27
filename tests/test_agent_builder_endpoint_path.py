@@ -316,3 +316,71 @@ class TestLiveSettingsPersist:
         assert cloned.metadata.get("cloned_from") == "Concierge"
         # The shared registry agent must NOT be mutated.
         assert base.voice.name == "en-US-JennyNeural"
+
+
+# =============================================================================
+# QUICK TUNE -> RECONNECT: THE ACTIVE SCENARIO MUST SURVIVE
+# =============================================================================
+
+
+class TestQuickTuneReconnectKeepsScenario:
+    """End-to-end: PUT a Quick Tune agent, then re-resolve like a reconnect does.
+
+    A Quick Tune apply persists the session agent and forces the VoiceLive socket
+    to reconnect. The reconnect must keep the scenario the caller was in and only
+    repoint its start agent at the tuned agent — VoiceLive binds the generative
+    model and the BYOM profile at connect() time, so the start agent is the only
+    place a per-agent model override can take effect.
+    """
+
+    @pytest.mark.asyncio
+    async def test_tuned_agent_starts_the_preserved_scenario(self, session_id):
+        from apps.artagent.backend.registries.agentstore.loader import (
+            build_handoff_map,
+            discover_agents,
+        )
+        from apps.artagent.backend.registries.scenariostore import load_scenario
+        from apps.artagent.backend.voice.shared import (
+            build_effective_registry,
+            resolve_orchestrator_config,
+        )
+
+        base_agents = discover_agents()
+        app_state_handoff_map = build_handoff_map(base_agents)
+
+        # 1. Quick Tune applies to the agent the caller is talking to.
+        payload = frontend_payload(name="BankingConcierge", voice_name="en-US-GuyNeural")
+        config = DynamicAgentConfig.model_validate(payload)
+        await update_session_agent(
+            session_id, config, stub_request(unified_agents=base_agents)
+        )
+        session_agent = get_session_agent(session_id)
+        assert session_agent is not None
+
+        # 2. Reconnect resolves the scenario, then merges the session agent.
+        resolved = resolve_orchestrator_config(
+            session_id=session_id, scenario_name="banking"
+        )
+        agents, start_agent, handoff_map = build_effective_registry(
+            resolved,
+            base_agents=base_agents,
+            session_agent=session_agent,
+            app_state_handoff_map=app_state_handoff_map,
+        )
+
+        # Scenario preserved, start agent repointed at the tuned agent.
+        assert resolved.scenario_name == "banking"
+        assert start_agent == "BankingConcierge"
+        assert resolved.scenario.start_agent == "BankingConcierge"
+        assert len(resolved.scenario.handoffs) == len(load_scenario("banking").handoffs)
+
+        # Full registry survives and scenario routing wins.
+        assert len(agents) == len(base_agents)
+        assert handoff_map["handoff_concierge"] == "BankingConcierge"
+
+        # The tuned config is what the connection will bind.
+        assert agents[start_agent] is session_agent
+        assert agents[start_agent].voice.name == "en-US-GuyNeural"
+
+        # The shared scenario cache is untouched for other sessions.
+        assert load_scenario("banking").start_agent == "BankingConcierge"

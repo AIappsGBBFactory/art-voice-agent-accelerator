@@ -320,6 +320,7 @@ class LiveOrchestrator:
         transport: str = "acs",
         model_name: str | None = None,
         memo_manager: MemoManager | None = None,
+        orchestrator_config: Any | None = None,
     ):
         self.conn = conn
         self.agents = agents
@@ -395,6 +396,13 @@ class LiveOrchestrator:
         # Initialize HandoffService for unified handoff resolution
         self._handoff_service: HandoffService | None = None
 
+        # Seed the resolved scenario config from the caller (the handler already
+        # resolved it with the connection's scenario name). Without this the
+        # lazy property re-resolves WITHOUT a scenario name and silently returns
+        # scenario=None, which drops declarative handoff instructions and routing.
+        if orchestrator_config is not None:
+            self._cached_orchestrator_config = orchestrator_config
+
         # Sync state from MemoManager if available
         if self._memo_manager:
             self._sync_from_memo_manager()
@@ -434,8 +442,14 @@ class LiveOrchestrator:
         """
         Get cached orchestrator config for scenario resolution.
 
-        Lazily resolves and caches the config on first access to avoid
-        repeated calls to resolve_orchestrator_config() during the session.
+        Normally seeded by the handler via the ``orchestrator_config`` constructor
+        argument, so the orchestrator sees exactly the scenario the connection was
+        established with.
+
+        The lazy fallback below exists only for callers that construct the
+        orchestrator directly. It cannot know the connection's scenario name, so it
+        can only find session-scoped scenarios or the ``AGENT_SCENARIO`` default —
+        prefer passing ``orchestrator_config``.
 
         The config is cached per-instance (session lifetime), which is appropriate
         because scenario changes during a call would be disruptive anyway.
@@ -619,6 +633,8 @@ class LiveOrchestrator:
         handoff_map: dict[str, str],
         start_agent: str | None = None,
         scenario_name: str | None = None,
+        *,
+        scenario: Any | None = None,
     ) -> None:
         """
         Update the orchestrator with a new scenario configuration.
@@ -632,6 +648,12 @@ class LiveOrchestrator:
             handoff_map: New handoff routing map
             start_agent: Optional new start agent to switch to
             scenario_name: Optional scenario name for logging
+
+        Keyword Args:
+            scenario: Optional ``ScenarioConfig`` for the new scenario. When given,
+                the cached config is re-seeded with it so handoff instructions and
+                routing follow the new scenario. When omitted the cache is simply
+                dropped, which forces a re-resolve that cannot see a scenario name.
         """
         old_agents = list(self.agents.keys())
         old_active = self.active
@@ -646,10 +668,23 @@ class LiveOrchestrator:
         # Clear cached HandoffService so it's recreated with new scenario
         self._handoff_service = None
 
-        # Clear cached orchestrator config so it's resolved with new scenario
+        # Refresh the cached orchestrator config for the new scenario.
         # CRITICAL: Without this, _update_session_context() uses the OLD cached config
-        # and injects the wrong handoff instructions for the new scenario
-        if hasattr(self, "_cached_orchestrator_config"):
+        # and injects the wrong handoff instructions for the new scenario.
+        if scenario is not None:
+            from apps.artagent.backend.voice.shared.config_resolver import (
+                OrchestratorConfigResult,
+            )
+
+            self._cached_orchestrator_config = OrchestratorConfigResult(
+                start_agent=start_agent or self.active,
+                agents=agents,
+                handoff_map=handoff_map,
+                scenario=scenario,
+                scenario_name=scenario_name or getattr(scenario, "name", None),
+                template_vars=dict(getattr(scenario, "global_template_vars", None) or {}),
+            )
+        elif hasattr(self, "_cached_orchestrator_config"):
             delattr(self, "_cached_orchestrator_config")
 
         # Clear visited agents for fresh scenario experience

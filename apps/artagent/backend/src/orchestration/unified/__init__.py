@@ -353,6 +353,7 @@ def update_session_scenario(session_id: str, scenario) -> bool:
                 handoff_map=config.handoff_map,
                 start_agent=scenario.start_agent,
                 scenario_name=scenario.name,
+                scenario=scenario,
             )
             logger.info(
                 "🔄 Session scenario updated in VoiceLive orchestrator | session=%s scenario=%s",
