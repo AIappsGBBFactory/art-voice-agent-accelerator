@@ -891,15 +891,23 @@ class LiveOrchestrator:
             if self._last_assistant_message:
                 context_vars["last_assistant_response"] = self._last_assistant_message
 
+            # ``self.agents`` holds UnifiedAgent instances directly (see
+            # update_scenario: "no adapter needed"). Older adapter-wrapped agents
+            # exposed the UnifiedAgent as ``_agent``, so unwrap defensively —
+            # matching _switch_to/_init_mcp_for_agent. Reaching for ``_agent``
+            # unconditionally raised AttributeError on every turn, which silently
+            # disabled instruction refresh and conversation recap entirely.
+            ua = getattr(agent, "_agent", agent)
+
             # Render base instructions from agent prompt template
-            base_instructions = agent._agent.render_prompt(context_vars) or ""
+            base_instructions = ua.render_prompt(context_vars) or ""
 
             # Inject handoff instructions from scenario configuration
             # Use the cached orchestrator config (supports both file-based and session-scoped)
             config = self._orchestrator_config
-            if config.scenario and agent._agent.name:
+            if config.scenario and ua.name:
                 # Use scenario.build_handoff_instructions directly (works for session scenarios)
-                handoff_instructions = config.scenario.build_handoff_instructions(agent._agent.name)
+                handoff_instructions = config.scenario.build_handoff_instructions(ua.name)
                 if handoff_instructions:
                     base_instructions = (
                         f"{base_instructions}\n\n{handoff_instructions}"
@@ -908,7 +916,7 @@ class LiveOrchestrator:
                     )
                     logger.info(
                         "[LiveOrchestrator] Injected handoff instructions | agent=%s scenario=%s len=%d",
-                        agent._agent.name,
+                        ua.name,
                         config.scenario_name,
                         len(handoff_instructions),
                     )
@@ -916,7 +924,7 @@ class LiveOrchestrator:
                 logger.debug(
                     "[LiveOrchestrator] No scenario or agent name for handoff instructions | scenario=%s agent=%s",
                     config.scenario_name if config.scenario else None,
-                    agent._agent.name if hasattr(agent, "_agent") else None,
+                    getattr(ua, "name", None),
                 )
 
             # Build conversation recap to append to instructions
@@ -1788,7 +1796,13 @@ class LiveOrchestrator:
                 # voicelive_model than the model bound to the live connection, the override
                 # is silently ignored for the rest of the call. Surface that clearly.
                 try:
-                    target_model = agent._agent.get_model_for_mode("voicelive")
+                    # Same unwrap as elsewhere: self.agents holds UnifiedAgent
+                    # directly. Reaching for ``_agent`` raised AttributeError that
+                    # the except below swallowed at debug level, so this warning —
+                    # the one that tells you a per-agent voicelive_model is being
+                    # ignored — could never actually fire.
+                    ua = getattr(agent, "_agent", agent)
+                    target_model = ua.get_model_for_mode("voicelive")
                     target_deployment = getattr(target_model, "deployment_id", None)
                     if (
                         target_deployment

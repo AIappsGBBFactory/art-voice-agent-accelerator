@@ -22,6 +22,7 @@ from apps.artagent.backend.registries.agentstore.loader import (
     discover_agents,
 )
 from apps.artagent.backend.registries.agentstore.base import (
+    byom_profile_model_conflict,
     is_managed_voicelive_model,
 )
 from apps.artagent.backend.src.utils.tracing import (
@@ -1342,6 +1343,29 @@ class VoiceLiveSDKHandler:
                             effective_start_agent,
                             byom_err,
                         )
+                if byom_query:
+                    conflict = byom_profile_model_conflict(
+                        byom_query.get("profile"), connection_model
+                    )
+                    if conflict:
+                        # The profile cannot drive this deployment's API. Keeping it
+                        # yields a connected-but-mute session (STT transcribes, the
+                        # LLM leg never answers). Drop the profile so the session
+                        # falls back to managed Voice Live, which can serve the
+                        # model — a degraded-but-working agent beats a dead one, and
+                        # it self-heals sessions already persisted with the bad pair.
+                        logger.warning(
+                            "[VoiceLive Startup] byom_profile_model_conflict | agent=%s "
+                            "profile=%s model=%s session=%s — %s Falling back to managed "
+                            "Voice Live for this connection.",
+                            effective_start_agent,
+                            byom_query.get("profile"),
+                            connection_model,
+                            self.session_id,
+                            conflict,
+                        )
+                        byom_query = None
+
                 if byom_query:
                     logger.info(
                         "[VoiceLive Startup] BYOM enabled | agent=%s profile=%s%s session=%s",

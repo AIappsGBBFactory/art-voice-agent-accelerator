@@ -386,6 +386,64 @@ def is_managed_voicelive_model(deployment_id: str | None) -> bool:
     return deployment_id.strip().lower() in _MANAGED_VOICELIVE_MODELS_LOWER
 
 
+# A BYOM profile selects the wire protocol Voice Live drives your deployment with,
+# so the deployment has to actually expose that API:
+#   byom-azure-openai-realtime        -> /realtime         (gpt-realtime, phi4-mm-realtime, ...)
+#   byom-azure-openai-chat-completion -> /chat/completions  (gpt-4o, gpt-5.x, o3-mini, ...)
+# Pairing a profile with a deployment that speaks the *other* protocol is a second
+# silent-failure mode, distinct from the managed-model one above: the socket opens,
+# the session contract validates, and STT keeps transcribing, but the LLM leg never
+# answers — so the agent is mute until the ~900s idle timeout. Observed in App
+# Insights: byom-azure-openai-chat-completion pinned to gpt-realtime produced
+# ``ttft=N/A ttfb=N/A synth=N/A`` on every turn while the same agent without the
+# profile answered in ~1.1s.
+BYOM_REALTIME_MODE = "byom-azure-openai-realtime"
+BYOM_CHAT_COMPLETION_MODE = "byom-azure-openai-chat-completion"
+
+
+def is_realtime_voicelive_model(deployment_id: str | None) -> bool:
+    """True when ``deployment_id`` names a realtime (speech-to-speech) deployment.
+
+    Mirrors the frontend ``classifyVoiceLiveArch`` heuristic: Azure realtime model
+    and deployment names carry ``realtime`` (gpt-realtime, gpt-realtime-mini,
+    phi4-mm-realtime, azure-realtime).
+    """
+    return "realtime" in (deployment_id or "").lower()
+
+
+def byom_profile_model_conflict(
+    mode: str | None, deployment_id: str | None
+) -> str | None:
+    """Explain why BYOM profile ``mode`` cannot drive ``deployment_id``.
+
+    Returns ``None`` when the pairing is valid (or not decidable). Only the two
+    Azure OpenAI profiles are checked — ``byom-foundry-anthropic-messages`` points
+    at arbitrarily named Foundry deployments, so there is no reliable signal to
+    validate it against and we must not guess.
+    """
+    if not mode or not deployment_id:
+        return None
+
+    realtime = is_realtime_voicelive_model(deployment_id)
+    if mode == BYOM_CHAT_COMPLETION_MODE and realtime:
+        return (
+            f"BYOM profile '{mode}' drives the deployment over the chat completions "
+            f"API, but '{deployment_id}' is a realtime (speech-to-speech) deployment "
+            "and does not serve /chat/completions. The session connects and STT keeps "
+            "working, but the model never responds. Use a chat deployment (gpt-4o, "
+            f"gpt-5.x, ...) or switch the profile to '{BYOM_REALTIME_MODE}'."
+        )
+    if mode == BYOM_REALTIME_MODE and not realtime:
+        return (
+            f"BYOM profile '{mode}' drives the deployment over the realtime API, but "
+            f"'{deployment_id}' is not a realtime deployment and does not serve "
+            "/realtime. The session connects but the model never responds. Use a "
+            "realtime deployment (gpt-realtime, ...) or switch the profile to "
+            f"'{BYOM_CHAT_COMPLETION_MODE}'."
+        )
+    return None
+
+
 @dataclass
 class SpeechConfig:
     """

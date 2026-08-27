@@ -2211,6 +2211,15 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
     const baseByomMode = base.byom?.mode || '';
     const byomChanged = isVoiceLive && (ls.byom_mode || '') !== baseByomMode;
 
+    // input_audio_transcription is only sent on the full session apply, and the
+    // instant push carries just turn_detection + voice. Letting a transcription
+    // change take the fast path silently dropped it: the panel closed, reported
+    // "Applied instantly", and the STT model never actually changed. Route it
+    // through persist + reconnect like the model/BYOM changes.
+    const baseTranscription = base.session?.input_audio_transcription_settings?.model || '';
+    const transcriptionChanged =
+      isVoiceLive && (ls.transcription_model || '') !== baseTranscription;
+
     // Build the exact base→applied deltas for the surface being tuned so the
     // popup reflects what actually changed on THIS mode (VoiceLive vs Cascade),
     // not a generic snapshot. ``fast`` limits the list to fields the instant
@@ -2328,8 +2337,8 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
 
     setLiveSettingsBusy(true);
     try {
-      // Fast path: VoiceLive active, only VAD/voice tweaks (no model/BYOM change) → instant push.
-      if (isVoiceLive && modeMatchesActive && !modelChanged && !byomChanged) {
+      // Fast path: VoiceLive active, only VAD/voice tweaks (no model/BYOM/STT change) → instant push.
+      if (isVoiceLive && modeMatchesActive && !modelChanged && !byomChanged && !transcriptionChanged) {
         const res = await fetch(
           `${API_BASE_URL}/api/v1/agent-builder/session/${encodeURIComponent(sessionId)}/live-settings`,
           {
@@ -4887,9 +4896,13 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                   const modelChanged = chosenModel && chosenModel !== baseModel;
                   const baseByomModeHint = base.byom?.mode || '';
                   const byomChangedHint = isVoiceLive && (liveSettings.byom_mode || '') !== baseByomModeHint;
+                  const baseTranscriptionHint = base.session?.input_audio_transcription_settings?.model || '';
+                  const transcriptionChangedHint =
+                    isVoiceLive && (liveSettings.transcription_model || '') !== baseTranscriptionHint;
                   const modeMatchesActive = (selectedStreamingMode === 'voice_live') === isVoiceLive;
-                  // Instant only when VoiceLive is the active stream and no model/BYOM change.
-                  const willReconnect = !(isVoiceLive && modeMatchesActive) || modelChanged || byomChangedHint;
+                  // Instant only when VoiceLive is the active stream and no model/BYOM/STT change.
+                  const willReconnect = !(isVoiceLive && modeMatchesActive)
+                    || modelChanged || byomChangedHint || transcriptionChangedHint;
                   // Model dropdown source:
                   //   • Cascade → primary Foundry deployments (fallback static presets).
                   //   • VoiceLive + BYOM ON → deployments on the VOICE LIVE (AVL)
@@ -4949,6 +4962,31 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                     && voiceLiveDeployed.length
                     && !voiceLiveDeployedIds.has(chosenModel),
                   );
+                  // A BYOM profile picks the wire API Voice Live drives the
+                  // deployment with, so the deployment has to speak it. Pointing the
+                  // chat-completion profile at a realtime deployment (or vice versa)
+                  // connects and passes the session contract, but the LLM leg never
+                  // answers — the agent goes mute on every turn. This is the pair
+                  // Quick Tune used to persist, and because byom_mode rehydrates
+                  // from the saved agent it stuck to every later edit.
+                  const byomProfileConflict = (() => {
+                    if (!isVoiceLive || !byomOn || !chosenModel) return null;
+                    const isRealtime = classifyVoiceLiveArch(chosenModel) === 'native';
+                    if (liveSettings.byom_mode === 'byom-azure-openai-chat-completion' && isRealtime) {
+                      return {
+                        title: 'Profile can’t drive this model',
+                        body: 'is a realtime (speech-to-speech) deployment and doesn’t serve chat completions. Pick a chat deployment (gpt-4o, gpt-5.x, …) or switch the profile to Azure OpenAI Realtime.',
+                      };
+                    }
+                    if (liveSettings.byom_mode === 'byom-azure-openai-realtime' && !isRealtime) {
+                      return {
+                        title: 'Profile can’t drive this model',
+                        body: 'isn’t a realtime deployment and doesn’t serve the realtime API. Pick a realtime deployment (gpt-realtime, …) or switch the profile to Azure OpenAI Chat Completion.',
+                      };
+                    }
+                    return null;
+                  })();
+                  const applyBlocked = Boolean(needsByomForModel || byomProfileConflict);
                   const rowStyle = { marginBottom: '14px' };
                   const labelStyle = {
                     display: 'flex',
@@ -5325,6 +5363,40 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                             </div>
                           </div>
                         )}
+                        {byomProfileConflict && (
+                          <div
+                            style={{
+                              marginTop: '8px',
+                              padding: '10px 12px',
+                              borderRadius: '10px',
+                              background: 'linear-gradient(135deg, #fef2f2, #fee2e2)',
+                              border: '1px solid #fca5a5',
+                              boxShadow: '0 2px 8px rgba(220,38,38,0.12)',
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                fontSize: '11px',
+                                fontWeight: 800,
+                                color: '#b91c1c',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.4px',
+                                marginBottom: '6px',
+                              }}
+                            >
+                              <span style={{ fontSize: '13px' }}>⚠️</span>
+                              {byomProfileConflict.title}
+                            </div>
+                            <div style={{ fontSize: '11px', lineHeight: 1.5, color: '#7f1d1d' }}>
+                              <strong>{chosenModel}</strong> {byomProfileConflict.body}
+                              {' '}Applying this pair connects fine and keeps transcribing, but the
+                              agent never responds.
+                            </div>
+                          </div>
+                        )}
                         {isVoiceLive && chosenModel && arch === 'native' && (
                           <div
                             style={{
@@ -5603,25 +5675,33 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                         </button>
                         <button
                           onClick={applyLiveSettings}
-                          disabled={liveSettingsBusy || liveSettingsLoading || needsByomForModel}
+                          disabled={liveSettingsBusy || liveSettingsLoading || applyBlocked}
                           title={needsByomForModel
                             ? `${chosenModel} needs a BYOM profile — turn on BYOM above before applying.`
-                            : undefined}
+                            : byomProfileConflict
+                              ? `${chosenModel} can't be driven by the selected BYOM profile — fix the profile or model above before applying.`
+                              : undefined}
                           style={{
                             flex: 1,
                             padding: '8px',
                             borderRadius: '8px',
                             border: 'none',
-                            background: (liveSettingsBusy || liveSettingsLoading || needsByomForModel)
+                            background: (liveSettingsBusy || liveSettingsLoading || applyBlocked)
                               ? '#cbd5e1'
                               : 'linear-gradient(135deg, #7c3aed, #6d28d9)',
                             color: '#fff',
                             fontSize: '12px',
                             fontWeight: 700,
-                            cursor: (liveSettingsBusy || liveSettingsLoading || needsByomForModel) ? 'default' : 'pointer',
+                            cursor: (liveSettingsBusy || liveSettingsLoading || applyBlocked) ? 'default' : 'pointer',
                           }}
                         >
-                          {liveSettingsBusy ? 'Applying…' : needsByomForModel ? 'Enable BYOM first' : 'Apply'}
+                          {liveSettingsBusy
+                            ? 'Applying…'
+                            : needsByomForModel
+                              ? 'Enable BYOM first'
+                              : byomProfileConflict
+                                ? 'Fix BYOM profile first'
+                                : 'Apply'}
                         </button>
                       </div>
                     </>

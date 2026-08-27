@@ -49,6 +49,7 @@ from apps.artagent.backend.registries.agentstore.base import (
     VoiceConfig,
     VoiceLiveBYOMConfig,
     VOICELIVE_BYOM_MODES,
+    byom_profile_model_conflict,
     is_managed_voicelive_model,
 )
 from apps.artagent.backend.registries.agentstore.loader import (
@@ -1793,6 +1794,26 @@ def build_session_agent(
             config.name,
             voicelive_model.deployment_id,
             session_id,
+        )
+
+    # Guardrail: the mirror-image misconfiguration — a BYOM profile that speaks a
+    # different API than the deployment it is pointed at (e.g. Quick Tune saving
+    # byom-azure-openai-chat-completion alongside gpt-realtime). Voice Live
+    # connects and the session contract validates, so this is invisible until the
+    # agent turns out to be mute on every turn. Warn (rather than raise) to match
+    # the guard above; the connect path drops the incompatible profile.
+    byom_conflict = byom_profile_model_conflict(
+        byom_config.mode if byom_config else None, voicelive_model.deployment_id
+    )
+    if byom_conflict:
+        logger.warning(
+            "[AgentBuilder] byom_profile_model_conflict | agent=%s voicelive_model=%s "
+            "byom=%s session=%s — %s",
+            config.name,
+            voicelive_model.deployment_id,
+            byom_config.mode if byom_config else None,
+            session_id,
+            byom_conflict,
         )
 
     return UnifiedAgent(
