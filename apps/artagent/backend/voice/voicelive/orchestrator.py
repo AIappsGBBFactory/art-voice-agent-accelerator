@@ -126,6 +126,64 @@ def _voice_identity(voice: Any) -> str | None:
     return None
 
 
+# Azure OpenAI / AI Foundry deployment names routinely carry the *deployment
+# tier* (SKU) as a suffix on the base model name: a session that requested
+# ``gpt-realtime`` is echoed back as ``gpt-realtime-datazone-standard``. That is
+# the same underlying model on a differently-provisioned deployment, not a
+# substitution — treating it as one fires a warning on every ``session.updated``
+# and pins the ``session_contract_ok`` KPI to False.
+#
+# This is an explicit allowlist on purpose. A generic "applied starts with
+# requested" rule would also accept ``gpt-realtime-mini``, a genuinely different
+# and cheaper model — exactly the substitution this contract check exists to
+# catch. Widening the tolerance therefore has to be a deliberate edit here.
+_MODEL_SKU_SUFFIXES: tuple[str, ...] = tuple(
+    sorted(
+        (
+            "datazone-standard",
+            "data-zone-standard",
+            "datazonestandard",
+            "datazone-batch",
+            "datazone",
+            "global-standard",
+            "globalstandard",
+            "global-batch",
+            "globalbatch",
+            "global-provisioned-managed",
+            "provisioned-managed",
+            "provisionedmanaged",
+            "provisioned",
+            "regional",
+            "standard",
+            "batch",
+            "global",
+        ),
+        key=len,
+        reverse=True,
+    )
+)
+
+
+def _model_base_and_sku(model: str | None) -> tuple[str | None, str | None]:
+    """Split a normalized deployment name into its base model and deployment tier.
+
+    Strips **at most one** recognized SKU suffix, longest match first so
+    ``-datazone-standard`` wins over ``-standard``. A single bounded strip against
+    a known list keeps the transform auditable: an unrecognized tail stays on the
+    base, where it correctly registers as a mismatch.
+
+    Returns ``(base, sku)``; ``sku`` is ``None`` when the name carries no
+    recognized tier suffix.
+    """
+    if not model:
+        return None, None
+    for suffix in _MODEL_SKU_SUFFIXES:
+        marker = f"-{suffix}"
+        if model.endswith(marker) and len(model) > len(marker):
+            return model[: -len(marker)], suffix
+    return model, None
+
+
 def verify_voicelive_session_contract(
     *,
     requested_voice: Any,
@@ -143,9 +201,23 @@ def verify_voicelive_session_contract(
     Unknown/absent echo fields are treated as "not verifiable" (``None``) rather
     than as a mismatch, so older service versions don't produce false alarms.
 
+    The model comparison is **SKU-tolerant**: Azure echoes the deployment name,
+    which usually appends the provisioned tier to the base model
+    (``gpt-realtime`` → ``gpt-realtime-datazone-standard``). Both sides are run
+    through :func:`_model_base_and_sku`, which removes at most one *recognized*
+    tier suffix, and the bases are compared. An allowlist is used rather than a
+    prefix/substring rule precisely so a genuinely different model still fails:
+    ``gpt-4o-realtime-preview`` and ``gpt-realtime-mini`` are not tiers of
+    ``gpt-realtime`` and are both reported as mismatches. Normalizing both sides
+    also makes the check symmetric, for when our own configured deployment name
+    is the SKU-qualified one.
+
     Returns a dict with ``voice_requested``/``voice_applied``/``voice_ok``,
     ``model_requested``/``model_applied``/``model_ok`` and an aggregate ``ok``
-    that is False only when something is verifiably wrong.
+    that is False only when something is verifiably wrong. ``model_applied``
+    stays the *raw* normalized echo so operators can still see which tier the
+    session landed on; the SKU-stripped values used for the comparison are
+    exposed separately as ``model_*_base`` / ``model_*_sku``.
     """
     voice_requested = _voice_identity(requested_voice)
     voice_applied = _voice_identity(getattr(session_obj, "voice", None))
@@ -158,9 +230,11 @@ def verify_voicelive_session_contract(
     model_applied = (
         raw_model_applied.strip().lower() if isinstance(raw_model_applied, str) else None
     )
+    model_requested_base, model_requested_sku = _model_base_and_sku(model_requested)
+    model_applied_base, model_applied_sku = _model_base_and_sku(model_applied)
     model_ok: bool | None = None
-    if model_requested is not None and model_applied is not None:
-        model_ok = model_requested == model_applied
+    if model_requested_base is not None and model_applied_base is not None:
+        model_ok = model_requested_base == model_applied_base
 
     return {
         "voice_requested": voice_requested,
@@ -169,6 +243,10 @@ def verify_voicelive_session_contract(
         "model_requested": model_requested,
         "model_applied": model_applied,
         "model_ok": model_ok,
+        "model_requested_base": model_requested_base,
+        "model_applied_base": model_applied_base,
+        "model_requested_sku": model_requested_sku,
+        "model_applied_sku": model_applied_sku,
         "ok": voice_ok is not False and model_ok is not False,
     }
 
@@ -1423,10 +1501,11 @@ class LiveOrchestrator:
 
         if result["ok"]:
             logger.info(
-                "[VoiceLive] session_contract_ok | agent=%s voice=%s model=%s",
+                "[VoiceLive] session_contract_ok | agent=%s voice=%s model=%s sku=%s",
                 self.active,
                 result["voice_applied"] or result["voice_requested"],
                 result["model_applied"] or result["model_requested"],
+                result["model_applied_sku"] or result["model_requested_sku"] or "-",
             )
         else:
             logger.warning(
