@@ -39,10 +39,13 @@ def _make_orchestrator(agent, scenario=None):
     orch._system_vars = {}
     orch._user_message_history = deque(["hi"])
     orch._last_assistant_message = None
-    orch.session_id = "sess-ctx"
     orch.call_connection_id = "call-ctx"
     orch._model_name = "gpt-realtime"
     orch._memo_manager = None
+    # _session_id resolves through memo_manager then messenger.
+    orch.messenger = None
+    # Correlates a context-only session.update with its session.updated echo.
+    orch._pending_context_session_updates = 0
     # Bypass the cached property's resolve_orchestrator_config() lookup.
     orch._cached_orchestrator_config = SimpleNamespace(
         scenario=scenario, scenario_name="banking" if scenario else None

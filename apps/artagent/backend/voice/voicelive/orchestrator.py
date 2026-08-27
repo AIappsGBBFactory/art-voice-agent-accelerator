@@ -377,6 +377,16 @@ class LiveOrchestrator:
         self._session_update_min_interval: float = 2.0  # Min seconds between updates
         self._pending_session_update: bool = False
 
+        # Number of context-only session.update() calls still awaiting their
+        # `session.updated` echo. Context-only updates change *instructions*
+        # only; the service echoes them exactly like a fresh bootstrap, so
+        # without this correlation _handle_session_updated would tear down
+        # audio on every conversational turn. A counter (not a bool) because
+        # _update_session_context() runs both from a background task
+        # (_schedule_throttled_session_update) and inline from the tool-call
+        # path, so two updates can legitimately be in flight at once.
+        self._pending_context_session_updates: int = 0
+
         if self.messenger:
             try:
                 self.messenger.set_active_agent(self.active)
@@ -764,6 +774,10 @@ class LiveOrchestrator:
                 # CRITICAL: Apply the FULL agent session config, not just instructions
                 # This includes voice, tools, VAD settings, etc.
                 # This is the same as what _switch_to() does during handoffs
+                # Drop any outstanding context-only credits first: this echo is a
+                # genuine bootstrap and must run the audio reset, even if a
+                # throttled context update is still unaccounted for.
+                self._pending_context_session_updates = 0
                 await agent.apply_voicelive_session(
                     self.conn,
                     system_vars=system_vars,
@@ -978,9 +992,22 @@ class LiveOrchestrator:
             # Update session with new instructions
             from azure.ai.voicelive.models import RequestSession
 
-            await self.conn.session.update(
-                session=RequestSession(instructions=updated_instructions)
-            )
+            # Mark this as a context-only update *before* it goes on the wire.
+            # The `session.updated` echo can arrive before this coroutine
+            # resumes, so incrementing afterwards would race the handler.
+            self._pending_context_session_updates += 1
+            try:
+                await self.conn.session.update(
+                    session=RequestSession(instructions=updated_instructions)
+                )
+            except Exception:
+                # The service never applied it, so no echo is coming. Hand the
+                # credit back, otherwise a later genuine bootstrap echo would be
+                # misread as this one and skip the audio reset it needs.
+                self._pending_context_session_updates = max(
+                    0, self._pending_context_session_updates - 1
+                )
+                raise
 
             logger.debug(
                 "[LiveOrchestrator] Updated session | agent=%s history_len=%d slots=%s",
@@ -1006,7 +1033,7 @@ class LiveOrchestrator:
             await emit_voice_error(
                 self._websocket_for_errors(),
                 info,
-                session_id=self.session_id,
+                session_id=self._session_id,
                 call_id=self.call_connection_id,
             )
 
@@ -1446,9 +1473,28 @@ class LiveOrchestrator:
         session_obj = getattr(event, "session", None)
         session_id = getattr(session_obj, "id", "unknown") if session_obj else "unknown"
         voice_info = getattr(session_obj, "voice", None) if session_obj else None
-        logger.info("Session ready: %s | voice=%s", session_id, voice_info)
 
+        # Consume exactly one context-only credit. `_update_session_context()`
+        # refreshes *instructions* after every turn, and the service echoes that
+        # back as `session.updated` ~200ms later — while TTS audio is still
+        # draining. Treating that echo as a bootstrap would stop playback
+        # mid-sentence and spam the UI with a SESSION UPDATED entry per turn.
+        context_only = self._pending_context_session_updates > 0
+        if context_only:
+            self._pending_context_session_updates -= 1
+            logger.debug("Session context refreshed: %s | voice=%s", session_id, voice_info)
+        else:
+            logger.info("Session ready: %s | voice=%s", session_id, voice_info)
+
+        # Keep the contract KPI on every echo — a service-side voice/model
+        # substitution is just as worth catching on a context refresh.
         self._verify_session_contract(session_obj)
+
+        if context_only:
+            # Nothing was reconfigured, so there is nothing to re-bootstrap:
+            # leave playback, capture, any in-flight response, and the
+            # pending-greeting / handoff state exactly as they are.
+            return
 
         if self.messenger:
             try:
@@ -1471,10 +1517,15 @@ class LiveOrchestrator:
 
         if self.audio:
             await self.audio.stop_playback()
-        try:
-            await self.conn.response.cancel()
-        except Exception:
-            logger.debug("response.cancel() failed during session_ready", exc_info=True)
+        # Only cancel when a response is actually in flight. Cancelling with no
+        # active response makes VoiceLive emit a `response_cancel_not_active`
+        # server error, which the handler treats as a hard error (StopAudio +
+        # UI error) and breaks the next turn. Same guard as the barge-in path.
+        if self._active_response_id:
+            try:
+                await self.conn.response.cancel()
+            except Exception:
+                logger.debug("response.cancel() failed during session_ready", exc_info=True)
         if self.audio:
             await self.audio.start_capture()
 
@@ -1890,6 +1941,9 @@ class LiveOrchestrator:
                         getattr(self.messenger, "session_id", None) if self.messenger else None
                     )
                     t_apply = time.perf_counter()
+                    # Drop any outstanding context-only credits: an agent switch
+                    # is a genuine bootstrap whose echo must run the audio reset.
+                    self._pending_context_session_updates = 0
                     await agent.apply_voicelive_session(
                         self.conn,
                         system_vars=system_vars,
