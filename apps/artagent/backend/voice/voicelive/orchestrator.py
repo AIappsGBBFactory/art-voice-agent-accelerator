@@ -98,6 +98,17 @@ CALL_CENTER_TRIGGER_PHRASES = {
     "transfer me to the call center",
 }
 
+# How long `_schedule_greeting_fallback()` waits before delivering the greeting
+# itself. The bootstrap `session.updated` echo is the only reliable signal that
+# the agent's voice/instructions are actually live, and it arrives ~550-600ms
+# after `apply_voicelive_session()` returns (observed on production calls). At
+# the previous 0.35s this "fallback" therefore won *every* time, which inverted
+# its intent: it greeted against a session the service had not acknowledged yet,
+# and the echo that landed ~200ms later tore the half-spoken greeting down. The
+# delay must sit comfortably above the echo latency so the echo is the normal
+# trigger and this timer only covers the case where no echo ever arrives.
+GREETING_FALLBACK_DELAY_S = 1.5
+
 # Benign VoiceLive server-error codes emitted when a barge-in / response.cancel
 # races a response that already finished. These are expected and must NOT be
 # logged as errors or surfaced to the UI. Shared with the handler so both layers
@@ -352,6 +363,12 @@ class LiveOrchestrator:
         self._system_vars: dict[str, Any] = {}
         # Flag to prevent SESSION_UPDATED from cancelling handoff-triggered responses
         self._handoff_response_pending: bool = False
+        # Same guard for a greeting the fallback timer already put on the wire.
+        # The bootstrap echo races that response, and because a greeting really
+        # is in flight the `_active_response_id` guard below does not stop the
+        # cancel — the caller hears the opening line cut off mid-word. No fixed
+        # timer can rule this out, so the flag is the correlation, not the delay.
+        self._greeting_response_pending: bool = False
 
         # Scenario switch flag — prevents _sync_from_memo_manager from overwriting
         # self.active with stale MemoManager data after an explicit scenario switch
@@ -1515,6 +1532,20 @@ class LiveOrchestrator:
                 await self.audio.start_capture()
             return
 
+        # A greeting the fallback timer already put on the wire is *our* response.
+        # The bootstrap echo it races must not tear it down: with a greeting
+        # genuinely in flight `_active_response_id` is set, so the guard below
+        # would happily cancel it and the caller hears the opening line cut off
+        # mid-word. Mirrors the handoff shortcut above.
+        if self._greeting_response_pending:
+            logger.debug(
+                "[Session Updated] Skipping audio reset - greeting response already in flight"
+            )
+            self._greeting_response_pending = False
+            if self.audio:
+                await self.audio.start_capture()
+            return
+
         if self.audio:
             await self.audio.stop_playback()
         # Only cancel when a response is actually in flight. Cancelling with no
@@ -2614,6 +2645,11 @@ class LiveOrchestrator:
         return greeting
 
     def _cancel_pending_greeting_tasks(self) -> None:
+        # Whoever cancels greeting delivery also owns the in-flight guard: a
+        # stale flag would let the *next* genuine bootstrap echo skip the audio
+        # reset it needs. Cleared before the early return so it holds even when
+        # no fallback task was ever scheduled.
+        self._greeting_response_pending = False
         if not self._greeting_tasks:
             return
         for task in list(self._greeting_tasks):
@@ -2626,19 +2662,24 @@ class LiveOrchestrator:
 
         async def _fallback() -> None:
             try:
-                await asyncio.sleep(0.35)
+                await asyncio.sleep(GREETING_FALLBACK_DELAY_S)
                 if self._pending_greeting and self._pending_greeting_agent == agent_name:
                     logger.debug(
                         "[GreetingFallback] Triggering fallback introduction for %s", agent_name
                     )
+                    # Claim the guard *before* awaiting the trigger: the echo can
+                    # land while this coroutine is suspended inside response.create().
+                    self._greeting_response_pending = True
                     try:
                         await self.agents[agent_name].trigger_voicelive_response(
                             self.conn,
                             say=self._pending_greeting,
                         )
                     except asyncio.CancelledError:
+                        self._greeting_response_pending = False
                         raise
                     except Exception:
+                        self._greeting_response_pending = False
                         logger.debug("[GreetingFallback] Failed to deliver greeting", exc_info=True)
                         return
                     self._pending_greeting = None
