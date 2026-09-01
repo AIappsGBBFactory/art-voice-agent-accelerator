@@ -254,6 +254,24 @@ async def test_agent_restored_from_a_previous_connection_is_reported():
     assert contract["active_agent"] == "BankingConcierge"
     assert contract["agent_ok"] is False
     assert contract["overall_ok"] is False
+    # `voice_ok` cannot express the loss (the service applied exactly the voice
+    # we sent), so the displaced voice has to be named explicitly or the UI
+    # shows a reassuring "voice MATCH" while the caller hears Alloy.
+    assert contract["voice_ok"] is True
+    assert contract["tuned_voice"] == "en-us-emmamultilingualneural"
+
+
+@pytest.mark.asyncio
+async def test_tuned_voice_is_absent_when_the_agent_did_not_drift():
+    """No drift means nothing was displaced; the key must not invent a loss."""
+    agent = _make_agent("Concierge")
+    orch, _conn, _audio, messenger = _make_orchestrator([agent])
+
+    await orch._handle_session_updated(
+        _event(_EchoSession(voice=agent.build_voicelive_voice(), model="gpt-4o-mini"))
+    )
+
+    assert _contract_of(messenger)["tuned_voice"] is None
 
 
 @pytest.mark.asyncio

@@ -74,8 +74,10 @@ test('the production split-brain renders as an unmissable mismatch', () => {
   // and speaks with Alloy, and its gpt-realtime override is silently ignored.
   const html = render({
     ...matching,
+    voice_requested: 'en-us-alloyturbomultilingualneural',
     voice_applied: 'en-us-alloyturbomultilingualneural',
-    voice_ok: false,
+    voice_ok: true,
+    tuned_voice: 'en-us-emmamultilingualneural',
     active_agent: 'BankingConcierge',
     bound_agent: 'Concierge',
     agent_ok: false,
@@ -84,7 +86,7 @@ test('the production split-brain renders as an unmissable mismatch', () => {
     model_applied: 'gpt-4o-mini',
     agent_requested_model: 'gpt-realtime',
     model_override_ignored: true,
-    ok: false,
+    ok: true,
     overall_ok: false,
   });
 
@@ -99,6 +101,16 @@ test('the production split-brain renders as an unmissable mismatch', () => {
   assert.match(html, /gpt-realtime/);
   assert.match(html, /gpt-4o-mini/);
   assert.match(html, /cannot change it mid-call/);
+  // The Voice row truthfully reads MATCH here, so it must not be left to read
+  // as reassurance: the displaced voice is named right beneath it.
+  assert.match(html, /You configured en-us-emmamultilingualneural, which belongs to Concierge/);
+});
+
+test('the displaced-voice note is omitted when the agent did not drift', () => {
+  const html = render(matching);
+
+  assert.doesNotMatch(html, /You configured/);
+  assert.doesNotMatch(html, /is not speaking/);
 });
 
 test('an unverifiable field is shown as unreported rather than as a mismatch', () => {

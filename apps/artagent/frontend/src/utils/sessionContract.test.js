@@ -86,6 +86,9 @@ test('an agent restored from a previous connection reports a mismatch', () => {
       active_agent: 'BankingConcierge',
       bound_agent: 'Concierge',
       agent_ok: false,
+      tuned_voice: 'en-us-emmamultilingualneural',
+      voice_requested: 'en-us-alloyturbomultilingualneural',
+      voice_applied: 'en-us-alloyturbomultilingualneural',
       overall_ok: false,
     }),
   );
@@ -96,6 +99,11 @@ test('an agent restored from a previous connection reports a mismatch', () => {
   assert.equal(derived.activeAgent, 'BankingConcierge');
   assert.match(derived.issues[0], /Concierge/);
   assert.match(derived.issues[0], /BankingConcierge/);
+  // The voice contract itself is satisfied, so the displaced voice is the only
+  // thing that can tell the operator what they actually lost.
+  assert.equal(derived.voice.ok, true);
+  assert.equal(derived.tunedVoice, 'en-us-emmamultilingualneural');
+  assert.match(derived.issues[0], /en-us-emmamultilingualneural is not what the caller hears/);
 });
 
 test('an ignored per-agent model override is explained', () => {

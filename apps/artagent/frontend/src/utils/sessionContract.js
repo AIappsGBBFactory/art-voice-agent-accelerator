@@ -46,10 +46,12 @@ const collectIssues = (contract) => {
     );
   }
   if (contract.agent_ok === false) {
+    const displaced = asText(contract.tuned_voice);
     issues.push(
       `Agent: session was set up for ${asText(contract.bound_agent) || 'unknown'}, ` +
         `but ${asText(contract.active_agent) || 'unknown'} is live — its voice and ` +
-        'instructions are not the tuned ones',
+        'instructions are not the tuned ones' +
+        (displaced ? `, so ${displaced} is not what the caller hears` : ''),
     );
   }
   if (contract.model_override_ignored === true) {
@@ -86,6 +88,11 @@ export const deriveSessionContract = (payload) => {
     activeAgent: asText(contract.active_agent) || asText(payload?.agent_name) || null,
     boundAgent: asText(contract.bound_agent),
     agentOk: typeof contract.agent_ok === 'boolean' ? contract.agent_ok : null,
+    // The voice the tuned agent would have used, present only when the live
+    // agent drifted. `voice.ok` cannot express this: the service applied the
+    // voice we sent, so that row legitimately reads MATCH even though the
+    // caller is hearing a voice nobody chose.
+    tunedVoice: asText(contract.tuned_voice),
     voice: {
       requested: asText(contract.voice_requested),
       applied: asText(contract.voice_applied),

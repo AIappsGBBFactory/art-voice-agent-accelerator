@@ -1747,11 +1747,13 @@ class LiveOrchestrator:
         and enriched with the two *local* divergences that explain most
         "my tuning didn't take" reports, neither of which the echo can show:
 
-        ``bound_agent`` / ``active_agent`` / ``agent_ok``
+        ``bound_agent`` / ``active_agent`` / ``agent_ok`` / ``tuned_voice``
             The connection was established for ``bound_agent``; if a stale
             ``active_agent`` was restored from a previous connection on the same
             session, the live agent — and therefore its voice and instructions —
-            is not the one that was tuned.
+            is not the one that was tuned. ``tuned_voice`` names the voice that
+            was displaced, which ``voice_ok`` cannot show: the service *did*
+            apply the voice we sent, we simply sent the wrong agent's.
         ``connection_model`` / ``agent_requested_model`` / ``model_override_ignored``
             Voice Live binds the model at ``connect()`` and cannot change it
             mid-call, so an agent that asks for a different ``voicelive_model``
@@ -1796,11 +1798,29 @@ class LiveOrchestrator:
             agent_requested_model and self._model_name and agent_requested_model != self._model_name
         )
 
+        # The voice the *tuned* agent would have spoken with. Only meaningful
+        # when the live agent is not the one this connection was set up for:
+        # `voice_ok` correctly reports that the service applied the voice we
+        # sent, but we sent the drifted agent's voice, so on its own that row
+        # reads "MATCH" while the caller is hearing a voice they never chose.
+        # Naming what was lost is what makes the drift legible.
+        tuned_voice: str | None = None
+        if agent_ok is False and bound_agent:
+            bound = self.agents.get(bound_agent)
+            if bound is not None:
+                try:
+                    tuned_voice = _voice_identity(
+                        getattr(bound, "_agent", bound).build_voicelive_voice()
+                    )
+                except Exception:  # pragma: no cover - defensive
+                    logger.debug("Failed to resolve tuned voice for verification", exc_info=True)
+
         result.update(
             {
                 "active_agent": self.active,
                 "bound_agent": bound_agent,
                 "agent_ok": agent_ok,
+                "tuned_voice": tuned_voice,
                 "connection_model": self._model_name,
                 "agent_requested_model": agent_requested_model,
                 "model_override_ignored": model_override_ignored,
@@ -1845,11 +1865,12 @@ class LiveOrchestrator:
         # agent. Folding it into the line above would misattribute the cause.
         if agent_ok is False:
             logger.warning(
-                "[VoiceLive] session_agent_drift | bound=%s active=%s — the live agent is not "
-                "the one this connection was established for, so its voice and instructions "
-                "are not the tuned ones",
+                "[VoiceLive] session_agent_drift | bound=%s active=%s tuned_voice=%s — the live "
+                "agent is not the one this connection was established for, so its voice and "
+                "instructions are not the tuned ones",
                 bound_agent,
                 self.active,
+                tuned_voice or "-",
             )
         if model_override_ignored:
             logger.warning(

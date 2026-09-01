@@ -250,6 +250,12 @@ const ContractRow = ({ label, requested, applied, ok, note }) => {
 // so "does a mismatch actually look like a mismatch?" has to be assertable.
 export const LiveSessionConfigCard = ({ contract }) => {
   const mismatch = contract.status === 'mismatch';
+  // Only worth naming when it is actually gone: if the drifted agent happens to
+  // use the same voice, nothing was displaced and the note would be noise.
+  const displacedVoice =
+    contract.tunedVoice && contract.tunedVoice !== contract.voice.applied
+      ? contract.tunedVoice
+      : null;
 
   return (
     <PanelCard
@@ -299,6 +305,14 @@ export const LiveSessionConfigCard = ({ contract }) => {
         requested={contract.voice.requested}
         applied={contract.voice.applied}
         ok={contract.voice.ok}
+        // A drifted agent makes this row read MATCH — truthfully, since the
+        // service applied the voice we sent. Without this note that reads as
+        // reassurance while the caller hears a voice nobody picked.
+        note={
+          displacedVoice
+            ? `This is the live agent's own voice. You configured ${displacedVoice}, which belongs to ${contract.boundAgent || 'the tuned agent'} and is not speaking.`
+            : null
+        }
       />
 
       {contract.modelOverrideIgnored && (
