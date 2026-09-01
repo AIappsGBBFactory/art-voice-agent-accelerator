@@ -50,8 +50,25 @@ import {
   toMs,
 } from '../utils/session.js';
 import logger from '../utils/logger.js';
-import { fetchFoundryModels, deriveModelOptions, MANAGED_VOICELIVE_MODELS } from '../utils/foundryModels.js';
+import { fetchFoundryModels, fetchVoiceLiveModels, deriveModelOptions, MANAGED_VOICELIVE_MODELS } from '../utils/foundryModels.js';
+import { crossRegionHint, describeModelSource, resourceAttribution } from '../utils/foundryRegions.js';
+import { setVoiceSession, getSessionTraceparent, getDeviceId, trackEvent, trackMetric, trackException } from '../utils/telemetry.js';
+import { buildAuthQueryParams, getAuthenticatedUser } from '../utils/auth.js';
+import { reduceConversationPayload } from '../utils/conversationBubbles.js';
+import { flattenSessionEnvelope, isSessionEnvelope } from '../utils/sessionEnvelope.js';
+import { createEnvelopeDeduper } from '../utils/envelopeDedupe.js';
+import { deriveSessionContract } from '../utils/sessionContract.js';
+import { resolveTurnId } from '../utils/turnMessages.js';
 import { OrchestrationDiagramModal } from './OrchestrationDiagram.jsx';
+
+// Mirrors WS_CLOSE_CODE_VOICE_ERROR in
+// apps/artagent/backend/voice/shared/errors.py. Private-use close code meaning
+// "the backend rejected this voice session for a config/provider error".
+const WS_CLOSE_CODE_VOICE_ERROR = 4500;
+
+// Same family, but the failure may clear on its own (network blip, rate limit),
+// so the session is still surfaced to the user while reconnect stays enabled.
+const WS_CLOSE_CODE_VOICE_ERROR_RETRYABLE = 4501;
 
 const STREAM_MODE_STORAGE_KEY = 'artagent.streamingMode';
 const STREAM_MODE_FALLBACK = 'voice_live';
@@ -300,6 +317,10 @@ function RealTimeVoiceApp() {
   const [sessionCoreMemory, setSessionCoreMemory] = useState(null);
   const [sessionMetadata, setSessionMetadata] = useState(null);
   const [sessionMetrics, setSessionMetrics] = useState(null);
+  // Requested-vs-applied config for the live VoiceLive session, derived from the
+  // `contract` the backend attaches to bootstrap / agent-switch `session_updated`
+  // envelopes. Null until the first one arrives.
+  const [sessionContract, setSessionContract] = useState(null);
   // Session ID must be declared before scenario helpers that use it
   const [sessionId, setSessionId] = useState(() => getOrCreateSessionId());
   
@@ -829,6 +850,12 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
     fetchSessionMetrics();
   }, [fetchSessionScenarioConfig, fetchSessionCoreMemory, fetchSessionMetrics]);
 
+  // A contract describes one session's live configuration; carrying it across a
+  // session switch would report the previous call's config as this one's.
+  useEffect(() => {
+    setSessionContract(null);
+  }, [sessionId]);
+
   // Periodic refresh of core memory for real-time performance monitoring
   useEffect(() => {
     const interval = setInterval(() => {
@@ -1092,8 +1119,9 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       .replace(/Neural$/i, '');
   }, []);
 
-  const notifyAgentUpdate = useCallback((agentConfig, action = 'updated') => {
+  const notifyAgentUpdate = useCallback((agentConfig, action = 'updated', opts = {}) => {
     if (!agentConfig?.name) return;
+    const { mode = null, changes: explicitChanges = null, confirmed = null } = opts;
     const name = agentConfig.name;
     const scenarioName =
       activeScenarioData?.label
@@ -1101,33 +1129,42 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       || activeScenarioKey
       || 'No scenario';
 
-    const newModel =
-      agentConfig.cascade_model?.deployment_id || agentConfig.model?.deployment_id || null;
+    // Mode-aware model resolution: a VoiceLive tune changes voicelive_model, a
+    // cascade tune changes cascade_model. Reading the wrong one is what made the
+    // popup always show the cascade model even for VoiceLive edits.
+    const isVoiceLive = mode === 'voicelive';
+    const newModel = isVoiceLive
+      ? (agentConfig.voicelive_model?.deployment_id || null)
+      : (agentConfig.cascade_model?.deployment_id || agentConfig.model?.deployment_id || null);
     const newVoice = agentConfig.voice?.name || null;
     const hasTools = Array.isArray(agentConfig.tools);
     const newTools = hasTools ? agentConfig.tools.length : null;
 
-    // Diff against the inventory snapshot captured at the start of this handler
-    // (state updates are async, so this still holds the pre-update values).
-    const prior = agentInventory?.agents?.find((a) => a.name === name) || null;
-    const changes = [];
-    if (prior) {
-      if (prior.model && newModel && prior.model !== newModel) {
-        changes.push(`Model ${prior.model} → ${newModel}`);
-      } else if (!prior.model && newModel) {
-        changes.push(`Model → ${newModel}`);
-      }
-      if ((prior.voice || null) !== (newVoice || null)) {
-        changes.push(`Voice ${formatVoiceShort(prior.voice)} → ${formatVoiceShort(newVoice)}`);
-      }
-      if (hasTools) {
-        const priorTools = prior.toolCount ?? (prior.tools?.length ?? 0);
-        if (priorTools !== newTools) {
-          changes.push(`Tools ${priorTools} → ${newTools}`);
+    // Prefer caller-supplied deltas (Quick Tune computes exact base→applied diffs
+    // and a verification line). Otherwise diff against the inventory snapshot.
+    let changes = Array.isArray(explicitChanges) ? explicitChanges.filter(Boolean) : [];
+    if (changes.length === 0) {
+      // Diff against the inventory snapshot captured at the start of this handler
+      // (state updates are async, so this still holds the pre-update values).
+      const prior = agentInventory?.agents?.find((a) => a.name === name) || null;
+      if (prior) {
+        if (prior.model && newModel && prior.model !== newModel) {
+          changes.push(`Model ${prior.model} → ${newModel}`);
+        } else if (!prior.model && newModel) {
+          changes.push(`Model → ${newModel}`);
         }
-      }
-      if ((prior.description || '') !== (agentConfig.description || '')) {
-        changes.push('Description updated');
+        if ((prior.voice || null) !== (newVoice || null)) {
+          changes.push(`Voice ${formatVoiceShort(prior.voice)} → ${formatVoiceShort(newVoice)}`);
+        }
+        if (hasTools) {
+          const priorTools = prior.toolCount ?? (prior.tools?.length ?? 0);
+          if (priorTools !== newTools) {
+            changes.push(`Tools ${priorTools} → ${newTools}`);
+          }
+        }
+        if ((prior.description || '') !== (agentConfig.description || '')) {
+          changes.push('Description updated');
+        }
       }
     }
     if (changes.length === 0) {
@@ -1137,9 +1174,10 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       if (hasTools) changes.push(`${newTools} tool${newTools === 1 ? '' : 's'}`);
     }
 
-    setAgentUpdateToast({ name, scenarioName, changes, action, ts: Date.now() });
+    setAgentUpdateToast({ name, scenarioName, changes, action, mode, confirmed, ts: Date.now() });
     if (agentUpdateToastTimer.current) clearTimeout(agentUpdateToastTimer.current);
-    agentUpdateToastTimer.current = setTimeout(() => setAgentUpdateToast(null), 8000);
+    // Give a bit longer to read when we're showing a read-back confirmation.
+    agentUpdateToastTimer.current = setTimeout(() => setAgentUpdateToast(null), confirmed ? 12000 : 8000);
   }, [activeScenarioData, sessionScenarioConfig, activeScenarioKey, agentInventory, formatVoiceShort]);
 
   const dismissAgentUpdateToast = useCallback(() => {
@@ -1259,6 +1297,9 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
   const [liveSettingsBusy, setLiveSettingsBusy] = useState(false);
   const [liveSettingsLoading, setLiveSettingsLoading] = useState(false);
   const [liveVoices, setLiveVoices] = useState([]);
+  // Resource + region attribution for the TTS voice list — the Speech account
+  // every Cascade synth/recognition hop travels to. null until loaded.
+  const [liveVoiceSource, setLiveVoiceSource] = useState(null);
   // Which settings surface the popover is showing: 'voicelive' | 'cascade'.
   // Defaults from the active stream mode but the user can switch freely.
   const [liveSettingsMode, setLiveSettingsMode] = useState('voicelive');
@@ -1267,12 +1308,23 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
   const [quickTuneTip, setQuickTuneTip] = useState(null);
   // Whether the interactive "how orchestration works" diagram modal is open.
   const [showOrchestrationDiagram, setShowOrchestrationDiagram] = useState(false);
+  // Stable identity so the (memoized) diagram modal doesn't re-render with App.
+  const closeOrchestrationDiagram = useCallback(() => setShowOrchestrationDiagram(false), []);
   // Snapshot of the current resolved agent config (base for the PUT merge).
   const liveBaseConfigRef = useRef(null);
   // Live model deployments from the connected Foundry resource ({cascade, voicelive}),
   // used to populate the Quick Tune model dropdown (esp. for BYOM). null = not
   // loaded / query failed → fall back to the static presets.
   const [liveModelOptions, setLiveModelOptions] = useState(null);
+  // Resource + region attribution for the CASCADE model list (which account
+  // served it, in which region). deriveModelOptions above keeps only the option
+  // ids, so this holds the metadata the Quick Tune panel attributes the list to.
+  const [liveModelSource, setLiveModelSource] = useState(null);
+  // Deployments on the Voice Live (AVL) resource — a SEPARATE Azure account from
+  // the primary Foundry one above. VoiceLive/BYOM can only serve what's deployed
+  // here, so the VoiceLive dropdown must never use the primary resource's list.
+  // { options, resourceName, resourceFallback } | null when unavailable.
+  const [voiceLiveModelInfo, setVoiceLiveModelInfo] = useState(null);
   const [builderInitialMode, setBuilderInitialMode] = useState('agents');
   // When true, the scenario builder opens in "create new" mode (blank form, POST endpoint).
   // When false, it opens in "edit existing" mode with the active custom scenario pre-filled.
@@ -1538,44 +1590,6 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
     return match?.config ?? null;
   }, [realtimeStreamingModeOptions, selectedRealtimeStreamingMode]);
 
-  const updateToolMessage = useCallback(
-    (toolName, transformer, fallbackMessage) => {
-      setMessages((prev) => {
-        const next = [...prev];
-        let targetIndex = -1;
-
-        for (let idx = next.length - 1; idx >= 0; idx -= 1) {
-          const candidate = next[idx];
-          if (candidate?.isTool && candidate.text?.includes(`tool ${toolName}`)) {
-            targetIndex = idx;
-            break;
-          }
-        }
-
-        if (targetIndex === -1) {
-          if (!fallbackMessage) {
-            return prev;
-          }
-          const fallback =
-            typeof fallbackMessage === "function"
-              ? fallbackMessage()
-              : fallbackMessage;
-          return [...prev, fallback];
-        }
-
-        const current = next[targetIndex];
-        const updated = transformer(current);
-        if (!updated || updated === current) {
-          return prev;
-        }
-
-        next[targetIndex] = updated;
-        return next;
-      });
-    },
-    [setMessages],
-  );
-
   // Health monitoring (disabled)
   /*
   const { 
@@ -1610,6 +1624,13 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
   const relayReconnectTimeoutRef = useRef(null);
   const handleSocketMessageRef = useRef(null);
   const openRelaySocketRef = useRef(null);
+  // The conversation socket and the dashboard relay are both registered under
+  // the same session_id server-side, so a single broadcast reaches this client
+  // more than once. Held in a ref so it survives re-renders without causing any.
+  const envelopeDeduperRef = useRef(null);
+  if (envelopeDeduperRef.current === null) {
+    envelopeDeduperRef.current = createEnvelopeDeduper();
+  }
   const callLifecycleRef = useRef({
     pending: false,
     active: false,
@@ -1693,12 +1714,10 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
     [appendLog, cancelOutputLevelDecay],
   );
   const metricsRef = useRef(createMetricsState());
-  // Throttle hot-path UI updates for streaming text
-  const lastSttPartialUpdateRef = useRef(0);
-  const lastAssistantStreamUpdateRef = useRef(0);
-  // Buffer to accumulate streaming text between throttled UI updates
-  // This prevents dropped deltas when VoiceLive sends rapid character-level updates
-  const assistantStreamBufferRef = useRef({ turnId: null, text: "" });
+  // Tracks which streaming/final transcript has already started client-side
+  // turn metrics. This must be a component-level ref: creating it inside a
+  // callback violates the Hooks rules and causes a runtime render failure.
+  const registeredUserTurnIdsRef = useRef(new Set());
 
   const workletSource = `
     class PcmSink extends AudioWorkletProcessor {
@@ -2007,6 +2026,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       }
     }
     setMessages([]);
+    envelopeDeduperRef.current?.clear();
     setActiveSpeaker(null);
     stopRecognitionRef.current?.();
     setCallActive(false);
@@ -2129,16 +2149,20 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
         fetch(`${API_BASE_URL}/api/v1/agent-builder/templates?session_id=${encodeURIComponent(sessionId)}`).catch(() => null),
       ]);
 
-      // Live model deployments from the connected Foundry resource (for the model
-      // dropdown — important for BYOM, where the deployment is your own). Never
-      // throws; null on failure → static presets remain the fallback.
+      // Live model deployments for the model dropdown. Cascade reads the primary
+      // Foundry resource; VoiceLive reads the Voice Live (AVL) resource, which is
+      // usually a different account with its own (much smaller) deployment set.
+      // Neither throws; null on failure → static presets remain the fallback.
       fetchFoundryModels().then((live) => {
         setLiveModelOptions(live ? deriveModelOptions(live.models) : null);
+        setLiveModelSource(live);
       });
+      fetchVoiceLiveModels().then(setVoiceLiveModelInfo);
 
       if (voicesRes && voicesRes.ok) {
         const vd = await voicesRes.json();
         setLiveVoices(Array.isArray(vd.voices) ? vd.voices : []);
+        setLiveVoiceSource(resourceAttribution(vd));
       }
 
       // Prefer the live session-agent config; fall back to the agent's template.
@@ -2219,10 +2243,134 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
     const baseByomMode = base.byom?.mode || '';
     const byomChanged = isVoiceLive && (ls.byom_mode || '') !== baseByomMode;
 
+    // input_audio_transcription is only sent on the full session apply, and the
+    // instant push carries just turn_detection + voice. Letting a transcription
+    // change take the fast path silently dropped it: the panel closed, reported
+    // "Applied instantly", and the STT model never actually changed. Route it
+    // through persist + reconnect like the model/BYOM changes.
+    const baseTranscription = base.session?.input_audio_transcription_settings?.model || '';
+    const transcriptionChanged =
+      isVoiceLive && (ls.transcription_model || '') !== baseTranscription;
+
+    // Build the exact base→applied deltas for the surface being tuned so the
+    // popup reflects what actually changed on THIS mode (VoiceLive vs Cascade),
+    // not a generic snapshot. ``fast`` limits the list to fields the instant
+    // VoiceLive push actually persists (VAD + the full voice config).
+    const fmtPct = (v) => `${Number(v) >= 0 ? '+' : ''}${Math.round(Number(v) || 0)}%`;
+    const buildChanges = (fast) => {
+      const out = [];
+      const td = base.session?.turn_detection || {};
+      if (isVoiceLive) {
+        if (modelChanged) {
+          const archNote =
+            classifyVoiceLiveArch(ls.voicelive_model) === 'native' ? ' · native' : ' · cascaded';
+          out.push(`Model ${baseVoiceliveModel || '—'} → ${ls.voicelive_model}${archNote}`);
+        }
+        if (!fast && byomChanged) {
+          out.push(`BYOM ${baseByomMode || 'off'} → ${ls.byom_mode || 'off'}`);
+        }
+        if (!fast) {
+          const baseTx = base.session?.input_audio_transcription_settings?.model || '';
+          if ((ls.transcription_model || '') !== baseTx) {
+            out.push(`Transcription ${baseTx || 'default'} → ${ls.transcription_model || 'default'}`);
+          }
+        }
+        if (Number(td.threshold ?? NaN) !== Number(ls.turn_detection_threshold)) {
+          out.push(`VAD threshold → ${Number(ls.turn_detection_threshold).toFixed(2)}`);
+        }
+        if (Math.round(td.silence_duration_ms ?? -1) !== Math.round(ls.silence_duration_ms)) {
+          out.push(`End-of-turn silence → ${Math.round(ls.silence_duration_ms)} ms`);
+        }
+        if (Math.round(td.prefix_padding_ms ?? -1) !== Math.round(ls.prefix_padding_ms)) {
+          out.push(`Prefix padding → ${Math.round(ls.prefix_padding_ms)} ms`);
+        }
+      } else {
+        if (modelChanged) {
+          out.push(`Model ${baseCascadeModel || '—'} → ${ls.cascade_model}`);
+        }
+        if (Math.round(base.speech?.vad_silence_timeout_ms ?? -1) !== Math.round(ls.vad_silence_timeout_ms)) {
+          out.push(`STT silence → ${Math.round(ls.vad_silence_timeout_ms)} ms`);
+        }
+        if (Boolean(base.speech?.use_semantic_segmentation) !== Boolean(ls.use_semantic_segmentation)) {
+          out.push(`Semantic segmentation ${ls.use_semantic_segmentation ? 'on' : 'off'}`);
+        }
+      }
+      // Shared voice (TTS) — applied on both surfaces.
+      const baseVoiceName = base.voice?.name || '';
+      if (ls.voice_name && ls.voice_name !== baseVoiceName) {
+        out.push(`Voice ${formatVoiceShort(baseVoiceName) || '—'} → ${formatVoiceShort(ls.voice_name)}`);
+      }
+      if (ls.voice_style && ls.voice_style !== (base.voice?.style || '')) {
+        out.push(`Style → ${ls.voice_style}`);
+      }
+      if (Math.round(parsePercent(base.voice?.rate)) !== Math.round(ls.rate)) {
+        out.push(`Rate → ${fmtPct(ls.rate)}`);
+      }
+      if (Math.round(parsePercent(base.voice?.pitch)) !== Math.round(ls.pitch)) {
+        out.push(`Pitch → ${fmtPct(ls.pitch)}`);
+      }
+      if (out.length === 0) out.push('No changes');
+      return out;
+    };
+
+    // Read back the persisted session agent and confirm the tuned settings
+    // actually landed on the active agent for this mode — this is the "verify
+    // state changed on the current active agent" step. Returns a read-back of
+    // what the agent is ACTUALLY configured with now so the popup can show the
+    // user exactly what was applied (esp. the model ↔ BYOM combination).
+    const verifyPersisted = async () => {
+      try {
+        const r = await fetch(
+          `${API_BASE_URL}/api/v1/agent-builder/session/${encodeURIComponent(sessionId)}`,
+        );
+        if (!r.ok) return { ok: false, agentName: resolvedAgentName, applied: [] };
+        const d = await r.json();
+        const cfg = d.config || {};
+        const persistedModel = isVoiceLive
+          ? (cfg.voicelive_model?.deployment_id || '')
+          : (cfg.cascade_model?.deployment_id || cfg.model?.deployment_id || '');
+        const wantModel = isVoiceLive
+          ? (ls.voicelive_model || baseVoiceliveModel)
+          : (ls.cascade_model || baseCascadeModel);
+        const modelOk = !wantModel || persistedModel === wantModel;
+        const voiceOk = !ls.voice_name || (cfg.voice?.name || '') === ls.voice_name;
+
+        // Actual persisted config (ground truth from the server) for this mode.
+        const applied = [];
+        const byomMode = cfg.byom?.mode || '';
+        if (persistedModel) {
+          let suffix = '';
+          if (isVoiceLive) {
+            suffix = byomMode
+              ? ` · BYOM ${byomMode.replace(/^byom-/, '')}`
+              : ` · ${classifyVoiceLiveArch(persistedModel) === 'native' ? 'managed native' : 'managed cascaded'}`;
+          }
+          applied.push(`Model: ${persistedModel}${suffix}`);
+        }
+        if (cfg.voice?.name) applied.push(`Voice: ${formatVoiceShort(cfg.voice.name)}`);
+        if (isVoiceLive) {
+          const td = cfg.session?.turn_detection || {};
+          if (td.threshold != null || td.silence_duration_ms != null) {
+            applied.push(
+              `VAD: thr ${Number(td.threshold ?? 0).toFixed(2)} · silence ${Math.round(td.silence_duration_ms ?? 0)} ms`,
+            );
+          }
+          const tx = cfg.session?.input_audio_transcription_settings?.model;
+          if (tx) applied.push(`STT: ${tx}`);
+        } else if (cfg.speech?.vad_silence_timeout_ms != null) {
+          applied.push(`STT silence: ${Math.round(cfg.speech.vad_silence_timeout_ms)} ms`);
+        }
+
+        return { agentName: d.agent_name || resolvedAgentName, ok: modelOk && voiceOk, applied };
+      } catch {
+        return { ok: false, agentName: resolvedAgentName, applied: [] };
+      }
+    };
+
     setLiveSettingsBusy(true);
     try {
-      // Fast path: VoiceLive active, only VAD/voice tweaks (no model/BYOM change) → instant push.
-      if (isVoiceLive && modeMatchesActive && !modelChanged && !byomChanged) {
+      // Fast path: VoiceLive active, only VAD/voice tweaks (no model/BYOM/STT change) → instant push.
+      if (isVoiceLive && modeMatchesActive && !modelChanged && !byomChanged && !transcriptionChanged) {
         const res = await fetch(
           `${API_BASE_URL}/api/v1/agent-builder/session/${encodeURIComponent(sessionId)}/live-settings`,
           {
@@ -2236,7 +2384,12 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                 silence_duration_ms: Math.round(ls.silence_duration_ms),
                 prefix_padding_ms: Math.round(ls.prefix_padding_ms),
               },
-              voice: { name: ls.voice_name || undefined, rate: toPercent(ls.rate) },
+              voice: {
+                name: ls.voice_name || undefined,
+                rate: toPercent(ls.rate),
+                style: ls.voice_style || undefined,
+                pitch: toPercent(ls.pitch),
+              },
             }),
           }
         );
@@ -2247,9 +2400,15 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
         } else {
           appendLog('💾 Saved; will apply on next connect.');
         }
+        const verified = await verifyPersisted();
         notifyAgentUpdate(
-          { name: resolvedAgentName, voice: { name: ls.voice_name } },
+          {
+            name: resolvedAgentName,
+            voicelive_model: { deployment_id: ls.voicelive_model || baseVoiceliveModel },
+            voice: { name: ls.voice_name },
+          },
           'updated',
+          { mode: 'voicelive', changes: buildChanges(true), confirmed: verified },
         );
         setShowLiveSettings(false);
         return;
@@ -2327,7 +2486,12 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
         throw new Error(err.detail || `HTTP ${res.status}`);
       }
       appendLog('💾 Settings saved to live agent.');
-      notifyAgentUpdate(payload, 'updated');
+      const verified = await verifyPersisted();
+      notifyAgentUpdate(payload, 'updated', {
+        mode: liveSettingsMode,
+        changes: buildChanges(false),
+        confirmed: verified,
+      });
 
       if (callActive) {
         appendLog('🔄 Restarting call to apply changes…');
@@ -2359,6 +2523,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
     handleMicToggle,
     appendLog,
     notifyAgentUpdate,
+    formatVoiceShort,
   ]);
 
   const publishMetricsSummary = useCallback(
@@ -2379,6 +2544,29 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
         logger.debug(`[Metrics] ${label}`, detail);
       } else {
         logger.debug(`[Metrics] ${label}`, metricsRef.current);
+      }
+
+      // Forward to App Insights: numeric fields become measurements so they
+      // are aggregatable; the rest are custom properties.
+      if (detail && typeof detail === 'object') {
+        const properties = {};
+        const measurements = {};
+        for (const [key, value] of Object.entries(detail)) {
+          if (value === undefined || value === null || value === '') continue;
+          if (typeof value === 'number' && Number.isFinite(value)) {
+            measurements[key] = value;
+          } else {
+            properties[key] = String(value);
+          }
+        }
+        // Keep the event name low-cardinality. The human-readable label is a
+        // property so App Insights can aggregate all turn phases together.
+        trackEvent('voice.metrics', { ...properties, metric: label }, measurements);
+      } else {
+        trackEvent('voice.metrics', {
+          ...(typeof detail === 'string' ? { detail } : {}),
+          metric: label,
+        });
       }
 
       appendLog(formatted ? `📈 ${label} — ${formatted}` : `📈 ${label}`);
@@ -2403,10 +2591,21 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
   const resetMetrics = useCallback(
     (sessionId) => {
       metricsRef.current = createMetricsState();
+      registeredUserTurnIdsRef.current.clear();
       const metrics = metricsRef.current;
       metrics.sessionStart = performance.now();
       metrics.sessionStartIso = new Date().toISOString();
       metrics.sessionId = sessionId;
+      // Bind the voice session id so all browser telemetry shares
+      // ai.session.id with the backend for this call.
+      setVoiceSession(sessionId);
+      // Capture who started the session (signed-in operator, when EasyAuth is
+      // enabled) directly on the start event for quick attribution.
+      const operator = getAuthenticatedUser();
+      trackEvent('voice.session.start', {
+        at: metrics.sessionStartIso,
+        operator_authenticated: Boolean(operator?.userId),
+      });
       publishMetricsSummary("Session metrics reset", {
         sessionId,
         at: metrics.sessionStartIso,
@@ -2466,6 +2665,8 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
           publishMetricsSummary("TTFT captured", {
             ttftMs: toMs(metrics.ttftMs),
           });
+          // First-class aggregatable metric for App Insights dashboards.
+          trackMetric('voice.ttft_ms', Math.round(metrics.ttftMs), { speaker: String(speaker || '') });
         }
         publishMetricsSummary(`Turn ${turn.id} first token`, {
           latencyMs: toMs(turn.firstTokenLatencyMs),
@@ -2635,10 +2836,9 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
 
       const baseConversationUrl = `${WS_URL}/api/v1/browser/conversation?session_id=${currentSessionId}&streaming_mode=${encodeURIComponent(
         realtimeMode,
-      )}${emailParam}&scenario=${encodeURIComponent(scenarioForQuery || currentScenario)}`;
+      )}${emailParam}${buildAuthQueryParams()}&client_user_id=${encodeURIComponent(getDeviceId() || '')}&client_traceparent=${encodeURIComponent(getSessionTraceparent(currentSessionId))}&scenario=${encodeURIComponent(scenarioForQuery || currentScenario)}`;
       resetMetrics(currentSessionId);
       assistantStreamGenerationRef.current = 0;
-      assistantStreamBufferRef.current = { turnId: null, text: "" };
       terminationReasonRef.current = null;
       resampleWarningRef.current = false;
       audioInitFailedRef.current = false;
@@ -2665,13 +2865,18 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       const connectSocket = (isReconnect = false) => {
         const ws = new WebSocket(baseConversationUrl);
         ws.binaryType = "arraybuffer";
+        const wsOpenStart = performance.now();
 
         ws.onopen = () => {
           appendLog(isReconnect ? "🔌 WS reconnected - Connected to backend!" : "🔌 WS open - Connected to backend!");
           logger.info(
-            "WebSocket connection %s to backend at:",
+            "WebSocket connection %s",
             isReconnect ? "RECONNECTED" : "OPENED",
-            baseConversationUrl,
+          );
+          trackEvent(
+            'voice.ws.open',
+            { reconnect: isReconnect, mode: String(realtimeMode) },
+            { connect_latency_ms: Math.round(performance.now() - wsOpenStart) },
           );
           reconnectAttemptsRef.current = 0;
         };
@@ -2679,9 +2884,51 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
         ws.onclose = (event) => {
           appendLog(`🔌 WS closed - Code: ${event.code}, Reason: ${event.reason}`);
           logger.info("WebSocket connection CLOSED. Code:", event.code, "Reason:", event.reason);
+          trackEvent('voice.ws.close', {
+            code: event.code,
+            reason: event.reason || '',
+            clean: event.wasClean,
+            termination_reason: terminationReasonRef.current || '',
+          });
 
           if (socketRef.current === ws) {
             socketRef.current = null;
+          }
+
+          // 4500 = the backend rejected the session for a configuration or
+          // provider error (bad model deployment, bad voice, auth, quota).
+          // Reconnecting would hit the identical failure, so surface it and stop.
+          // 4501 carries the same detail but is retryable, so it falls through
+          // to the normal backoff below after rendering the error.
+          if (
+            event.code === WS_CLOSE_CODE_VOICE_ERROR ||
+            event.code === WS_CLOSE_CODE_VOICE_ERROR_RETRYABLE
+          ) {
+            const fatal = event.code === WS_CLOSE_CODE_VOICE_ERROR;
+            const [closeCode, ...closeRest] = String(event.reason || "").split(":");
+            const detail = closeRest.join(":").trim();
+            if (fatal) {
+              shouldReconnectRef.current = false;
+              resetCallLifecycle();
+              setCallActive(false);
+              setActiveSpeaker("System");
+            }
+            setMessages((prev) => [
+              ...prev,
+              {
+                kind: "error",
+                speaker: "System",
+                status: "error",
+                error: {
+                  code: detail ? closeCode.trim() : "VoiceSessionFailed",
+                  message: detail || event.reason || "The voice session could not be started.",
+                },
+              },
+            ]);
+            appendLog(`❌ Session rejected: ${event.reason || "configuration error"}`);
+            if (fatal) {
+              return;
+            }
           }
 
           if (!shouldReconnectRef.current) {
@@ -2713,6 +2960,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
         ws.onerror = (err) => {
           appendLog("❌ WS error - Check if backend is running");
           logger.error("WebSocket error - backend might not be running:", err);
+          trackEvent('voice.ws.error', { reconnect: isReconnect });
         };
 
         ws.onmessage = (event) => {
@@ -2728,7 +2976,14 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       connectSocket(false);
 
       // 2) setup Web Audio for raw PCM @16 kHz
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (micErr) {
+        trackException(micErr, { stage: 'getUserMedia' });
+        trackEvent('voice.mic.error', { message: micErr?.message || String(micErr) });
+        throw micErr;
+      }
       micMutedRef.current = false;
       setMicMuted(false);
       micStreamRef.current = stream;
@@ -2870,94 +3125,8 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       return [...arr, normalizedMsg];
     };
 
-    const updateTurnMessage = (turnId, updater, options = {}) => {
-      const { createIfMissing = true, initial, speaker } = options;
-
-      setMessages((prev) => {
-        if (!turnId) {
-          if (!createIfMissing) {
-            return prev;
-          }
-          const base = typeof initial === "function" ? initial() : initial;
-          if (!base) {
-            return prev;
-          }
-          return [...prev, base];
-        }
-
-        // After handoff, a message may have been created with a speaker-qualified turnId
-        // (e.g., "abc123_DeclineSpecialist"). Check for that variant first if speaker is known.
-        const speakerQualifiedTurnId = speaker ? `${turnId}_${speaker}` : null;
-        let index = speakerQualifiedTurnId
-          ? prev.findIndex((m) => m.turnId === speakerQualifiedTurnId)
-          : -1;
-        
-        // Fall back to looking for exact turnId match with SAME speaker
-        // This prevents finding a different agent's message with the same base turnId
-        if (index === -1 && speaker) {
-          index = prev.findIndex((m) => m.turnId === turnId && m.speaker === speaker);
-        }
-        
-        // Final fallback: exact turnId match (for cases without speaker info)
-        if (index === -1) {
-          index = prev.findIndex((m) => m.turnId === turnId);
-        }
-
-        if (index === -1) {
-          if (!createIfMissing) {
-            return prev;
-          }
-          const base = typeof initial === "function" ? initial() : initial;
-          if (!base) {
-            return prev;
-          }
-          // DEDUPLICATION: Don't create a new message if the last message has same speaker+text
-          // This prevents duplicate bubbles when turnId changes but content is the same
-          const lastMsg = prev.at(-1);
-          if (lastMsg && lastMsg.speaker === base.speaker && lastMsg.text === base.text) {
-            // Update the existing message's turnId instead of creating duplicate
-            return prev.map((m, i) => 
-              i === prev.length - 1 
-                ? { ...m, turnId: speaker ? `${turnId}_${speaker}` : turnId, streaming: false }
-                : m
-            );
-          }
-          // For new messages with a speaker, use qualified turnId to isolate from other agents
-          const effectiveTurnId = speaker ? `${turnId}_${speaker}` : turnId;
-          return [...prev, { ...base, turnId: effectiveTurnId }];
-        }
-
-        const current = prev[index];
-        const patch = typeof updater === "function" ? updater(current) : null;
-        if (patch == null) {
-          return prev;
-        }
-
-        // If the speaker changed (e.g., after handoff), create a new message
-        // instead of overwriting the previous agent's bubble
-        if (patch.speaker && current.speaker && patch.speaker !== current.speaker) {
-          const base = typeof initial === "function" ? initial() : initial;
-          // MUST use qualified turnId so subsequent lookups can find this message
-          const qualifiedTurnId = `${turnId}_${patch.speaker}`;
-          const newMsg = base 
-            ? { ...base, ...patch, turnId: qualifiedTurnId } 
-            : { ...patch, turnId: qualifiedTurnId };
-          // DEDUPLICATION: Don't add if last message already has same speaker+text
-          const lastMsg = prev.at(-1);
-          if (lastMsg && lastMsg.speaker === newMsg.speaker && lastMsg.text === newMsg.text) {
-            return prev.map((m, i) => 
-              i === prev.length - 1 
-                ? { ...m, turnId: qualifiedTurnId, streaming: false }
-                : m
-            );
-          }
-          return [...prev, newMsg];
-        }
-
-        const next = [...prev];
-        next[index] = { ...current, ...patch, turnId: current.turnId };
-        return next;
-      });
+    const applyConversationPayload = (nextPayload) => {
+      setMessages((prev) => reduceConversationPayload(prev, nextPayload));
     };
 
     const handleSocketMessage = async (event) => {
@@ -3008,105 +3177,28 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
         return;
       }
 
-      // --- NEW: Handle envelope format from backend ---
-      // If message is in envelope format, extract the actual payload
-      if (payload.type && payload.sender && payload.payload && payload.ts) {
+      // Normalize the backend envelope once; bubble state transitions are
+      // handled separately by the pure turn-scoped reducer below.
+      if (isSessionEnvelope(payload)) {
         const envelope = payload;
+        // Drop copies of an envelope already handled via another socket bound
+        // to this session. Checked before flattening because the id lives at
+        // the envelope top level and flattening only spreads envelope.payload.
+        if (!envelopeDeduperRef.current.shouldProcess(envelope.id)) {
+          logger.debug("📭 Dropped duplicate envelope:", {
+            id: envelope.id,
+            type: envelope.type,
+            topic: envelope.topic,
+          });
+          return;
+        }
         logger.debug("📨 Received envelope message:", {
           type: envelope.type,
           sender: envelope.sender,
           topic: envelope.topic,
           session_id: envelope.session_id,
         });
-
-        const envelopeType = envelope.type;
-        const envelopeSender = envelope.sender;
-        const envelopeTimestamp = envelope.ts;
-        const envelopeSessionId = envelope.session_id;
-        const envelopeTopic = envelope.topic;
-        const actualPayload = envelope.payload ?? {};
-
-        let flattenedPayload;
-
-        // Transform envelope back to legacy format for compatibility
-        if (envelopeType === "event" && (actualPayload.event_type || actualPayload.eventType)) {
-          const evtType = actualPayload.event_type || actualPayload.eventType;
-          const eventData = {
-            ...(typeof actualPayload.data === "object" && actualPayload.data ? actualPayload.data : {}),
-            ...actualPayload,
-          };
-          delete eventData.event_type;
-          delete eventData.eventType;
-          flattenedPayload = {
-            ...eventData,
-            type: "event",
-            event_type: evtType,
-            event_data: eventData,
-            data: eventData,
-            message: actualPayload.message || eventData.message,
-            content: actualPayload.content || eventData.content || actualPayload.message,
-            sender: envelopeSender,
-            speaker: envelopeSender,
-          };
-        } else if (
-          envelopeType === "event" &&
-          actualPayload.message &&
-          !actualPayload.event_type &&
-          !actualPayload.eventType
-        ) {
-          const merged = { ...actualPayload };
-          merged.message = merged.message ?? actualPayload.message;
-          merged.content = merged.content ?? actualPayload.message;
-          merged.streaming = merged.streaming ?? false;
-          flattenedPayload = {
-            ...merged,
-            type: merged.type || "assistant",
-            sender: envelopeSender,
-            speaker: envelopeSender,
-          };
-        } else if (envelopeType === "assistant_streaming") {
-          const merged = { ...actualPayload };
-          merged.content = merged.content ?? merged.message ?? "";
-          merged.streaming = true;
-          flattenedPayload = {
-            ...merged,
-            type: "assistant_streaming",
-            sender: envelopeSender,
-            speaker: envelopeSender,
-          };
-        } else if (envelopeType === "status" && actualPayload.message) {
-          const merged = { ...actualPayload };
-          merged.message = merged.message ?? actualPayload.message;
-          merged.content = merged.content ?? actualPayload.message;
-          merged.statusLabel =
-            merged.statusLabel ?? merged.label ?? merged.status_label;
-          flattenedPayload = {
-            ...merged,
-            type: "status",
-            sender: envelopeSender,
-            speaker: envelopeSender,
-          };
-        } else {
-          // For other envelope types, use the payload directly and retain the type
-          flattenedPayload = {
-            ...actualPayload,
-            type: actualPayload.type || envelopeType,
-            sender: envelopeSender,
-            speaker: envelopeSender,
-          };
-        }
-
-        if (envelopeTimestamp && !flattenedPayload.ts) {
-          flattenedPayload.ts = envelopeTimestamp;
-        }
-        if (envelopeSessionId && !flattenedPayload.session_id) {
-          flattenedPayload.session_id = envelopeSessionId;
-        }
-        if (envelopeTopic && !flattenedPayload.topic) {
-          flattenedPayload.topic = envelopeTopic;
-        }
-
-        payload = flattenedPayload;
+        payload = flattenSessionEnvelope(envelope);
         logger.debug("📨 Transformed envelope to legacy format:", payload);
       }
 
@@ -3210,9 +3302,10 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
               text: reasonText,
               ts: payload.ts || payload.timestamp,
             });
-            // Reset streaming state on agent handoff to force new bubble for new agent
+            // Preserve this turn's stream buffer: a handoff may change the
+            // completing agent, but its streamed text belongs in the same
+            // response bubble. The next canonical turn ID resets it naturally.
             assistantStreamGenerationRef.current += 1;
-            assistantStreamBufferRef.current = { turnId: null, text: "" };
           }
           if (label !== "System" && label !== "User") {
             currentAgentRef.current = label;
@@ -3241,6 +3334,19 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
         if (payload.type !== "event") {
           payload.type = "event";
         }
+
+        // Requested-vs-applied session config. State only — no extra message
+        // row is produced, so this rides the envelope that already renders and
+        // adds nothing to the transcript. A payload with no contract (older
+        // backend, or an envelope that predates the check) leaves the last
+        // known contract in place rather than blanking the panel.
+        const derivedContract = deriveSessionContract(payload);
+        if (derivedContract) {
+          setSessionContract(derivedContract);
+          if (derivedContract.status === "mismatch") {
+            logger.warn("⚠️ Live session config does not match what was requested", derivedContract);
+          }
+        }
       }
 
       if (payload.event_type === "call_connected") {
@@ -3268,6 +3374,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       if (payload.event_type === "call_disconnected") {
         setCallActive(false);
         setActiveSpeaker(null);
+        setSessionContract(null);
         resetCallLifecycle();
         closeRelaySocket("call disconnected");
         appendLog("📞 Call ended");
@@ -3280,6 +3387,39 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
           text: "Call disconnected",
           ts: payload.ts || payload.timestamp,
         });
+      }
+
+      // Structured backend errors (bad model deployment, missing voice, auth,
+      // quota...). Rendered as an error card so the operator sees the cause and
+      // the remediation instead of silence.
+      if (payload.type === "error") {
+        const errCode = payload.code || payload.error_type || "UnknownError";
+        const errMessage =
+          payload.message || payload.error_message || payload.content || "An error occurred.";
+        applyConversationPayload(payload);
+        setActiveSpeaker("System");
+        appendLog(`❌ ${errCode}: ${errMessage}`);
+        if (payload.remediation) {
+          appendLog(`💡 ${payload.remediation}`);
+        }
+        appendGraphEvent({
+          kind: "event",
+          from: "System",
+          to: currentAgentRef.current || "Concierge",
+          text: `${errCode}: ${errMessage}`,
+          ts: payload.ts || payload.timestamp,
+        });
+        logger.error("Voice pipeline error", payload);
+        if (payload.fatal === true) {
+          shouldReconnectRef.current = false;
+          resetCallLifecycle();
+          setCallActive(false);
+          playbackActiveRef.current = false;
+          if (pcmSinkRef.current) {
+            pcmSinkRef.current.port.postMessage({ type: "clear" });
+          }
+        }
+        return;
       }
 
       if (payload.type === "session_end") {
@@ -3376,63 +3516,12 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
           }
         }
 
-        const now = (typeof performance !== "undefined" && performance.now)
-          ? performance.now()
-          : Date.now();
-        const throttleMs = 90;
-
         if (partialText) {
-          const shouldUpdateUi = now - lastSttPartialUpdateRef.current >= throttleMs;
-          if (shouldUpdateUi) {
-            lastSttPartialUpdateRef.current = now;
-            const turnId =
-              partialData.turn_id ||
-              partialData.turnId ||
-              partialData.response_id ||
-              partialData.responseId ||
-              null;
-            let registeredTurn = false;
-
-            setMessages((prev) => {
-              const last = prev.at(-1);
-              if (
-                last?.speaker === "User" &&
-                last?.streaming &&
-                (!turnId || last.turnId === turnId)
-              ) {
-                if (last.text === partialText) {
-                  return prev;
-                }
-                const updated = prev.slice();
-                updated[updated.length - 1] = {
-                  ...last,
-                  text: partialText,
-                  streamingType: "stt_partial",
-                  sequence: partialData.sequence,
-                  language: partialData.language || last.language,
-                  turnId: turnId ?? last.turnId,
-                };
-                return updated;
-              }
-
-              registeredTurn = true;
-              return [
-                ...prev,
-                {
-                  speaker: "User",
-                  text: partialText,
-                  streaming: true,
-                  streamingType: "stt_partial",
-                  sequence: partialData.sequence,
-                  language: partialData.language,
-                  turnId: turnId ?? undefined,
-                },
-              ];
-            });
-
-            if (registeredTurn) {
-              registerUserTurn(partialText);
-            }
+          applyConversationPayload(payload);
+          const turnId = resolveTurnId(partialData);
+          if (turnId && !registeredUserTurnIdsRef.current.has(turnId)) {
+            registeredUserTurnIdsRef.current.add(turnId);
+            registerUserTurn(partialText);
           }
         }
 
@@ -3740,45 +3829,16 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       if (msgType === "user" || speaker === "User") {
         setActiveSpeaker("User");
         const turnId =
-          payload.turn_id ||
-          payload.turnId ||
+          resolveTurnId(payload) ||
           payload.response_id ||
           payload.responseId ||
           null;
         const isStreamingUser = payload.streaming === true;
+        applyConversationPayload(payload);
 
-        if (turnId) {
-          updateTurnMessage(
-            turnId,
-            (current = {}) => ({
-              speaker: "User",
-              text: txt ?? current.text ?? "",
-              streaming: isStreamingUser,
-              streamingType: isStreamingUser ? "stt_final" : undefined,
-              cancelled: false,
-            }),
-            {
-              initial: () => ({
-                speaker: "User",
-                text: txt,
-                streaming: isStreamingUser,
-                streamingType: isStreamingUser ? "stt_final" : undefined,
-                turnId,
-              }),
-            },
-          );
-        } else {
-          setMessages((prev) => {
-            const last = prev.at(-1);
-            if (last?.speaker === "User" && last?.streaming) {
-              return prev.map((m, i) =>
-                i === prev.length - 1
-                  ? { ...m, text: txt, streaming: isStreamingUser }
-                  : m,
-              );
-            }
-            return [...prev, { speaker: "User", text: txt, streaming: isStreamingUser }];
-          });
+        if (txt && turnId && !registeredUserTurnIdsRef.current.has(turnId)) {
+          registeredUserTurnIdsRef.current.add(turnId);
+          registerUserTurn(txt);
         }
         appendLog(`User: ${txt}`);
         setLastUserMessage(txt);
@@ -3801,34 +3861,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       }
 
       if (type === "assistant_cancelled") {
-        // Clear streaming buffer when response is cancelled
-        assistantStreamBufferRef.current = { turnId: null, text: "" };
-        
-        const turnId =
-          payload.turn_id ||
-          payload.turnId ||
-          payload.response_id ||
-          payload.responseId ||
-          null;
-        const cancelledSpeaker = speaker || payload.active_agent || payload.sender || null;
-        if (turnId) {
-          updateTurnMessage(
-            turnId,
-            (current) =>
-              current
-                ? {
-                    streaming: false,
-                    cancelled: true,
-                    cancelReason:
-                      payload.cancel_reason ||
-                      payload.cancelReason ||
-                      payload.reason ||
-                      current.cancelReason,
-                  }
-                : null,
-            { createIfMissing: false, speaker: cancelledSpeaker },
-          );
-        }
+        applyConversationPayload(payload);
         setActiveSpeaker(null);
         appendLog("🤖 Assistant response interrupted");
         return;
@@ -3836,79 +3869,9 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
 
       if (type === "assistant_streaming") {
         const streamingSpeaker = speaker || "Concierge";
-        const streamGeneration = assistantStreamGenerationRef.current;
         registerAssistantStreaming(streamingSpeaker);
         setActiveSpeaker(streamingSpeaker);
-        const now = (typeof performance !== "undefined" && performance.now)
-          ? performance.now()
-          : Date.now();
-        const throttleMs = 90;
-        const shouldUpdateUi = now - lastAssistantStreamUpdateRef.current >= throttleMs;
-        const turnId =
-          payload.turn_id ||
-          payload.turnId ||
-          payload.response_id ||
-          payload.responseId ||
-          null;
-
-        // Always accumulate streaming text into buffer (prevents dropped deltas)
-        // Track by turnId+speaker to prevent cross-agent contamination during handoffs
-        const buffer = assistantStreamBufferRef.current;
-        const bufferKey = turnId ? `${turnId}_${streamingSpeaker}` : null;
-        if (buffer.turnId !== bufferKey) {
-          buffer.turnId = bufferKey;
-          buffer.text = txt; // Start fresh for new turn or new speaker
-        } else {
-          buffer.text += txt; // Accumulate for same turn+speaker
-        }
-
-        if (shouldUpdateUi) {
-          lastAssistantStreamUpdateRef.current = now;
-          // Use accumulated buffer text instead of just current delta
-          const accumulatedText = buffer.text;
-          
-          // Use speaker+streamGeneration as primary key for finding/updating streaming messages
-          // This is more robust than turnId alone, especially during handoffs where
-          // the same turnId may be used by multiple agents
-          setMessages((prev) => {
-            // Find the most recent streaming message for this speaker with matching generation
-            // Search backwards since we want the latest one
-            for (let idx = prev.length - 1; idx >= 0; idx -= 1) {
-              const candidate = prev[idx];
-              if (
-                candidate?.streaming &&
-                candidate?.speaker === streamingSpeaker &&
-                candidate?.streamGeneration === streamGeneration
-              ) {
-                // Found it - update in place
-                return prev.map((m, i) =>
-                  i === idx
-                    ? {
-                        ...m,
-                        text: accumulatedText,
-                        turnId: turnId || m.turnId,
-                        cancelled: false,
-                        cancelReason: undefined,
-                      }
-                    : m,
-                );
-              }
-            }
-            
-            // No existing streaming message for this speaker+generation - create new one
-            return [
-              ...prev,
-              {
-                speaker: streamingSpeaker,
-                text: accumulatedText,
-                streaming: true,
-                streamGeneration,
-                turnId,
-                cancelled: false,
-              },
-            ];
-          });
-        }
+        applyConversationPayload(payload);
         const pending = metricsRef.current?.pendingBargeIn;
         if (pending) {
           finalizeBargeInClear(pending);
@@ -3917,9 +3880,6 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       }
 
       if (msgType === "assistant" || msgType === "status" || speaker === "Concierge") {
-        // Clear streaming buffer when final message arrives
-        assistantStreamBufferRef.current = { turnId: null, text: "" };
-        
         if (msgType === "status") {
           const normalizedStatus = (txt || "").toLowerCase();
           if (
@@ -3948,54 +3908,10 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
         if (payload.ts || payload.timestamp) {
           messageOptions.timestamp = payload.ts || payload.timestamp;
         }
-        const turnId =
-          payload.turn_id ||
-          payload.turnId ||
-          payload.response_id ||
-          payload.responseId ||
-          null;
-
-        if (turnId) {
-          updateTurnMessage(
-            turnId,
-            (current) => ({
-              ...messageOptions,
-              text: txt ?? current?.text ?? "",
-              streaming: false,
-              cancelled: false,
-              cancelReason: undefined,
-            }),
-            {
-              // Pass speaker so we can find messages with speaker-qualified turnIds after handoff
-              speaker: assistantSpeaker,
-              initial: () => ({
-                ...messageOptions,
-                streaming: false,
-                cancelled: false,
-                turnId,
-              }),
-            },
-          );
+        if (msgType === "assistant") {
+          applyConversationPayload({ ...payload, speaker: assistantSpeaker });
         } else {
           setMessages((prev) => {
-            // Only finalize a streaming message if it belongs to the same speaker
-            // This prevents handoff responses from overwriting previous agent's bubbles
-            for (let idx = prev.length - 1; idx >= 0; idx -= 1) {
-              const candidate = prev[idx];
-              if (candidate?.streaming && candidate?.speaker === assistantSpeaker) {
-                return prev.map((m, i) =>
-                  i === idx
-                    ? {
-                        ...m,
-                        ...messageOptions,
-                        streaming: false,
-                        cancelled: false,
-                        cancelReason: undefined,
-                      }
-                    : m,
-                );
-              }
-            }
             return pushIfChanged(prev, {
               ...messageOptions,
               cancelled: false,
@@ -4048,14 +3964,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       }
 
       if (type === "tool_start") {
-        setMessages((prev) => [
-          ...prev,
-          {
-            speaker: "Assistant",
-            isTool: true,
-            text: `🛠️ tool ${payload.tool} started 🔄`,
-          },
-        ]);
+        applyConversationPayload(payload);
         appendGraphEvent({
           kind: "tool",
           from: resolveAgentLabel(payload, currentAgentRef.current || "Assistant"),
@@ -4076,18 +3985,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
           : payload.pct
           ? `${payload.pct}`
           : "progress";
-        updateToolMessage(
-          payload.tool,
-          (message) => ({
-            ...message,
-            text: `🛠️ tool ${payload.tool} ${pctText} 🔄`,
-          }),
-          () => ({
-            speaker: "Assistant",
-            isTool: true,
-            text: `🛠️ tool ${payload.tool} ${pctText} 🔄`,
-          }),
-        );
+        applyConversationPayload(payload);
         appendGraphEvent({
           kind: "tool",
           from: resolveAgentLabel(payload, currentAgentRef.current || "Assistant"),
@@ -4101,31 +3999,9 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       }
     
       if (type === "tool_end") {
-
         const resultPayload =
           payload.result ?? payload.output ?? payload.data ?? payload.response;
-        const serializedResult =
-          resultPayload !== undefined
-            ? JSON.stringify(resultPayload, null, 2)
-            : null;
-        const finalText =
-          payload.status === "success"
-            ? `🛠️ tool ${payload.tool} completed ✔️${
-                serializedResult ? `\n${serializedResult}` : ""
-              }`
-            : `🛠️ tool ${payload.tool} failed ❌\n${payload.error}`;
-        updateToolMessage(
-          payload.tool,
-          (message) => ({
-            ...message,
-            text: finalText,
-          }),
-          {
-            speaker: "Assistant",
-            isTool: true,
-            text: finalText,
-          },
-        );
+        applyConversationPayload(payload);
 
         const handoffTarget =
           (resultPayload &&
@@ -4163,7 +4039,10 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
           to: resolveAgentLabel(payload, currentAgentRef.current || "Assistant"),
           tool: payload.tool,
           text: payload.status || "completed",
-          detail: serializedResult || payload.error,
+          detail:
+            resultPayload !== undefined
+              ? JSON.stringify(resultPayload, null, 2)
+              : payload.error,
           ts: payload.ts || payload.timestamp,
         });
         appendLog(`⚙️ ${payload.tool} ${payload.status} (${payload.elapsedMs} ms)`);
@@ -4240,32 +4119,26 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
 
       relay.onmessage = ({ data }) => {
         lifecycle.lastEnvelopeAt = Date.now();
+        const handler = handleSocketMessageRef.current;
+        if (!handler) {
+          return;
+        }
+
+        // Forward relay frames verbatim. The shared handler owns envelope
+        // normalization (flattenSessionEnvelope) and duplicate suppression;
+        // reshaping here would diverge from the conversation socket and strip
+        // the top-level id, ts and topic the handler relies on.
         try {
-          const obj = JSON.parse(data);
-          let processedObj = obj;
-
-          if (obj && obj.type && obj.sender && obj.payload && obj.ts) {
-            logger.debug("📨 Relay received envelope message:", {
-              type: obj.type,
-              sender: obj.sender,
-              topic: obj.topic,
+          const result = handler({ data });
+          if (result && typeof result.catch === "function") {
+            result.catch((error) => {
+              logger.error("Relay message handling error:", error);
+              appendLog("Relay message handling error");
             });
-
-            processedObj = {
-              type: obj.type,
-              sender: obj.sender,
-              ...obj.payload,
-            };
-            logger.debug("📨 Transformed relay envelope:", processedObj);
-          }
-
-          const handler = handleSocketMessageRef.current;
-          if (handler) {
-            handler({ data: JSON.stringify(processedObj) });
           }
         } catch (error) {
-          logger.error("Relay parse error:", error);
-          appendLog("Relay parse error");
+          logger.error("Relay message handling error:", error);
+          appendLog("Relay message handling error");
         }
       };
 
@@ -5074,25 +4947,46 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                   const modelChanged = chosenModel && chosenModel !== baseModel;
                   const baseByomModeHint = base.byom?.mode || '';
                   const byomChangedHint = isVoiceLive && (liveSettings.byom_mode || '') !== baseByomModeHint;
+                  const baseTranscriptionHint = base.session?.input_audio_transcription_settings?.model || '';
+                  const transcriptionChangedHint =
+                    isVoiceLive && (liveSettings.transcription_model || '') !== baseTranscriptionHint;
                   const modeMatchesActive = (selectedStreamingMode === 'voice_live') === isVoiceLive;
-                  // Instant only when VoiceLive is the active stream and no model/BYOM change.
-                  const willReconnect = !(isVoiceLive && modeMatchesActive) || modelChanged || byomChangedHint;
+                  // Instant only when VoiceLive is the active stream and no model/BYOM/STT change.
+                  const willReconnect = !(isVoiceLive && modeMatchesActive)
+                    || modelChanged || byomChangedHint || transcriptionChangedHint;
                   // Model dropdown source:
-                  //   • Cascade → your live deployments (fallback static presets).
-                  //   • VoiceLive + BYOM ON → your live deployments (your own model).
-                  //   • VoiceLive + BYOM OFF → managed Voice Live models (pricing tiers).
+                  //   • Cascade → primary Foundry deployments (fallback static presets).
+                  //   • VoiceLive + BYOM ON → deployments on the VOICE LIVE (AVL)
+                  //     resource — the account VoiceLive actually connects to. Using
+                  //     the primary Foundry list here offers models AVL doesn't host,
+                  //     which connects fine but never responds.
+                  //   • VoiceLive + BYOM OFF → managed Voice Live models (pricing tiers),
+                  //     annotated with which ones are also deployed on the AVL resource.
                   const byomOn = isVoiceLive && Boolean(liveSettings.byom_mode);
-                  const liveModeList = isVoiceLive ? liveModelOptions?.voicelive : liveModelOptions?.cascade;
+                  const voiceLiveDeployed = voiceLiveModelInfo?.options || [];
+                  const voiceLiveDeployedIds = new Set(voiceLiveDeployed.map((o) => o.id));
+                  const liveModeList = isVoiceLive ? voiceLiveDeployed : liveModelOptions?.cascade;
+                  // Which Azure account + region actually backs the list on screen.
+                  // These are usually two DIFFERENT accounts in two different
+                  // geographies (Voice Live ships in only a subset of regions),
+                  // and neither is necessarily where this app runs — so every
+                  // turn can pay a hop the panel otherwise never mentions.
+                  const activeModelSource = isVoiceLive ? voiceLiveModelInfo : liveModelSource;
+                  const otherModelSource = isVoiceLive ? liveModelSource : voiceLiveModelInfo;
                   let modelPresets;
                   let modelSourceLabel = '';
                   let usingManaged = false;
                   if (isVoiceLive && !byomOn) {
                     modelPresets = MANAGED_VOICELIVE_MODELS.map((m) => m.id);
-                    modelSourceLabel = ' · managed Voice Live';
+                    // Managed models are Microsoft-hosted, so the AVL account isn't
+                    // their source — but the socket still terminates there, so its
+                    // region is still the distance the audio travels.
+                    modelSourceLabel = describeModelSource(activeModelSource, { managed: true });
                     usingManaged = true;
                   } else if (liveModeList && liveModeList.length) {
                     modelPresets = liveModeList.map((o) => o.id);
-                    modelSourceLabel = ' · connected Foundry resource';
+                    modelSourceLabel = describeModelSource(activeModelSource)
+                      || (isVoiceLive ? ' · Voice Live deployments' : ' · connected Foundry resource');
                   } else {
                     modelPresets = isVoiceLive
                       ? MANAGED_VOICELIVE_MODELS.map((m) => m.id)
@@ -5100,13 +4994,82 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                     usingManaged = isVoiceLive;
                   }
                   // For the managed Voice Live list, suffix each option with its
-                  // pricing tier (pro/basic/lite) — matches the full Agent Builder.
+                  // pricing tier (pro/basic/lite) — matches the full Agent Builder —
+                  // plus a "deployed" marker when the AVL resource also hosts it.
                   const managedTierById = Object.fromEntries(
                     MANAGED_VOICELIVE_MODELS.map((m) => [m.id, m.tier]),
                   );
-                  const modelLabelFor = (id) =>
-                    usingManaged && managedTierById[id] ? `${id} · ${managedTierById[id]}` : id;
+                  const modelLabelFor = (id) => {
+                    if (!usingManaged || !managedTierById[id]) return id;
+                    const deployedNote = voiceLiveDeployedIds.has(id) ? ' · deployed' : '';
+                    return `${id} · ${managedTierById[id]}${deployedNote}`;
+                  };
                   const arch = isVoiceLive ? classifyVoiceLiveArch(chosenModel) : null;
+                  // A VoiceLive model that isn't in the managed catalog can only be
+                  // reached via BYOM (it's your own Foundry deployment). Selecting it
+                  // with BYOM OFF connects to managed Voice Live with a model it can't
+                  // serve — the session connects but the agent never responds and dies
+                  // on the ~900s idle timeout. Flag it so the user enables BYOM.
+                  const chosenModelIsManaged = MANAGED_VOICELIVE_MODELS.some((m) => m.id === chosenModel);
+                  const needsByomForModel = Boolean(isVoiceLive && chosenModel && !byomOn && !chosenModelIsManaged);
+                  // With BYOM ON, Voice Live routes to a deployment on the AVL
+                  // resource. A model that isn't deployed there fails the same silent
+                  // way. Only flag when the deployment list was actually retrieved.
+                  const byomModelNotDeployed = Boolean(
+                    isVoiceLive
+                    && byomOn
+                    && chosenModel
+                    && voiceLiveDeployed.length
+                    && !voiceLiveDeployedIds.has(chosenModel),
+                  );
+                  // A BYOM profile picks the wire API Voice Live drives the
+                  // deployment with, so the deployment has to speak it. Pointing the
+                  // chat-completion profile at a realtime deployment (or vice versa)
+                  // connects and passes the session contract, but the LLM leg never
+                  // answers — the agent goes mute on every turn. This is the pair
+                  // Quick Tune used to persist, and because byom_mode rehydrates
+                  // from the saved agent it stuck to every later edit.
+                  const byomProfileConflict = (() => {
+                    if (!isVoiceLive || !byomOn || !chosenModel) return null;
+                    const isRealtime = classifyVoiceLiveArch(chosenModel) === 'native';
+                    if (liveSettings.byom_mode === 'byom-azure-openai-chat-completion' && isRealtime) {
+                      return {
+                        title: 'Profile can’t drive this model',
+                        body: 'is a realtime (speech-to-speech) deployment and doesn’t serve chat completions. Pick a chat deployment (gpt-4o, gpt-5.x, …) or switch the profile to Azure OpenAI Realtime.',
+                      };
+                    }
+                    if (liveSettings.byom_mode === 'byom-azure-openai-realtime' && !isRealtime) {
+                      return {
+                        title: 'Profile can’t drive this model',
+                        body: 'isn’t a realtime deployment and doesn’t serve the realtime API. Pick a realtime deployment (gpt-realtime, …) or switch the profile to Azure OpenAI Chat Completion.',
+                      };
+                    }
+                    return null;
+                  })();
+                  const applyBlocked = Boolean(needsByomForModel || byomProfileConflict);
+                  // Geographic distance advisory. Unlike the guards above this
+                  // never blocks Apply — the configuration is valid, it just
+                  // costs round-trip latency the user can't tune away, so it
+                  // renders informational rather than in the error styling.
+                  const regionAdvisory = crossRegionHint({
+                    active: {
+                      label: isVoiceLive ? 'Voice Live' : 'Cascade models',
+                      region: activeModelSource?.region,
+                      resourceFallback: activeModelSource?.resourceFallback,
+                    },
+                    app: activeModelSource?.appRegion,
+                    other: {
+                      label: isVoiceLive ? 'Cascade models' : 'Voice Live',
+                      region: otherModelSource?.region,
+                    },
+                  });
+                  // The Speech resource is a separate leg: in Cascade every synth
+                  // and recognition round-trips to it, and it need not share the
+                  // app's region either.
+                  const voiceRegionAdvisory = crossRegionHint({
+                    active: { label: 'Voices', region: liveVoiceSource?.region },
+                    app: liveVoiceSource?.appRegion,
+                  });
                   const rowStyle = { marginBottom: '14px' };
                   const labelStyle = {
                     display: 'flex',
@@ -5145,6 +5108,33 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                     }
                     return liveVoices || [];
                   })();
+                  // Region enumeration returns hundreds of voices across every
+                  // supported locale, so group them (HD first) instead of one
+                  // flat list. Backend already sorts by category.
+                  const voiceGroups = (() => {
+                    const labels = {
+                      hd: 'HD (high definition)',
+                      turbo: 'Turbo (lowest latency)',
+                      standard: 'Standard neural',
+                      mai: 'MAI-Voice-2 (preview)',
+                    };
+                    const groups = [];
+                    for (const v of voiceOptions) {
+                      const key = v.category || 'other';
+                      let g = groups.find((x) => x.key === key);
+                      if (!g) {
+                        g = { key, label: labels[key] || key, items: [] };
+                        groups.push(g);
+                      }
+                      g.items.push(v);
+                    }
+                    return groups;
+                  })();
+                  const voiceOptionLabel = (v) => {
+                    const base = v.display_name || v.name;
+                    if (v.is_hd) return `${base} · HD`;
+                    return v.category ? `${base} · ${v.category}` : base;
+                  };
                   const styleOptions = ['chat', 'friendly', 'cheerful', 'empathetic', 'assistant', 'newscast', 'customerservice'];
                   const styleList = liveSettings.voice_style && !styleOptions.includes(liveSettings.voice_style)
                     ? [liveSettings.voice_style, ...styleOptions]
@@ -5385,6 +5375,173 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                               : '🔤 Cascaded STT→LLM→TTS inside VoiceLive'}
                           </div>
                         )}
+                        {/* Which Azure account served this list. Cascade and VoiceLive
+                            read DIFFERENT resources, so name the one in use rather than
+                            leaving the swap invisible. */}
+                        {(activeModelSource?.resourceName || activeModelSource?.region) && (
+                          <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '6px', lineHeight: 1.5 }}>
+                            {usingManaged ? 'Connects via ' : 'Served by '}
+                            <strong style={{ color: '#64748b' }}>
+                              {activeModelSource.resourceName || 'the connected resource'}
+                            </strong>
+                            {activeModelSource.region && ` · ${activeModelSource.region}`}
+                            {activeModelSource.appRegion
+                              && ` · app in ${activeModelSource.appRegion}`}
+                            {activeModelSource.resourceFallback && (
+                              <span style={{ display: 'block' }}>
+                                No dedicated Voice Live account — the primary Foundry
+                                resource serves both modes.
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        {needsByomForModel && (
+                          <div
+                            style={{
+                              marginTop: '8px',
+                              padding: '10px 12px',
+                              borderRadius: '10px',
+                              background: 'linear-gradient(135deg, #fef2f2, #fee2e2)',
+                              border: '1px solid #fca5a5',
+                              boxShadow: '0 2px 8px rgba(220,38,38,0.12)',
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                fontSize: '11px',
+                                fontWeight: 800,
+                                color: '#b91c1c',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.4px',
+                                marginBottom: '6px',
+                              }}
+                            >
+                              <span style={{ fontSize: '13px' }}>⚠️</span>
+                              Enable BYOM for this model
+                            </div>
+                            <div style={{ fontSize: '11px', lineHeight: 1.5, color: '#7f1d1d' }}>
+                              <strong>{chosenModel}</strong> isn&apos;t a managed Voice Live model — it&apos;s
+                              your own Foundry deployment. Turn on a <strong>BYOM</strong> profile below
+                              (e.g. <em>Azure OpenAI / Foundry Chat Completion</em>) to route to it.
+                              Applying with BYOM off connects to managed Voice Live, which can&apos;t serve
+                              this model, so the agent will go silent.
+                            </div>
+                          </div>
+                        )}
+                        {byomModelNotDeployed && (
+                          <div
+                            style={{
+                              marginTop: '8px',
+                              padding: '10px 12px',
+                              borderRadius: '10px',
+                              background: 'linear-gradient(135deg, #fef2f2, #fee2e2)',
+                              border: '1px solid #fca5a5',
+                              boxShadow: '0 2px 8px rgba(220,38,38,0.12)',
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                fontSize: '11px',
+                                fontWeight: 800,
+                                color: '#b91c1c',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.4px',
+                                marginBottom: '6px',
+                              }}
+                            >
+                              <span style={{ fontSize: '13px' }}>⚠️</span>
+                              Not deployed on the Voice Live resource
+                            </div>
+                            <div style={{ fontSize: '11px', lineHeight: 1.5, color: '#7f1d1d' }}>
+                              <strong>{chosenModel}</strong> isn&apos;t deployed on
+                              {' '}<strong>{voiceLiveModelInfo?.resourceName || 'the Voice Live resource'}</strong>,
+                              which is what BYOM routes to. Pick one of its deployments above, or deploy
+                              this model there — otherwise the session connects but the agent never responds.
+                            </div>
+                          </div>
+                        )}
+                        {byomProfileConflict && (
+                          <div
+                            style={{
+                              marginTop: '8px',
+                              padding: '10px 12px',
+                              borderRadius: '10px',
+                              background: 'linear-gradient(135deg, #fef2f2, #fee2e2)',
+                              border: '1px solid #fca5a5',
+                              boxShadow: '0 2px 8px rgba(220,38,38,0.12)',
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                fontSize: '11px',
+                                fontWeight: 800,
+                                color: '#b91c1c',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.4px',
+                                marginBottom: '6px',
+                              }}
+                            >
+                              <span style={{ fontSize: '13px' }}>⚠️</span>
+                              {byomProfileConflict.title}
+                            </div>
+                            <div style={{ fontSize: '11px', lineHeight: 1.5, color: '#7f1d1d' }}>
+                              <strong>{chosenModel}</strong> {byomProfileConflict.body}
+                              {' '}Applying this pair connects fine and keeps transcribing, but the
+                              agent never responds.
+                            </div>
+                          </div>
+                        )}
+                        {/* Advisory, not a blocker: the config is valid, it just costs
+                            distance. Informational indigo rather than the red used above
+                            for the settings that actually break the session. */}
+                        {regionAdvisory && (
+                          <div
+                            style={{
+                              marginTop: '8px',
+                              padding: '10px 12px',
+                              borderRadius: '10px',
+                              background: 'linear-gradient(135deg, #eef2ff, #e0e7ff)',
+                              border: '1px solid #a5b4fc',
+                              boxShadow: '0 2px 8px rgba(79,70,229,0.12)',
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                fontSize: '11px',
+                                fontWeight: 800,
+                                color: '#4338ca',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.4px',
+                                marginBottom: '6px',
+                              }}
+                            >
+                              <span style={{ fontSize: '13px' }}>🌍</span>
+                              {regionAdvisory.title}
+                            </div>
+                            <div style={{ fontSize: '11px', lineHeight: 1.5, color: '#3730a3' }}>
+                              {regionAdvisory.lines.map((line) => (
+                                <p key={line} style={{ margin: '0 0 4px' }}>{line}</p>
+                              ))}
+                              <p style={{ margin: 0, opacity: 0.85 }}>
+                                Voice Live is only offered in some regions, so this is often
+                                unavoidable — but it explains latency the settings below
+                                can&apos;t improve.
+                              </p>
+                            </div>
+                          </div>
+                        )}
                         {isVoiceLive && chosenModel && arch === 'native' && (
                           <div
                             style={{
@@ -5497,7 +5654,9 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                       )}
 
                       {/* VOICE */}
-                      <div style={sectionLabel}>Voice (TTS)</div>
+                      <div style={sectionLabel}>
+                        Voice (TTS){!isVoiceLive ? describeModelSource(liveVoiceSource) : ''}
+                      </div>
                       <div style={rowStyle}>
                         <select
                           style={selectStyle}
@@ -5505,12 +5664,25 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                           onChange={(e) => set('voice_name', e.target.value)}
                         >
                           <option value="">(default)</option>
-                          {voiceOptions.map((v) => (
-                            <option key={v.name} value={v.name}>
-                              {v.display_name || v.name}{v.category ? ` · ${v.category}` : ''}
-                            </option>
+                          {voiceGroups.map((g) => (
+                            <optgroup key={g.key} label={`${g.label} (${g.items.length})`}>
+                              {g.items.map((v) => (
+                                <option key={v.name} value={v.name}>
+                                  {voiceOptionLabel(v)}
+                                </option>
+                              ))}
+                            </optgroup>
                           ))}
                         </select>
+                        {/* In VoiceLive the audio is synthesized inside the Voice Live
+                            session, so the standalone Speech region doesn't apply. */}
+                        {!isVoiceLive && voiceRegionAdvisory && (
+                          <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '6px', lineHeight: 1.5 }}>
+                            🌍 Synthesized in {liveVoiceSource.region}, while this app runs in
+                            {' '}{liveVoiceSource.appRegion} — each turn&apos;s speech crosses that
+                            distance too.
+                          </div>
+                        )}
                       </div>
                       <div style={rowStyle}>
                         <div style={labelStyle}><span>Style</span></div>
@@ -5659,22 +5831,33 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                         </button>
                         <button
                           onClick={applyLiveSettings}
-                          disabled={liveSettingsBusy || liveSettingsLoading}
+                          disabled={liveSettingsBusy || liveSettingsLoading || applyBlocked}
+                          title={needsByomForModel
+                            ? `${chosenModel} needs a BYOM profile — turn on BYOM above before applying.`
+                            : byomProfileConflict
+                              ? `${chosenModel} can't be driven by the selected BYOM profile — fix the profile or model above before applying.`
+                              : undefined}
                           style={{
                             flex: 1,
                             padding: '8px',
                             borderRadius: '8px',
                             border: 'none',
-                            background: (liveSettingsBusy || liveSettingsLoading)
+                            background: (liveSettingsBusy || liveSettingsLoading || applyBlocked)
                               ? '#cbd5e1'
                               : 'linear-gradient(135deg, #7c3aed, #6d28d9)',
                             color: '#fff',
                             fontSize: '12px',
                             fontWeight: 700,
-                            cursor: (liveSettingsBusy || liveSettingsLoading) ? 'default' : 'pointer',
+                            cursor: (liveSettingsBusy || liveSettingsLoading || applyBlocked) ? 'default' : 'pointer',
                           }}
                         >
-                          {liveSettingsBusy ? 'Applying…' : 'Apply'}
+                          {liveSettingsBusy
+                            ? 'Applying…'
+                            : needsByomForModel
+                              ? 'Enable BYOM first'
+                              : byomProfileConflict
+                                ? 'Fix BYOM profile first'
+                                : 'Apply'}
                         </button>
                       </div>
                     </>
@@ -5808,6 +5991,62 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
                     }}>
                       {activeScenarioData?.name || activeScenarioKey || 'banking'}
                     </span>
+                    {/* Live session config verdict. It describes this session, so it
+                        sits with the session metadata rather than as its own header
+                        item — a top-level chip pushed the header actions out of
+                        alignment. Styled as a peer of the scenario pill. */}
+                    {sessionContract && (
+                      <span
+                        onClick={(e) => {
+                          // The parent tag opens the session-id editor.
+                          e.stopPropagation();
+                          setShowAgentPanel(true);
+                        }}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setShowAgentPanel(true);
+                          }
+                        }}
+                        title={
+                          sessionContract.status === "mismatch"
+                            ? sessionContract.issues.join(" • ")
+                            : "The live agent, model and voice match what you configured"
+                        }
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "4px",
+                          padding: "2px 8px",
+                          borderRadius: "4px",
+                          background:
+                            sessionContract.status === "mismatch"
+                              ? "rgba(220,38,38,0.1)"
+                              : "rgba(22,163,74,0.1)",
+                          color:
+                            sessionContract.status === "mismatch" ? "#dc2626" : "#16a34a",
+                          fontSize: "10px",
+                          fontWeight: 600,
+                          textTransform: "uppercase",
+                          letterSpacing: "0.5px",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <span
+                          aria-hidden="true"
+                          style={{
+                            width: "6px",
+                            height: "6px",
+                            borderRadius: "50%",
+                            background: "currentColor",
+                          }}
+                        />
+                        {sessionContract.status === "mismatch" ? "Config mismatch" : "Config OK"}
+                      </span>
+                    )}
                   </div>
                   <code style={styles.sessionTagValue}>{sessionId}</code>
                   {sessionUpdateError && !editingSessionId && (
@@ -6040,7 +6279,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
           )}
         <OrchestrationDiagramModal
           open={showOrchestrationDiagram}
-          onClose={() => setShowOrchestrationDiagram(false)}
+          onClose={closeOrchestrationDiagram}
           initialMode={liveSettingsMode}
         />
         {showDemoForm && typeof document !== 'undefined' &&
@@ -6082,6 +6321,7 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
       sessionMeta={sessionMetadata}
       sessionMetrics={sessionMetrics}
       scenarioConfig={sessionScenarioConfig}
+      sessionContract={sessionContract}
     />
     {agentUpdateToast && createPortal(
       <Box
@@ -6140,7 +6380,42 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
           >
             {agentUpdateToast.scenarioName}
           </Typography>
+          {agentUpdateToast.mode && (
+            <Typography
+              component="span"
+              sx={{
+                fontSize: 11,
+                fontWeight: 700,
+                px: 0.75,
+                py: 0.25,
+                borderRadius: '999px',
+                backgroundColor:
+                  agentUpdateToast.mode === 'voicelive'
+                    ? 'rgba(16,185,129,0.18)'
+                    : 'rgba(59,130,246,0.18)',
+                border:
+                  agentUpdateToast.mode === 'voicelive'
+                    ? '1px solid rgba(16,185,129,0.45)'
+                    : '1px solid rgba(59,130,246,0.45)',
+                color: agentUpdateToast.mode === 'voicelive' ? '#6ee7b7' : '#93c5fd',
+              }}
+            >
+              {agentUpdateToast.mode === 'voicelive' ? 'VoiceLive' : 'Custom Cascade'}
+            </Typography>
+          )}
         </Box>
+        <Typography
+          sx={{
+            fontSize: 9.5,
+            fontWeight: 700,
+            letterSpacing: 0.6,
+            textTransform: 'uppercase',
+            color: 'rgba(165,180,252,0.75)',
+            mb: 0.25,
+          }}
+        >
+          Updated
+        </Typography>
         <Box component="ul" sx={{ m: 0, pl: 2, display: 'flex', flexDirection: 'column', gap: 0.25 }}>
           {agentUpdateToast.changes.map((c, i) => (
             <Typography
@@ -6152,6 +6427,45 @@ showScenarioConfirmation(scenarioName, currentAgentRef.current);
             </Typography>
           ))}
         </Box>
+        {agentUpdateToast.confirmed && (
+          <Box sx={{ mt: 1, pt: 0.75, borderTop: '1px solid rgba(148,163,184,0.2)' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.4 }}>
+              <Typography component="span" sx={{ fontSize: 12, lineHeight: 1 }}>
+                {agentUpdateToast.confirmed.ok ? '✅' : '⚠️'}
+              </Typography>
+              <Typography
+                component="span"
+                sx={{
+                  fontSize: 10.5,
+                  fontWeight: 700,
+                  letterSpacing: 0.3,
+                  color: agentUpdateToast.confirmed.ok ? '#6ee7b7' : '#fcd34d',
+                }}
+              >
+                {agentUpdateToast.confirmed.ok
+                  ? `Confirmed live on “${agentUpdateToast.confirmed.agentName}”`
+                  : 'Could not confirm on active agent'}
+              </Typography>
+            </Box>
+            {agentUpdateToast.confirmed.applied?.length > 0 && (
+              <Box component="ul" sx={{ m: 0, pl: 2, display: 'flex', flexDirection: 'column', gap: 0.15 }}>
+                {agentUpdateToast.confirmed.applied.map((a, i) => (
+                  <Typography
+                    key={i}
+                    component="li"
+                    sx={{
+                      fontSize: 11,
+                      color: 'rgba(230,237,243,0.7)',
+                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                    }}
+                  >
+                    {a}
+                  </Typography>
+                ))}
+              </Box>
+            )}
+          </Box>
+        )}
       </Box>,
       document.body
     )}

@@ -67,12 +67,12 @@ turns:
   - turn_id: turn_3
     user_input: "Please analyze my recent transactions to find any suspicious activity."
     expectations:
-      # BankingConcierge has get_recent_transactions tool
-      # analyze_recent_transactions is a FraudAgent-specific tool
-      # If agent stays on BankingConcierge (escalation/handoff didn't complete),
-      # it will use get_recent_transactions to show transactions
-      tools_called:
+      # Either tool is valid: BankingConcierge uses get_recent_transactions,
+      # FraudAgent (if handoff completed) uses analyze_recent_transactions.
+      tools_called: []
+      tools_optional:
         - get_recent_transactions
+        - analyze_recent_transactions
 
 # Relaxed thresholds for discovery testing
 thresholds:

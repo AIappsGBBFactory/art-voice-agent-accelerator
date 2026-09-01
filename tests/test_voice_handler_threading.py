@@ -23,6 +23,7 @@ Run with: pytest tests/test_voice_handler_threading.py -v
 import asyncio
 import base64
 import threading
+from types import SimpleNamespace
 from typing import Any, Awaitable
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
@@ -503,3 +504,117 @@ class TestSessionMessengerIntegration:
         # Should not raise
         messenger = _SessionMessenger(mock_ws, background_task_fn=mock_background_task)
         assert messenger._background_task_fn is mock_background_task
+
+    @pytest.mark.asyncio
+    async def test_voicelive_transcript_and_tool_frames_share_one_turn_id(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Input deltas, final STT, and tools must stay scoped to one user turn."""
+        from apps.artagent.backend.voice.voicelive import handler as voicelive_handler
+        from apps.artagent.backend.voice.voicelive.handler import _SessionMessenger
+
+        ws = MagicMock()
+        ws.state = SimpleNamespace(session_id="session-1", call_connection_id="call-1")
+        emitted: list[dict[str, Any]] = []
+        final_transcripts: list[dict[str, Any]] = []
+
+        async def capture_envelope(_ws, envelope, **_kwargs) -> None:
+            emitted.append(envelope)
+
+        async def capture_final_transcript(_ws, text, **kwargs) -> None:
+            final_transcripts.append({"text": text, **kwargs})
+
+        tool_start = AsyncMock()
+        tool_end = AsyncMock()
+        monkeypatch.setattr(voicelive_handler, "send_session_envelope", capture_envelope)
+        monkeypatch.setattr(voicelive_handler, "send_user_transcript", capture_final_transcript)
+        monkeypatch.setattr(voicelive_handler, "push_tool_start", tool_start)
+        monkeypatch.setattr(voicelive_handler, "push_tool_end", tool_end)
+
+        messenger = _SessionMessenger(
+            ws,
+            background_task_fn=lambda coro, label: asyncio.create_task(coro),
+        )
+        messenger.begin_user_turn("turn-1")
+        await messenger.send_user_partial("hello ", turn_id="provider-item-ignored")
+        await messenger.send_user_partial("there", turn_id="provider-item-ignored")
+        await messenger.send_user_message("hello there", turn_id="provider-item-ignored")
+        await messenger.notify_tool_start(call_id="tool-1", name="lookup", args={})
+        await messenger.notify_tool_end(
+            call_id="tool-1",
+            name="lookup",
+            status="success",
+            elapsed_ms=10,
+            result={"success": True},
+        )
+        await asyncio.sleep(0)
+
+        user_payloads = [
+            frame["payload"]
+            for frame in emitted
+            if frame.get("payload", {}).get("type") == "user"
+        ]
+        assert [payload["turn_id"] for payload in user_payloads] == [
+            "turn-1",
+            "turn-1",
+            "turn-1",
+        ]
+        assert [payload["content"] for payload in user_payloads] == [
+            "",
+            "hello ",
+            "hello there",
+        ]
+        assert final_transcripts == [
+            {
+                "text": "hello there",
+                "session_id": "session-1",
+                "conn_id": None,
+                "broadcast_only": True,
+                "turn_id": "turn-1",
+                "active_agent": None,
+                "active_agent_label": None,
+                "sequence": 3,
+            }
+        ]
+        assert tool_start.await_args.kwargs["turn_id"] == "turn-1"
+        assert tool_end.await_args.kwargs["turn_id"] == "turn-1"
+
+    @pytest.mark.asyncio
+    async def test_voicelive_browser_tool_frames_use_direct_transport(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Browser VoiceLive tools must not be routed as ACS dashboard broadcasts."""
+        from apps.artagent.backend.voice.voicelive import handler as voicelive_handler
+        from apps.artagent.backend.voice.voicelive.handler import _SessionMessenger
+
+        ws = MagicMock()
+        ws.state = SimpleNamespace(session_id="session-browser", conn_id="browser-1")
+        tool_start = AsyncMock()
+        tool_end = AsyncMock()
+        monkeypatch.setattr(voicelive_handler, "push_tool_start", tool_start)
+        monkeypatch.setattr(voicelive_handler, "push_tool_end", tool_end)
+
+        messenger = _SessionMessenger(
+            ws,
+            background_task_fn=lambda coro, label: asyncio.create_task(coro),
+            is_acs=False,
+        )
+        messenger.begin_user_turn("browser-turn-1")
+        await messenger.notify_tool_start(
+            call_id="browser-tool-1",
+            name="lookup_balance",
+            args={},
+        )
+        await messenger.notify_tool_end(
+            call_id="browser-tool-1",
+            name="lookup_balance",
+            status="success",
+            elapsed_ms=10,
+            result={"balance": 42},
+        )
+        await asyncio.sleep(0)
+
+        assert tool_start.await_args.kwargs["is_acs"] is False
+        assert tool_end.await_args.kwargs["is_acs"] is False
+        assert tool_start.await_args.kwargs["turn_id"] == "browser-turn-1"
+        assert tool_end.await_args.kwargs["turn_id"] == "browser-turn-1"

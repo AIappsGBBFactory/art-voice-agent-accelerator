@@ -1030,5 +1030,229 @@ class TestAgentOverrideVoiceContracts:
             agent.voice["rate"] = "+20%"  # type: ignore
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# QUICK TUNE: SESSION AGENT MUST NOT REPLACE THE ACTIVE SCENARIO
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestQuickTunePreservesScenario:
+    """Contracts for ``build_effective_registry``.
+
+    Applying Quick Tune settings persists a session-scoped agent and forces a
+    VoiceLive reconnect. On reconnect the active scenario must survive intact and
+    only its start agent may be repointed at the tuned agent — VoiceLive binds the
+    generative model and the BYOM profile at ``connect()`` time, so the start agent
+    is the only place a per-agent model override can take effect.
+    """
+
+    @pytest.fixture
+    def registry(self):
+        from apps.artagent.backend.registries.agentstore.loader import (
+            build_handoff_map,
+            discover_agents,
+        )
+
+        agents = discover_agents()
+        return agents, build_handoff_map(agents)
+
+    @pytest.fixture
+    def banking_config(self):
+        from apps.artagent.backend.voice.shared import resolve_orchestrator_config
+
+        return resolve_orchestrator_config(
+            session_id="quick-tune-session", scenario_name="banking"
+        )
+
+    @staticmethod
+    def _tuned(agents: dict[str, Any], source: str, *, name: str | None = None):
+        import copy
+
+        agent = copy.deepcopy(agents[source])
+        agent.name = name or source
+        agent.greeting = "TUNED GREETING"
+        return agent
+
+    def test_full_registry_is_preserved_not_narrowed(self, registry, banking_config):
+        """A 13-agent deployment running a 5-agent scenario keeps all 13."""
+        from apps.artagent.backend.voice.shared import build_effective_registry
+
+        agents, app_state_map = registry
+        assert len(banking_config.agents) < len(agents), "scenario should be a subset"
+
+        merged, _start, _map = build_effective_registry(
+            banking_config,
+            base_agents=agents,
+            session_agent=self._tuned(agents, "BankingConcierge"),
+            app_state_handoff_map=app_state_map,
+        )
+
+        assert len(merged) == len(agents)
+        assert "ClaimsSpecialist" in merged, "agents outside the scenario stay reachable"
+
+    def test_tuned_agent_becomes_start_agent(self, registry, banking_config):
+        from apps.artagent.backend.voice.shared import build_effective_registry
+
+        agents, app_state_map = registry
+        _merged, start_agent, _map = build_effective_registry(
+            banking_config,
+            base_agents=agents,
+            session_agent=self._tuned(agents, "FraudAgent"),
+            app_state_handoff_map=app_state_map,
+        )
+
+        assert start_agent == "FraudAgent"
+        assert banking_config.start_agent == "FraudAgent"
+        assert banking_config.scenario.start_agent == "FraudAgent"
+
+    def test_scenario_wiring_survives_the_tune(self, registry, banking_config):
+        """Handoff edges, handoff type and the other agents are untouched."""
+        from apps.artagent.backend.registries.scenariostore import load_scenario
+        from apps.artagent.backend.voice.shared import build_effective_registry
+
+        pristine = load_scenario("banking")
+        edge_count = len(pristine.handoffs)
+        handoff_type = pristine.handoff_type
+
+        agents, app_state_map = registry
+        build_effective_registry(
+            banking_config,
+            base_agents=agents,
+            session_agent=self._tuned(agents, "FraudAgent"),
+            app_state_handoff_map=app_state_map,
+        )
+
+        assert len(banking_config.scenario.handoffs) == edge_count
+        assert banking_config.scenario.handoff_type == handoff_type
+        # Routing away from the (unchanged) concierge still resolves.
+        assert len(banking_config.scenario.get_outgoing_handoffs("BankingConcierge")) > 0
+
+    def test_cached_scenario_is_never_mutated(self, registry, banking_config):
+        """``load_scenario`` returns a module-cached object; a tune must not leak."""
+        from apps.artagent.backend.registries.scenariostore import load_scenario
+        from apps.artagent.backend.voice.shared import build_effective_registry
+
+        cached = load_scenario("banking")
+        original_start = cached.start_agent
+        original_agents = list(cached.agents)
+
+        agents, app_state_map = registry
+        build_effective_registry(
+            banking_config,
+            base_agents=agents,
+            session_agent=self._tuned(agents, "FraudAgent"),
+            app_state_handoff_map=app_state_map,
+        )
+
+        assert load_scenario("banking").start_agent == original_start
+        assert load_scenario("banking").agents == original_agents
+        assert banking_config.scenario is not cached
+
+    def test_tuned_agent_replaces_slot_case_insensitively(self, registry, banking_config):
+        """A case-mismatched name must replace the slot, not duplicate the agent."""
+        from apps.artagent.backend.voice.shared import build_effective_registry
+
+        agents, app_state_map = registry
+        tuned = self._tuned(agents, "BankingConcierge", name="bankingconcierge")
+
+        merged, start_agent, _map = build_effective_registry(
+            banking_config,
+            base_agents=agents,
+            session_agent=tuned,
+            app_state_handoff_map=app_state_map,
+        )
+
+        assert start_agent == "BankingConcierge"
+        assert "bankingconcierge" not in merged
+        assert merged["BankingConcierge"].greeting == "TUNED GREETING"
+        assert len(merged) == len(agents)
+
+    def test_scenario_handoff_edges_beat_the_global_map(self, registry, banking_config):
+        """Declarative scenario routing wins over the app-state handoff map."""
+        from apps.artagent.backend.voice.shared import build_effective_registry
+
+        agents, app_state_map = registry
+        assert app_state_map["handoff_concierge"] == "Concierge"
+
+        _merged, _start, handoff_map = build_effective_registry(
+            banking_config,
+            base_agents=agents,
+            session_agent=self._tuned(agents, "BankingConcierge"),
+            app_state_handoff_map=app_state_map,
+        )
+
+        assert handoff_map["handoff_concierge"] == "BankingConcierge"
+        assert handoff_map["handoff_to_agent"] == "FraudAgent"
+        # Tools for agents outside the scenario are still routable.
+        assert handoff_map["handoff_claims_specialist"] == "ClaimsSpecialist"
+
+    def test_custom_agent_joins_the_scenario(self, registry, banking_config):
+        """An Agent Builder agent with a new name is added, not swapped in."""
+        from apps.artagent.backend.voice.shared import build_effective_registry
+
+        agents, app_state_map = registry
+        tuned = self._tuned(agents, "FraudAgent", name="MyCustomAgent")
+
+        merged, start_agent, _map = build_effective_registry(
+            banking_config,
+            base_agents=agents,
+            session_agent=tuned,
+            app_state_handoff_map=app_state_map,
+        )
+
+        assert start_agent == "MyCustomAgent"
+        assert len(merged) == len(agents) + 1
+        assert "MyCustomAgent" in banking_config.scenario.agents
+        assert "BankingConcierge" in banking_config.scenario.agents
+
+    def test_without_session_agent_scenario_start_agent_is_kept(
+        self, registry, banking_config
+    ):
+        from apps.artagent.backend.voice.shared import build_effective_registry
+
+        agents, app_state_map = registry
+        _merged, start_agent, _map = build_effective_registry(
+            banking_config,
+            base_agents=agents,
+            app_state_handoff_map=app_state_map,
+        )
+
+        assert start_agent == "BankingConcierge"
+        assert banking_config.scenario.start_agent == "BankingConcierge"
+
+    def test_scenario_less_session_leaves_the_global_map_untouched(self, registry):
+        """A session with no scenario must not have its routing rewritten.
+
+        The handoff-map overlay exists so declarative scenario edges win, but it
+        applies to every session that connects — not just tuned ones. With no
+        scenario resolved, ``config.handoff_map`` is derived from agent handoff
+        triggers rather than from a scenario, so overlaying it would silently
+        shadow the global routing that scenario-less deployments rely on. The
+        ``has_scenario`` guard is what prevents that, and this pins it.
+        """
+        from apps.artagent.backend.voice.shared import (
+            OrchestratorConfigResult,
+            build_effective_registry,
+        )
+
+        agents, app_state_map = registry
+
+        config = OrchestratorConfigResult()
+        assert config.has_scenario is False
+        # Populated but must be ignored: without a scenario this is agent-derived.
+        config.handoff_map = {
+            "handoff_concierge": "SomeOtherAgent",
+            "handoff_unrelated": "Stranger",
+        }
+
+        _merged, _start_agent, handoff_map = build_effective_registry(
+            config,
+            base_agents=agents,
+            app_state_handoff_map=app_state_map,
+        )
+
+        assert handoff_map == app_state_map
+        assert "handoff_unrelated" not in handoff_map
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

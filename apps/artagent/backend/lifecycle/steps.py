@@ -570,6 +570,12 @@ def register_mcp_servers_step(manager: LifecycleManager, app: FastAPI) -> None:
                         url=url,
                         transport=MCPTransport(transport),
                         timeout=timeout,
+                        # Pass the managed-identity auth headers so the discovery
+                        # session can clear EasyAuth. Without these the client's
+                        # own /health + /mcp calls get 401 and no tools register,
+                        # even though the health probe above (which DOES send the
+                        # headers) succeeds.
+                        headers=auth_headers,
                     )
                     session = MCPClientSession(config)
                     

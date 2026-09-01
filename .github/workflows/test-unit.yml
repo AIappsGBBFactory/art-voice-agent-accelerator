@@ -1,0 +1,164 @@
+name: 🧪 Unit Tests
+
+# Why this workflow exists
+# ------------------------
+# Until this was added, exactly one workflow ran pytest, and it ran only
+# `tests/evaluation/`. The ~60 backend unit-test files and the frontend
+# `node --test` suite were never executed by CI, and no test workflow watched
+# `apps/**` at all -- the only workflow triggered by `apps/**` was the deploy,
+# which runs no tests. Voice-pipeline changes therefore reached Azure with no
+# automated gate, which is how a run of protocol-correctness regressions
+# shipped: each one kept calls alive and fast while corrupting what the user
+# saw and heard, so nothing that *was* running could have caught them.
+
+on:
+  push:
+    branches: [main, staging]
+    paths:
+      - 'apps/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'utils/**'
+      - 'pyproject.toml'
+      - '.github/workflows/test-unit.yml'
+      - '.github/quarantined-tests.txt'
+  pull_request:
+    branches: [main, staging]
+    paths:
+      - 'apps/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'utils/**'
+      - 'pyproject.toml'
+      - '.github/workflows/test-unit.yml'
+      - '.github/quarantined-tests.txt'
+  workflow_dispatch:
+
+concurrency:
+  group: unit-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend-unit:
+    name: Backend unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+
+      - name: 📦 Install dependencies
+        run: uv pip install --system -e ".[dev]"
+
+      - name: 🧪 Run unit tests
+        env:
+          PYTHONPATH: .
+        run: |
+          set -o pipefail
+          mkdir -p reports
+          # Quarantined entries are excluded here but still run (non-blocking)
+          # in the `quarantined` job, so a fix is noticed rather than the
+          # quarantine silently becoming permanent.
+          DESELECT=$(grep -vE '^\s*(#|$)' .github/quarantined-tests.txt \
+            | sed 's/^/--deselect /' | tr '\n' ' ')
+          pytest tests/ \
+            --ignore=tests/evaluation \
+            --ignore=tests/load \
+            $DESELECT \
+            -q --tb=short \
+            --junitxml=reports/unit-tests.xml
+
+      - name: 📊 Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-unit-results
+          path: reports/
+          retention-days: 7
+
+  frontend-unit:
+    name: Frontend unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/artagent/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: apps/artagent/frontend/package-lock.json
+
+      - name: 📦 Install dependencies
+        run: npm ci
+
+      - name: 🧪 Run unit tests
+        run: npm run test:unit
+
+      - name: 🏗️ Build
+        run: npm run build
+
+  quarantined:
+    name: Quarantined tests (non-blocking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Never blocks the merge. Its only job is to make a quarantined test that
+    # starts passing visible, so entries get removed instead of accumulating.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+
+      - name: 📦 Install dependencies
+        run: uv pip install --system -e ".[dev]"
+
+      - name: 🧪 Run quarantined tests
+        id: run_quarantined
+        continue-on-error: true
+        env:
+          PYTHONPATH: .
+        run: |
+          SELECT=$(grep -vE '^\s*(#|$)' .github/quarantined-tests.txt | tr '\n' ' ')
+          if [ -z "$SELECT" ]; then
+            echo "quarantine is empty -- delete .github/quarantined-tests.txt" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          pytest $SELECT -q --tb=line
+
+      - name: 📋 Report
+        run: |
+          if [ "${{ steps.run_quarantined.outcome }}" = "success" ]; then
+            {
+              echo "### ✅ Quarantined tests are passing"
+              echo ""
+              echo "They no longer need to be quarantined. Remove them from"
+              echo '`.github/quarantined-tests.txt` so they start gating again.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "### ⏳ Quarantined tests still failing"
+              echo ""
+              echo "Expected — these are known pre-existing failures."
+              echo 'See `.github/quarantined-tests.txt` for the reason behind each entry.'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

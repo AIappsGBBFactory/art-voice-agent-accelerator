@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { pushOverlay } from '../utils/overlayVisibility.js';
 
 /**
  * OrchestrationDiagram — an interactive visual that explains the two voice
@@ -193,16 +194,23 @@ const styles = {
   },
 };
 
-// Injected once — keyframes + hover effects that inline styles can't express.
-// Perf note: the flow dot animates `transform`/`opacity` only (GPU-composited,
-// no per-frame layout/paint). We deliberately avoid animating `left` or
-// `background-position` here because a single open modal renders ~6–10
-// connectors and those properties would force main-thread reflows/repaints on
-// every frame for every connector.
+// Injected once into <head> — keyframes + hover effects that inline styles
+// can't express.
+//
+// Perf notes:
+//   • The stylesheet is installed once at module scope instead of being
+//     rendered as a <style> child. Mounting/unmounting a <style> element
+//     invalidates the whole document's style, forcing a full-page recalc +
+//     repaint every time the modal opens or closes.
+//   • The flow dot animates `transform`/`opacity` only (GPU-composited, no
+//     per-frame layout/paint). We deliberately avoid animating `left` or
+//     `background-position` here because a single open modal renders ~6–10
+//     connectors and those properties would force main-thread reflows/repaints
+//     on every frame for every connector.
 const KEYFRAMES = `
 @keyframes od-dot { 0% { transform: translate(0, -50%); opacity: 0; } 20% { opacity: 1; } 80% { opacity: 1; } 100% { transform: translate(18px, -50%); opacity: 0; } }
 @keyframes od-fade { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-.od-dot { animation: od-dot 1.6s linear infinite; will-change: transform, opacity; }
+.od-dot { animation: od-dot 1.6s linear infinite; }
 .od-stage { transition: transform .2s cubic-bezier(.4,0,.2,1), box-shadow .2s ease, border-color .2s ease, background .2s ease; }
 .od-stage:hover { transform: translateY(-3px); box-shadow: 0 12px 24px rgba(15,23,42,.13) !important; }
 .od-card { transition: transform .2s cubic-bezier(.4,0,.2,1), box-shadow .2s ease, border-color .2s ease; }
@@ -217,11 +225,22 @@ const KEYFRAMES = `
 }
 `;
 
+const STYLE_ELEMENT_ID = 'od-keyframes';
+
+function ensureStylesInjected() {
+  if (typeof document === 'undefined') return;
+  if (document.getElementById(STYLE_ELEMENT_ID)) return;
+  const el = document.createElement('style');
+  el.id = STYLE_ELEMENT_ID;
+  el.textContent = KEYFRAMES;
+  document.head.appendChild(el);
+}
+
 // Flowing connector between pipeline nodes. A static gradient line plus a
 // single GPU-composited dot conveys the "flow" without the previous
 // double infinite animation (background-position + left) that pinned the
 // main thread.
-function FlowConnector({ color }) {
+const FlowConnector = React.memo(function FlowConnector({ color }) {
   return (
     <div
       aria-hidden="true"
@@ -252,16 +271,17 @@ function FlowConnector({ color }) {
       />
     </div>
   );
-}
+});
 
-function StageCard({ stage, color, active, onActivate }) {
+const StageCard = React.memo(function StageCard({ stage, color, active, onActivate }) {
+  const activate = () => onActivate(stage.id);
   return (
     <button
       type="button"
       className="od-stage"
-      onMouseEnter={onActivate}
-      onFocus={onActivate}
-      onClick={onActivate}
+      onMouseEnter={activate}
+      onFocus={activate}
+      onClick={activate}
       style={{
         flex: '1 1 0',
         minWidth: '94px',
@@ -320,13 +340,17 @@ function StageCard({ stage, color, active, onActivate }) {
       </span>
     </button>
   );
-}
+});
 
-export function OrchestrationDiagram({ initialMode = 'voicelive' }) {
+export const OrchestrationDiagram = React.memo(function OrchestrationDiagram({
+  initialMode = 'voicelive',
+}) {
   const [mode, setMode] = useState(normalizeMode(initialMode));
   const [activeStage, setActiveStage] = useState(null);
   const [vlArch, setVlArch] = useState('native');
   const color = PALETTE[mode];
+
+  useEffect(ensureStylesInjected, []);
 
   const stages = mode === 'cascade' ? CASCADE_STAGES : [VOICELIVE_STAGE];
   const detail = useMemo(() => {
@@ -343,7 +367,6 @@ export function OrchestrationDiagram({ initialMode = 'voicelive' }) {
 
   return (
     <div style={styles.root}>
-      <style>{KEYFRAMES}</style>
       <div style={styles.header}>
         <p style={styles.title}>How voice orchestration works</p>
         <p style={styles.subtitle}>
@@ -412,7 +435,7 @@ export function OrchestrationDiagram({ initialMode = 'voicelive' }) {
                 stage={stage}
                 color={color}
                 active={activeStage === stage.id}
-                onActivate={() => setActiveStage(stage.id)}
+                onActivate={setActiveStage}
               />
               {(idx < stages.length - 1 || mode === 'voicelive') && (
                 <FlowConnector color={color} />
@@ -902,39 +925,88 @@ export function OrchestrationDiagram({ initialMode = 'voicelive' }) {
       </p>
     </div>
   );
-}
+});
 
-export function OrchestrationDiagramModal({ open, onClose, initialMode = 'voicelive' }) {
+// Static style objects — hoisted so the overlay never allocates fresh style
+// objects on a parent re-render.
+const OVERLAY_STYLE = {
+  position: 'fixed',
+  inset: 0,
+  zIndex: 2000,
+  // Deliberately NOT `backdrop-filter`. A viewport-sized backdrop filter forces
+  // the compositor to re-blur the entire page every time anything underneath
+  // repaints — and this app paints an rAF-driven waveform continuously — which
+  // makes the whole screen stutter while the modal is open. A slightly darker
+  // opaque scrim gives the same separation for free.
+  background: 'rgba(15,23,42,0.66)',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: '24px',
+  // Cut the overlay out of the page's paint/layout tree so its own repaints
+  // (scrolling, hover, the flow dots) never invalidate anything behind it.
+  contain: 'layout paint style',
+  isolation: 'isolate',
+};
+
+const PANEL_STYLE = {
+  position: 'relative',
+  width: '100%',
+  maxWidth: '640px',
+  maxHeight: '88vh',
+  overflowY: 'auto',
+  background: '#fff',
+  borderRadius: '18px',
+  boxShadow: '0 24px 64px rgba(15,23,42,0.4)',
+  padding: '22px',
+  // Contain the panel's repaints (scroll, hover, flow dots) so they can't
+  // invalidate anything outside it. Deliberately no `translateZ(0)` — forcing a
+  // layer on a flex-centred box lands it on fractional pixels and blurs text.
+  contain: 'layout paint style',
+};
+
+const stopPropagation = (e) => e.stopPropagation();
+
+export const OrchestrationDiagramModal = React.memo(function OrchestrationDiagramModal({
+  open,
+  onClose,
+  initialMode = 'voicelive',
+}) {
+  // Pause background rAF animations, lock body scroll, and wire Escape while
+  // the overlay covers the app.
+  useEffect(() => {
+    if (!open || typeof document === 'undefined') return undefined;
+
+    const releaseOverlay = pushOverlay();
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') onClose?.();
+    };
+    document.addEventListener('keydown', onKeyDown);
+
+    return () => {
+      releaseOverlay();
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open, onClose]);
+
   if (!open || typeof document === 'undefined') return null;
 
   return createPortal(
     <div
       onClick={onClose}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 2000,
-        background: 'rgba(15,23,42,0.55)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '24px',
-        backdropFilter: 'blur(2px)',
-      }}
+      role="presentation"
+      style={OVERLAY_STYLE}
     >
       <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          position: 'relative',
-          width: '100%',
-          maxWidth: '640px',
-          maxHeight: '88vh',
-          overflowY: 'auto',
-          background: '#fff',
-          borderRadius: '18px',
-          boxShadow: '0 24px 64px rgba(15,23,42,0.4)',
-          padding: '22px',
-        }}
+        onClick={stopPropagation}
+        role="dialog"
+        aria-modal="true"
+        aria-label="How voice orchestration works"
+        style={PANEL_STYLE}
       >
         <button
           type="button"
@@ -968,6 +1040,6 @@ export function OrchestrationDiagramModal({ open, onClose, initialMode = 'voicel
     </div>,
     document.body,
   );
-}
+});
 
 export default OrchestrationDiagram;

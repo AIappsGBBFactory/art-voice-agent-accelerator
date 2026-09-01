@@ -84,7 +84,7 @@ import AddIcon from '@mui/icons-material/Add';
 import HearingIcon from '@mui/icons-material/Hearing';
 import { API_BASE_URL } from '../config/constants.js';
 import logger from '../utils/logger.js';
-import { fetchFoundryModels, deriveModelOptions, MANAGED_VOICELIVE_MODELS } from '../utils/foundryModels.js';
+import { fetchFoundryModels, fetchVoiceLiveModels, deriveModelOptions, MANAGED_VOICELIVE_MODELS, isManagedVoiceLiveModel } from '../utils/foundryModels.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TEMPLATE VARIABLE REFERENCE
@@ -590,6 +590,16 @@ const BYOM_MODES = [
   { id: 'byom-azure-openai-chat-completion', label: 'Azure OpenAI / Foundry chat-completion (gpt-5.x, grok-4, …)' },
   { id: 'byom-foundry-anthropic-messages', label: 'Foundry Anthropic messages — preview (claude-sonnet/haiku)' },
 ];
+
+// Display labels for the TTS voice categories returned by
+// GET /api/v1/agent-builder/voices. The backend sorts voices by category (HD
+// first), which MUI's Autocomplete groupBy relies on.
+const VOICE_CATEGORY_LABELS = {
+  hd: 'HD (high definition)',
+  turbo: 'Turbo (lowest latency)',
+  standard: 'Standard neural',
+  mai: 'MAI-Voice-2 (preview)',
+};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // STYLES
@@ -1124,6 +1134,10 @@ export default function AgentBuilder({
   // per-mode option lists ({cascade, voicelive}). null = not loaded / query
   // failed → fall back to the static CASCADE/VOICELIVE_MODEL_OPTIONS below.
   const [liveModelOptions, setLiveModelOptions] = useState(null);
+  // Deployments on the Voice Live (AVL) resource — usually a SEPARATE Azure
+  // account from the primary Foundry one. VoiceLive/BYOM can only serve what's
+  // deployed here. { options, resourceName, resourceFallback } | null.
+  const [voiceLiveModelInfo, setVoiceLiveModelInfo] = useState(null);
   // Region-verification metadata for the TTS voice list (from /voices).
   const [voicesRegionVerified, setVoicesRegionVerified] = useState(null);
   const [sessionAgents, setSessionAgents] = useState([]);
@@ -1255,30 +1269,34 @@ export default function AgentBuilder({
     return live && live.length ? toModelCardOptions(live) : CASCADE_MODEL_OPTIONS;
   }, [liveModelOptions, toModelCardOptions]);
   // Managed Voice Live models (VoiceLive-hosted, by pricing tier) — shown when
-  // BYOM is OFF. These are not your resource deployments.
-  const managedVoiceliveCardOptions = useMemo(
-    () =>
-      MANAGED_VOICELIVE_MODELS.map((m) => ({
-        id: m.id,
-        name: m.id,
-        description: `Managed Voice Live · ${m.tier}`,
-        tier: m.tier,
-        speed: m.id.includes('mini') || m.id.includes('nano') ? 'fastest' : 'fast',
-        arch: m.id.includes('realtime') ? 'native' : 'cascaded',
-        capabilities: m.id.includes('realtime') ? ['Realtime Audio'] : ['Chat'],
-        contextWindow: 'managed',
-      })),
-    [],
-  );
-  // VoiceLive model dropdown — BYOM-aware: BYOM ON → your live deployments;
-  // BYOM OFF → the managed Voice Live model list (pricing tiers).
+  // BYOM is OFF. These are not your resource deployments; entries the Voice Live
+  // resource also has deployed are marked so you can see what's provisioned.
+  const managedVoiceliveCardOptions = useMemo(() => {
+    const deployedIds = new Set((voiceLiveModelInfo?.options || []).map((o) => o.id));
+    return MANAGED_VOICELIVE_MODELS.map((m) => ({
+      id: m.id,
+      name: m.id,
+      description: deployedIds.has(m.id)
+        ? `Managed Voice Live · ${m.tier} · deployed on ${voiceLiveModelInfo?.resourceName || 'Voice Live'}`
+        : `Managed Voice Live · ${m.tier}`,
+      tier: m.tier,
+      speed: m.id.includes('mini') || m.id.includes('nano') ? 'fastest' : 'fast',
+      arch: m.id.includes('realtime') ? 'native' : 'cascaded',
+      capabilities: m.id.includes('realtime') ? ['Realtime Audio'] : ['Chat'],
+      contextWindow: 'managed',
+    }));
+  }, [voiceLiveModelInfo]);
+  // VoiceLive model dropdown — BYOM-aware: BYOM ON → the deployments on the VOICE
+  // LIVE (AVL) resource VoiceLive connects to (NOT the primary Foundry resource,
+  // whose deployments VoiceLive can't reach — the session would connect but never
+  // respond); BYOM OFF → the managed Voice Live model list (pricing tiers).
   const voiceliveModelCardOptions = useMemo(() => {
     if (config.byom?.mode) {
-      const live = liveModelOptions?.voicelive;
+      const live = voiceLiveModelInfo?.options;
       return live && live.length ? toModelCardOptions(live) : managedVoiceliveCardOptions;
     }
     return managedVoiceliveCardOptions;
-  }, [liveModelOptions, toModelCardOptions, managedVoiceliveCardOptions, config.byom?.mode]);
+  }, [voiceLiveModelInfo, toModelCardOptions, managedVoiceliveCardOptions, config.byom?.mode]);
 
   // Ensure config.template_vars includes any detected variables so users can set defaults
   useEffect(() => {
@@ -1343,12 +1361,17 @@ export default function AgentBuilder({
     }
   }, []);
 
-  // Query the live model deployments from the connected Foundry/Azure OpenAI
-  // resource (includes regional realtime/voice models). Falls back silently to
-  // the static presets when the query is unavailable.
+  // Query the live model deployments per mode: cascade reads the primary
+  // Foundry/Azure OpenAI resource, VoiceLive reads the Voice Live (AVL) resource
+  // it actually connects to. Falls back silently to the static presets when a
+  // query is unavailable.
   const fetchAvailableModels = useCallback(async () => {
-    const live = await fetchFoundryModels();
+    const [live, voiceLive] = await Promise.all([
+      fetchFoundryModels(),
+      fetchVoiceLiveModels(),
+    ]);
     setLiveModelOptions(live ? deriveModelOptions(live.models) : null);
+    setVoiceLiveModelInfo(voiceLive);
   }, []);
 
   const fetchDefaults = useCallback(async () => {
@@ -1659,6 +1682,23 @@ export default function AgentBuilder({
     setError(null);
     setSuccess(null);
 
+    // Guardrail: a non-managed Voice Live model (o3-mini, o1, custom/fine-tuned,
+    // etc.) can ONLY run via a BYOM profile. Saving it with BYOM off persists an
+    // agent that connects to managed Voice Live, which can't serve the model —
+    // the agent then goes silent and the client reconnect-loops. Block it here.
+    const vlModelId = (config.voicelive_model?.deployment_id || '').trim();
+    const byomEnabled = Boolean(config.byom?.mode);
+    if (vlModelId && !byomEnabled && !isManagedVoiceLiveModel(vlModelId)) {
+      setError(
+        `"${vlModelId}" isn't a managed Voice Live model, so it needs a BYOM profile. ` +
+          'Turn on "Bring Your Own Model (BYOM)" (e.g. Azure OpenAI / Foundry ' +
+          'chat-completion) and re-save, or pick a managed Voice Live model. Saving it ' +
+          'with BYOM off makes the agent go silent.',
+      );
+      setSaving(false);
+      return;
+    }
+
     try {
       const cascadeEndpointPreference = resolveEndpointPreference(config.cascade_model);
       const voiceliveEndpointPreference = resolveEndpointPreference(config.voicelive_model);
@@ -1819,6 +1859,11 @@ export default function AgentBuilder({
     }
     return categories;
   }, [availableVoices]);
+
+  const hdVoiceCount = useMemo(
+    () => availableVoices.filter((v) => v.is_hd).length,
+    [availableVoices],
+  );
 
   const templateVarKeys = useMemo(() => {
     const keys = new Set(Object.keys(config.template_vars || {}));
@@ -2933,8 +2978,17 @@ export default function AgentBuilder({
                           label={
                             voicesRegionVerified.verified
                               ? `Region-verified (${availableVoices.length})`
-                              : 'Catalog (region not verified)'
+                              : `Catalog (${availableVoices.length}, region not verified)`
                           }
+                          sx={{ height: 20, fontSize: '11px' }}
+                        />
+                      )}
+                      {hdVoiceCount > 0 && (
+                        <Chip
+                          size="small"
+                          variant="outlined"
+                          color="secondary"
+                          label={`${hdVoiceCount} HD`}
                           sx={{ height: 20, fontSize: '11px' }}
                         />
                       )}
@@ -2947,7 +3001,7 @@ export default function AgentBuilder({
                         }
                       }}
                       options={availableVoices}
-                      groupBy={(option) => option.category}
+                      groupBy={(option) => VOICE_CATEGORY_LABELS[option.category] || option.category}
                       getOptionLabel={(option) => option.display_name || option.name}
                       renderInput={(params) => (
                         <TextField
@@ -2966,9 +3020,29 @@ export default function AgentBuilder({
                               </Avatar>
                             </ListItemAvatar>
                             <ListItemText
-                              primary={option.display_name}
+                              primary={
+                                <Stack direction="row" spacing={0.75} alignItems="center">
+                                  <span>{option.display_name || option.name}</span>
+                                  {option.is_hd && (
+                                    <Chip
+                                      size="small"
+                                      label="HD"
+                                      color="secondary"
+                                      sx={{ height: 16, fontSize: '10px' }}
+                                    />
+                                  )}
+                                  {option.region_verified === false && (
+                                    <Chip
+                                      size="small"
+                                      variant="outlined"
+                                      label="unverified"
+                                      sx={{ height: 16, fontSize: '10px' }}
+                                    />
+                                  )}
+                                </Stack>
+                              }
                               secondary={option.name}
-                              primaryTypographyProps={{ variant: 'body2' }}
+                              primaryTypographyProps={{ variant: 'body2', component: 'div' }}
                               secondaryTypographyProps={{ variant: 'caption' }}
                             />
                           </ListItem>

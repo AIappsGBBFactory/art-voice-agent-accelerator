@@ -106,6 +106,9 @@ OPTIONS:
     -g, --resource-group    Resource group name (or set AZURE_RESOURCE_GROUP)
     -a, --container-app     Container app name (or set CARDAPI_MCP_CONTAINER_APP_NAME)
     -i, --identity-client-id MCP user-assigned managed identity client ID (or set CARDAPI_MCP_UAI_CLIENT_ID)
+    --allowed-client-ids    Comma-separated client IDs allowed to call with app-only
+                            (managed identity) tokens (or set CARDAPI_MCP_ALLOWED_CLIENT_IDS;
+                            defaults to BACKEND_UAI_CLIENT_ID). Required for the backend to reach CardAPI.
     -n, --app-name          Entra ID app registration name (default: <container-app>-easyauth)
     -c, --cloud             Azure cloud environment (default: AzureCloud)
     -h, --help              Show this help message
@@ -134,6 +137,10 @@ parse_args() {
     RESOURCE_GROUP="${AZURE_RESOURCE_GROUP:-}"
     CONTAINER_APP="${CARDAPI_MCP_CONTAINER_APP_NAME:-}"
     IDENTITY_CLIENT_ID="${CARDAPI_MCP_UAI_CLIENT_ID:-}"
+    # Client IDs (comma-separated) allowed to call the MCP API with app-only
+    # (managed identity / client-credential) tokens. Defaults to the backend
+    # user-assigned managed identity so the deployed backend can reach CardAPI.
+    ALLOWED_CLIENT_IDS="${CARDAPI_MCP_ALLOWED_CLIENT_IDS:-${BACKEND_UAI_CLIENT_ID:-}}"
     APP_REG_NAME=""
     CLOUD_ENV="AzureCloud"
 
@@ -149,6 +156,10 @@ parse_args() {
                 ;;
             -i|--identity-client-id)
                 IDENTITY_CLIENT_ID="$2"
+                shift 2
+                ;;
+            --allowed-client-ids)
+                ALLOWED_CLIENT_IDS="$2"
                 shift 2
                 ;;
             -n|--app-name)
@@ -503,6 +514,23 @@ enable_container_app_auth() {
     resource_id="/subscriptions/${subscription_id}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.App/containerApps/${CONTAINER_APP}"
     api_version="2024-03-01"
 
+    # Build the allowedApplications JSON array from the comma-separated client
+    # IDs. Container Apps EasyAuth REJECTS app-only (managed identity /
+    # client-credential) tokens unless the caller's client ID is listed here,
+    # so the deployed backend's managed identity must be included or it gets 401.
+    local allowed_apps_json="[]"
+    if [[ -n "$ALLOWED_CLIENT_IDS" ]]; then
+        allowed_apps_json=$(printf '%s' "$ALLOWED_CLIENT_IDS" | tr ',' '\n' | sed 's/[[:space:]]//g; /^$/d' | \
+            awk 'BEGIN{printf "["} {printf "%s\"%s\"", (NR>1?",":""), $0} END{printf "]"}')
+        log "Allowed application client IDs: $ALLOWED_CLIENT_IDS"
+    else
+        warn "No allowed client IDs configured; app-only tokens (managed identity) will be rejected with 401"
+    fi
+
+    # NOTE: unauthenticatedClientAction MUST be "Return401" (not
+    # "RedirectToLoginPage"). This is a machine-to-machine API called by the
+    # backend with a bearer token, not a browser app; RedirectToLoginPage turns
+    # rejections into AAD login redirects and breaks non-interactive callers.
     auth_config=$(cat <<EOF
 {
     "properties": {
@@ -511,7 +539,7 @@ enable_container_app_auth() {
         },
         "globalValidation": {
             "redirectToProvider": "azureactivedirectory",
-            "unauthenticatedClientAction": "RedirectToLoginPage"
+            "unauthenticatedClientAction": "Return401"
         },
         "identityProviders": {
             "azureActiveDirectory": {
@@ -523,7 +551,7 @@ enable_container_app_auth() {
                 },
                 "validation": {
                     "defaultAuthorizationPolicy": {
-                        "allowedApplications": []
+                        "allowedApplications": $allowed_apps_json
                     }
                 }
             }

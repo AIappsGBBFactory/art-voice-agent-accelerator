@@ -4,6 +4,7 @@
  * Complete business logic extracted from the original monolithic component
  */
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { getDeviceId, getSessionTraceparent } from '../utils/telemetry.js';
 
 const SESSION_STORAGE_KEY = 'voice_agent_session_id';
 const getOrCreateSessionId = () => {
@@ -207,7 +208,7 @@ export const useRealTimeVoiceApp = (API_BASE_URL, WS_URL) => {
     // Falls back to 'banking' for backward compatibility with sessions
     // that have no explicit scenario selection.
     const activeScenario = sessionStorage.getItem('voice_agent_active_scenario') || 'banking';
-    const conversationUrl = `${WS_URL}/api/v1/browser/conversation?session_id=${encodeURIComponent(sessionId)}&scenario=${encodeURIComponent(activeScenario)}`;
+    const conversationUrl = `${WS_URL}/api/v1/browser/conversation?session_id=${encodeURIComponent(sessionId)}&scenario=${encodeURIComponent(activeScenario)}&client_user_id=${encodeURIComponent(getDeviceId() || '')}&client_traceparent=${encodeURIComponent(getSessionTraceparent(sessionId))}`;
 
     // 1) open WS
     const socket = new WebSocket(conversationUrl);
@@ -215,7 +216,7 @@ export const useRealTimeVoiceApp = (API_BASE_URL, WS_URL) => {
 
     socket.onopen = () => {
       appendLog("🔌 WS open - Connected to backend!");
-      console.log("WebSocket connection OPENED to backend at:", conversationUrl);
+      console.log("WebSocket connection OPENED to backend");
     };
     socket.onclose = (event) => {
       appendLog(`🔌 WS closed - Code: ${event.code}, Reason: ${event.reason}`);
@@ -270,20 +271,13 @@ export const useRealTimeVoiceApp = (API_BASE_URL, WS_URL) => {
       setAudioLevel(level);
 
       // Debug: Log a sample of mic data
-      console.debug("Mic data sample:", float32.slice(0, 10)); // Should show non-zero values if your mic is hot
-
       const int16 = new Int16Array(float32.length);
       for (let i = 0; i < float32.length; i++) {
         int16[i] = Math.max(-1, Math.min(1, float32[i])) * 0x7fff;
       }
 
-      // Debug: Show size before send
-      console.debug("Sending int16 PCM buffer, length:", int16.length);
-
       if (socket.readyState === WebSocket.OPEN) {
         socket.send(int16.buffer);
-        // Debug: Confirm data sent
-        console.debug("PCM audio chunk sent to backend!");
       } else {
         console.warn("WebSocket not open, did not send audio.");
       }
@@ -355,18 +349,6 @@ export const useRealTimeVoiceApp = (API_BASE_URL, WS_URL) => {
 
   // Handle WebSocket messages - EXACT COPY from original
   const handleSocketMessage = async (event) => {
-    // Log all incoming messages for debugging
-    if (typeof event.data === "string") {
-      try {
-        const msg = JSON.parse(event.data);
-        console.debug("📨 WebSocket message received:", msg.type || "unknown", msg);
-      } catch (error) {
-        console.debug("📨 Non-JSON WebSocket message:", event.data, error);
-      }
-    } else {
-      console.debug("📨 Binary WebSocket message received, length:", event.data.byteLength);
-    }
-
     if (typeof event.data !== "string") {
       const ctx = new AudioContext();
       const buf = await event.data.arrayBuffer();
@@ -390,14 +372,6 @@ export const useRealTimeVoiceApp = (API_BASE_URL, WS_URL) => {
     // Handle audio_data messages from backend TTS
     if (payload.type === "audio_data" && payload.data) {
       try {
-        console.debug("🔊 Received audio_data message:", {
-          frame_index: payload.frame_index,
-          total_frames: payload.total_frames,
-          sample_rate: payload.sample_rate,
-          data_length: payload.data.length,
-          is_final: payload.is_final
-        });
-
         // Decode base64 -> Int16 -> Float32 [-1, 1]
         const bstr = atob(payload.data);
         const buf = new ArrayBuffer(bstr.length);
@@ -406,9 +380,6 @@ export const useRealTimeVoiceApp = (API_BASE_URL, WS_URL) => {
         const int16 = new Int16Array(buf);
         const float32 = new Float32Array(int16.length);
         for (let i = 0; i < int16.length; i++) float32[i] = int16[i] / 0x8000;
-
-        console.debug(`🔊 Processing TTS audio chunk: ${float32.length} samples, sample_rate: ${payload.sample_rate || 16000}`);
-        console.debug("🔊 Audio data preview:", float32.slice(0, 10));
 
         // Push to the worklet queue
         if (pcmSinkRef.current) {

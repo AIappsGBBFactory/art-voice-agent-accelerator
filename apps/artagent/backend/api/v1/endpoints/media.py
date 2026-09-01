@@ -23,6 +23,7 @@ from apps.artagent.backend.voice import (
     VoiceHandlerConfig,
     VoiceLiveSDKHandler,
 )
+from apps.artagent.backend.voice.shared.errors import fail_websocket_session
 from apps.artagent.backend.voice.voicelive.handler import consume_voicelive_call_warmup
 from config import ACS_STREAMING_MODE
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
@@ -251,9 +252,18 @@ async def acs_media_stream(websocket: WebSocket) -> None:
             # Don't re-raise WebSocketDisconnect as it's a normal part of the lifecycle
         except Exception as e:
             _log_websocket_error(e, session_id, call_connection_id)
-            # Only raise non-disconnect errors
-            if not isinstance(e, WebSocketDisconnect):
-                raise
+            # Surface the cause to any browser/dashboard subscribed to this
+            # session before closing. A bare re-raise leaves an opaque 1006 and
+            # the caller simply hears silence.
+            await fail_websocket_session(
+                websocket,
+                e,
+                session_id=session_id,
+                call_id=call_connection_id,
+                conn_id=conn_id,
+                source="voicelive" if stream_mode == StreamMode.VOICE_LIVE else "config",
+                preclassified=getattr(handler, "_startup_error", None),
+            )
         finally:
             await _cleanup_websocket_resources(websocket, handler, call_connection_id, session_id)
 
@@ -398,9 +408,7 @@ async def _process_media_stream(
                     try:
                         parsed_msg = json.loads(msg_text)
                     except json.JSONDecodeError:
-                        logger.warning(
-                            f"[{call_connection_id}] Failed to parse message as JSON"
-                        )
+                        logger.warning(f"[{call_connection_id}] Failed to parse message as JSON")
                         continue
                     await handler.handle_media_message(parsed_msg)
                 elif stream_mode == StreamMode.TRANSCRIPTION:

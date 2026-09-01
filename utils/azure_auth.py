@@ -30,6 +30,19 @@ def _is_azure_hosted() -> bool:
     )
 
 
+def _environment_credential_broken() -> bool:
+    """True when EnvironmentCredential would fail due to a partial config.
+
+    GitHub Actions OIDC sets ``AZURE_CLIENT_ID`` (and ``AZURE_TENANT_ID``) so
+    ``az login`` can federate, but provides no ``AZURE_CLIENT_SECRET``.
+    ``DefaultAzureCredential`` tries ``EnvironmentCredential`` first, which then
+    raises "secret should be a Microsoft Entra application's client secret".
+    Detect that case so callers can exclude EnvironmentCredential and fall
+    through to ``AzureCliCredential``.
+    """
+    return bool(os.getenv("AZURE_CLIENT_ID")) and not os.getenv("AZURE_CLIENT_SECRET")
+
+
 def _is_local_dev() -> bool:
     """
     Check if running in local development mode.
@@ -62,7 +75,7 @@ def _create_credential_internal():
     # For local development, allow CLI credential (from `az login`)
     if _is_local_dev():
         return DefaultAzureCredential(
-            exclude_environment_credential=False,
+            exclude_environment_credential=_environment_credential_broken(),
             exclude_managed_identity_credential=True,  # Not available locally
             exclude_workload_identity_credential=True,
             exclude_shared_token_cache_credential=True,
@@ -74,7 +87,7 @@ def _create_credential_internal():
 
     # "prod-safe" DAC (only env + MI)
     return DefaultAzureCredential(
-        exclude_environment_credential=False,
+        exclude_environment_credential=_environment_credential_broken(),
         exclude_managed_identity_credential=False,
         exclude_workload_identity_credential=True,
         exclude_shared_token_cache_credential=True,

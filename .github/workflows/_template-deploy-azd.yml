@@ -862,6 +862,26 @@ jobs:
             echo "✅ BACKEND_CONTAINER_APP_NAME=$BACKEND_CONTAINER_APP_NAME"
           fi
 
+      - name: 🎙️ Dispatch Live Evals (staging only)
+        # After a successful staging deploy, fire live-evals-staging.yml on the
+        # staging ref. Running FROM staging satisfies the "staging branch only"
+        # environment protection rule. Skipped for non-staging environments or
+        # when GH_PAT is absent.
+        if: inputs.action != 'down' && inputs.environment == 'staging'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "ℹ️ GH_PAT not provided; skipping live-evals dispatch."
+            exit 0
+          fi
+          echo "🎙️ Dispatching live-evals-staging.yml on staging ref..."
+          gh workflow run live-evals-staging.yml \
+            --repo "${{ github.repository }}" \
+            --ref staging \
+            && echo "✅ Live evals dispatched on staging" \
+            || echo "⚠️ Could not dispatch live-evals (workflow may not exist on staging yet)"
+
       - name: 📋 Generate Summary
         run: |
           ACTION="${{ inputs.action }}"

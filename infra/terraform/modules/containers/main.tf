@@ -123,8 +123,10 @@ resource "azurerm_container_app" "backend" {
     cors_policy {
       allowed_origins    = ["https://${azurerm_container_app.frontend.ingress[0].fqdn}"]
       allowed_methods    = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
-      allowed_headers    = ["Content-Type", "Authorization", "X-Requested-With", "Accept"]
-      expose_headers     = ["Content-Length", "Content-Range"]
+      # Includes the Application Insights JS SDK correlation headers so browser
+      # distributed tracing survives the ingress preflight.
+      allowed_headers    = ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Cache-Control", "Request-Id", "Request-Context", "traceparent", "tracestate"]
+      expose_headers     = ["Content-Length", "Content-Range", "Request-Context"]
       allow_credentials  = true
       max_age_in_seconds = 86400
     }

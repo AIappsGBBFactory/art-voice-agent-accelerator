@@ -38,6 +38,7 @@ from apps.artagent.backend.registries.agentstore.base import (
     SpeechConfig,
     UnifiedAgent,
     VoiceConfig,
+    VoiceLiveBYOMConfig,
 )
 from apps.artagent.backend.src.orchestration.session_agents import (
     _deserialize_agent,
@@ -97,6 +98,9 @@ def make_rich_agent(name: str = "BankBot") -> UnifiedAgent:
             deployment_id="gpt-realtime",
             temperature=0.6,
             max_tokens=2048,
+        ),
+        byom=VoiceLiveBYOMConfig.from_dict(
+            {"mode": "byom-azure-openai-chat-completion"}
         ),
         voice=VoiceConfig(
             name="en-US-GuyNeural",
@@ -167,6 +171,11 @@ def _assert_rich_config_preserved(agent: UnifiedAgent, *, name: str = "BankBot")
     assert agent.cascade_model.max_tokens == 1024
     assert agent.voicelive_model.deployment_id == "gpt-realtime"
     assert agent.voicelive_model.max_tokens == 2048
+
+    # Voice Live BYOM profile must survive — dropping it reloads the agent as
+    # managed Voice Live and breaks Foundry-hosted (BYOM) model selection.
+    assert agent.byom is not None
+    assert agent.byom.mode == "byom-azure-openai-chat-completion"
 
 
 # =============================================================================

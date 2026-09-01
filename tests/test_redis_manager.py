@@ -80,6 +80,49 @@ def test_get_session_data_raises_without_cluster_support(monkeypatch):
         mgr.get_session_data("session-123")
 
 
+def test_moved_does_not_flip_flop_back_to_standalone(monkeypatch):
+    """A MOVED reply must latch cluster mode.
+
+    Once the endpoint has proven it is an OSS cluster (via MOVED), a failed
+    cluster rebuild must NOT silently fall back to a standalone client — that
+    reintroduces MOVED in an endless ping-pong. The manager should stop retrying
+    on the standalone client and surface the original MOVED instead.
+    """
+    single_node_client = _FakeRedis()
+    cluster_attempts = {"count": 0}
+
+    monkeypatch.setattr(
+        redis_manager.redis,
+        "Redis",
+        lambda *args, **kwargs: single_node_client,
+    )
+
+    def _failing_cluster(*args, **kwargs):
+        cluster_attempts["count"] += 1
+        raise RedisClusterException("topology unreachable")
+
+    monkeypatch.setattr(redis_manager, "RedisCluster", _failing_cluster)
+
+    mgr = AzureRedisManager(
+        host="example.redis.local",
+        port=6380,
+        access_key="dummy",
+        ssl=False,
+        credential=object(),
+    )
+
+    with pytest.raises(MovedError):
+        mgr.get_session_data("session-123")
+
+    # Cluster mode stays latched; we never fell back and re-hammered standalone.
+    assert mgr.use_cluster is True
+    assert mgr._cluster_required is True
+    # One standalone HGETALL raised MOVED, then a single failed cluster rebuild
+    # aborted the loop — no repeated standalone retries.
+    assert single_node_client.hgetall_calls == 1
+    assert cluster_attempts["count"] == 1
+
+
 def test_cluster_initialization_falls_back_to_standalone(monkeypatch):
     standalone_client = _FakeClusterRedis()
     monkeypatch.setattr(

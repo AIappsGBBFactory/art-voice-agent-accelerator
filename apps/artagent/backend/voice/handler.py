@@ -74,6 +74,7 @@ from apps.artagent.backend.voice.messaging import (
     send_user_transcript,
     make_assistant_envelope,
     make_assistant_streaming_envelope,
+    make_envelope,
     send_session_envelope,
 )
 
@@ -410,10 +411,44 @@ class VoiceHandler:
             on_user_transcript=handler._on_user_transcript,
             on_tts_request=handler._on_tts_request,
             thread_bridge=handler._thread_bridge,
+            on_error=handler._on_stt_error,
         )
 
         handler._thread_bridge.set_main_loop(event_loop, session_key)
         handler._thread_bridge.set_route_turn_thread(handler._route_turn_thread)
+
+        def schedule_partial_transcript(
+            text: str,
+            language: str,
+            speaker: str | None,
+            turn_id: str,
+            sequence: int,
+        ) -> None:
+            """Relay SDK-thread partials onto the owning asyncio loop."""
+            if event_loop is None or event_loop.is_closed():
+                return
+            future = asyncio.run_coroutine_threadsafe(
+                handler._on_partial_transcript(
+                    text,
+                    language,
+                    speaker,
+                    turn_id,
+                    sequence,
+                ),
+                event_loop,
+            )
+
+            def log_partial_failure(completed) -> None:
+                try:
+                    completed.result()
+                except Exception:
+                    logger.debug(
+                        "[%s] Partial transcript relay failed",
+                        handler._session_short,
+                        exc_info=True,
+                    )
+
+            future.add_done_callback(log_partial_failure)
 
         # Create STT thread
         handler._stt_thread = SpeechSDKThread(
@@ -422,6 +457,7 @@ class VoiceHandler:
             speech_queue=handler._speech_queue,
             thread_bridge=handler._thread_bridge,
             barge_in_handler=handler._barge_in_controller.handle_barge_in,
+            on_partial_transcript=schedule_partial_transcript,
         )
 
         # Store reference in context for external access
@@ -1046,9 +1082,7 @@ class VoiceHandler:
         4. Notifies thread bridge
         """
         tts_was_playing = bool(self._tts and self._tts.is_playing)
-        transport_playback_pending = bool(
-            self._tts and self._tts.has_pending_transport_playback
-        )
+        transport_playback_pending = bool(self._tts and self._tts.has_pending_transport_playback)
         response_was_active = bool(
             self._route_turn_thread and self._route_turn_thread.has_active_response
         )
@@ -1139,6 +1173,13 @@ class VoiceHandler:
                     task.cancel()
             self._orchestration_tasks.clear()
 
+            # Parity with VoiceLive: tell the UI the in-flight response was
+            # interrupted so the streamed bubble settles into a cancelled state.
+            # Emitted AFTER the response/TTS/orchestration are cancelled so this
+            # best-effort UI signal can never delay the actual audio stop.
+            if ws and response_was_active:
+                await self._emit_assistant_cancelled()
+
             # Report barge-in latency: from detection (first meaningful partial in
             # the STT thread) to the point TTS/orchestration are actually
             # cancelled. This is the "how long until barge-in takes effect" KPI.
@@ -1183,39 +1224,69 @@ class VoiceHandler:
                 "[%s] Failed to record barge-in latency", self._session_short, exc_info=True
             )
 
-    def _report_barge_in_latency(self, effect_done_ts: float, tts_was_playing: bool) -> None:
-        """Log + record barge-in latency (detection -> effect)."""
-        try:
-            from apps.artagent.backend.voice.speech_cascade.metrics import record_barge_in
-
-            now = time.perf_counter()
-            detected_ts = getattr(self._thread_bridge, "last_barge_in_detected_ts", None)
-            # Effect latency: time spent inside the cancel path this turn.
-            effect_ms = (now - effect_done_ts) * 1000
-            # Detection->effect latency when the STT thread stamped a detection time.
-            detect_to_effect_ms = (now - detected_ts) * 1000 if detected_ts else effect_ms
-
-            logger.info(
-                "[%s] Barge-in took effect | latency=%.0fms (cancel_path=%.0fms) tts_was_playing=%s",
-                self._session_short,
-                detect_to_effect_ms,
-                effect_ms,
-                tts_was_playing,
-            )
-
-            record_barge_in(
-                detect_to_effect_ms,
-                session_id=self._session_id or "",
-                call_connection_id=self._context.call_connection_id,
-                trigger="partial",
-                tts_was_playing=tts_was_playing,
-            )
-        except Exception:
-            logger.debug("[%s] Failed to record barge-in latency", self._session_short, exc_info=True)
-
     async def _on_barge_in(self) -> None:
         """Internal callback for barge-in detection."""
         await self.handle_barge_in()
+
+    def _active_agent_name(self, default: str = "Assistant") -> str:
+        """Resolve the live agent's display name for UI envelopes.
+
+        Falls back to ``default`` only when no active agent has been recorded
+        in memory yet (e.g. before the first turn).
+        """
+        if self.memory_manager:
+            return self.memory_manager.get_value_from_corememory("active_agent", default) or default
+        return default
+
+    async def _emit_assistant_cancelled(self) -> None:
+        """Emit an ``assistant_cancelled`` envelope so the UI settles the
+        interrupted response bubble into a cancelled state (parity with
+        VoiceLive barge-in, which sends the same event).
+
+        Fully best-effort: any failure here must never affect barge-in, so the
+        whole body is guarded and callers invoke it only after cancellation.
+        """
+        ws = self._context.websocket
+        if not ws:
+            return
+
+        try:
+            agent_name = self._active_agent_name()
+            turn_id = (
+                self.memory_manager.get_value_from_corememory("current_turn_id")
+                if self.memory_manager
+                else None
+            )
+
+            payload = {
+                "type": "assistant_cancelled",
+                "message": "",
+                "content": "",
+                "streaming": False,
+                "cancel_reason": "barge_in",
+                "status": "cancelled",
+                "turn_id": turn_id,
+                "response_id": turn_id,
+                "sender": agent_name,
+                "speaker": agent_name,
+            }
+            envelope = make_envelope(
+                etype="event",
+                sender=agent_name,
+                payload=payload,
+                topic="session",
+                session_id=self._context.session_id,
+            )
+            await send_session_envelope(
+                ws,
+                envelope,
+                session_id=self._context.session_id,
+                conn_id=self._context.conn_id,
+                event_label="barge_in_assistant_cancelled",
+                broadcast_only=self._transport != TransportType.BROWSER,
+            )
+        except Exception as e:  # noqa: BLE001 - never let UI signalling break barge-in
+            logger.debug("[%s] Failed to emit assistant_cancelled: %s", self._session_short, e)
 
     # =========================================================================
     # Turn telemetry bridge (orchestrator -> active ConversationTurnSpan)
@@ -1248,6 +1319,7 @@ class VoiceHandler:
         turn_wall_ms: float | None = None,
         agent_name: str | None = None,
         latency_anchor: str | None = None,
+        model: str | None = None,
     ) -> None:
         """Stamp the structured per-turn latency profile on the headline turn span."""
         if self._route_turn_thread:
@@ -1262,6 +1334,7 @@ class VoiceHandler:
                 turn_wall_ms=turn_wall_ms,
                 agent_name=agent_name,
                 latency_anchor=latency_anchor,
+                model=model,
             )
 
     @property
@@ -1328,6 +1401,30 @@ class VoiceHandler:
             logger.debug("[%s] Greeting TTS warmup failed: %s", self._session_short, exc)
             return False
 
+    async def _on_stt_error(self, error_text: str) -> None:
+        """Classify a speech-recognition error and surface it to the client.
+
+        The Speech SDK reports a bad key, a bad region, or a throttled resource
+        through its cancel callback rather than an exception, so without this the
+        call simply stops transcribing with nothing shown in the UI.
+
+        Args:
+            error_text: Raw error text from the Speech SDK cancel callback.
+        """
+        from apps.artagent.backend.voice.shared.errors import (
+            classify_speech_cancellation,
+            emit_voice_error,
+        )
+
+        info = classify_speech_cancellation(error_text, source="stt")
+        await emit_voice_error(
+            self._context.websocket,
+            info,
+            session_id=self._session_id,
+            call_id=self._context.call_connection_id,
+            conn_id=self._context.conn_id,
+        )
+
     async def _on_greeting(self, event: SpeechEvent) -> None:
         """Play greeting via TTS and emit to UI."""
         if self._tts and event.text:
@@ -1378,7 +1475,12 @@ class VoiceHandler:
             await self._emit_to_ui(event.text, is_greeting=False)
             await self._tts.speak(event.text)
 
-    async def _on_user_transcript(self, text: str) -> None:
+    async def _on_user_transcript(
+        self,
+        text: str,
+        turn_id: str | None = None,
+        sequence: int | None = None,
+    ) -> None:
         """Handle final user transcript."""
         ws = self._context.websocket
         if not ws:
@@ -1396,15 +1498,32 @@ class VoiceHandler:
                 text,
                 session_id=self._session_id,
                 broadcast_only=True,
+                turn_id=turn_id,
+                sequence=sequence,
             )
         except Exception as e:
             logger.warning("[%s] Transcript emit failed: %s", self._session_short, e)
 
-    async def _on_partial_transcript(self, text: str, language: str, speaker: str | None) -> None:
+    async def _on_partial_transcript(
+        self,
+        text: str,
+        language: str,
+        speaker: str | None,
+        turn_id: str,
+        sequence: int,
+    ) -> None:
         """Handle partial (interim) transcript."""
         ws = self._context.websocket
         if ws:
-            await send_user_partial_transcript(ws, text)
+            await send_user_partial_transcript(
+                ws,
+                text,
+                language=language,
+                speaker_id=speaker,
+                session_id=self._session_id,
+                turn_id=turn_id,
+                sequence=sequence,
+            )
 
     async def _on_tts_request(
         self,
@@ -1493,12 +1612,7 @@ class VoiceHandler:
                         pass
 
             # Get active agent name from memory manager
-            agent_name = "Assistant"
-            if self.memory_manager:
-                agent_name = (
-                    self.memory_manager.get_value_from_corememory("active_agent", "Assistant")
-                    or "Assistant"
-                )
+            agent_name = self._active_agent_name()
 
             # Use non-streaming envelope for greetings, streaming for other messages
             if is_greeting:

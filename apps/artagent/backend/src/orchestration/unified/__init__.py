@@ -44,6 +44,7 @@ from apps.artagent.backend.src.utils.tracing import (
     create_service_handler_attrs,
 )
 from apps.artagent.backend.voice.shared.config_resolver import resolve_orchestrator_config
+from apps.artagent.backend.voice.shared.session_state import sync_state_to_memo
 from src.stateful.state_managment import MemoManager
 from apps.artagent.backend.voice import (
     CascadeOrchestratorAdapter,
@@ -163,6 +164,22 @@ def _get_or_create_adapter(
     if session_agent:
         adapter.agents[session_agent.name] = session_agent
         adapter._active_agent = session_agent.name
+        # Persist it as the session's active agent of record, not just on the
+        # adapter. route_turn() calls adapter.sync_from_memo_manager(cm) on the
+        # very next line, and that read is authoritative — so without this write
+        # an ``active_agent`` left in MemoManager by an *earlier* connection on
+        # the same session_id silently undoes the assignment above, and the call
+        # runs with the stale agent's voice and instructions instead of the tuned
+        # ones. (Same root cause as the Voice Live split-brain fixed in 9530f30;
+        # Cascade resolves the model per turn so it degrades to the wrong voice
+        # rather than a mute call, but the tuning is lost either way.)
+        #
+        # Safe to write unconditionally here: this branch only runs when the
+        # adapter is first created — cached adapters return above — so it cannot
+        # stomp a handoff made later in the call, which continues to propagate
+        # through MemoManager exactly as before.
+        if memo_manager is not None:
+            sync_state_to_memo(memo_manager, active_agent=session_agent.name)
         logger.info(
             "🎨 Injected pre-existing session agent | session=%s agent=%s voice=%s",
             session_id,
@@ -353,6 +370,7 @@ def update_session_scenario(session_id: str, scenario) -> bool:
                 handoff_map=config.handoff_map,
                 start_agent=scenario.start_agent,
                 scenario_name=scenario.name,
+                scenario=scenario,
             )
             logger.info(
                 "🔄 Session scenario updated in VoiceLive orchestrator | session=%s scenario=%s",
@@ -415,6 +433,8 @@ async def route_turn(
     except Exception:
         run_id = uuid.uuid4().hex[:12]
 
+    canonical_turn_id = cm.get_value_from_corememory("current_turn_id") or run_id
+
     # Store run_id in memory
     cm.set_corememory("current_run_id", run_id)
 
@@ -436,6 +456,7 @@ async def route_turn(
         active_agent=adapter.current_agent or "unknown",
     )
     span_attrs["run.id"] = run_id
+    span_attrs["turn.id"] = canonical_turn_id
 
     with tracer.start_as_current_span(
         "unified_orchestrator.route_turn",
@@ -467,7 +488,9 @@ async def route_turn(
             active_agent = cm.get_value_from_corememory("active_agent") or adapter.current_agent
             session_context = {
                 "is_acs": is_acs,
-                "run_id": run_id,
+                # CascadeSessionScope uses this value to correlate every event
+                # emitted for the utterance. Keep telemetry's run_id separate.
+                "run_id": canonical_turn_id,
                 "memo_manager": cm,
                 # Session profile and context for Jinja templates
                 "session_profile": cm.get_value_from_corememory("session_profile"),
@@ -630,12 +653,23 @@ async def route_turn(
                 payload = envelope.setdefault("payload", {})
                 payload.setdefault("message", ui_text)
                 
-                # Use effective turn_id from CascadeSessionScope if available
-                # This ensures post-tool responses use advanced turn_id
+                # Keep one canonical turn ID for the whole user→assistant flow.
+                # Post-tool phases retain a separate segment ID for diagnostics.
                 session_scope = CascadeSessionScope.get_current()
-                effective_turn_id = session_scope.get_effective_turn_id() if session_scope else run_id
-                payload["turn_id"] = effective_turn_id
-                payload["response_id"] = effective_turn_id
+                root_turn_id = (
+                    session_scope.get_root_turn_id()
+                    if session_scope
+                    else canonical_turn_id
+                )
+                segment_id = (
+                    session_scope.get_effective_turn_id()
+                    if session_scope
+                    else canonical_turn_id
+                )
+                payload["turn_id"] = root_turn_id
+                payload["segment_id"] = segment_id
+                payload["response_id"] = segment_id
+                payload["content_mode"] = "delta"
                 payload["status"] = "streaming"
                 payload["sender"] = agent_name
                 payload["active_agent"] = agent_name
@@ -666,6 +700,17 @@ async def route_turn(
                         "id": call_id,
                         "started": time.perf_counter(),
                     }
+                    session_scope = CascadeSessionScope.get_current()
+                    root_turn_id = (
+                        session_scope.get_root_turn_id()
+                        if session_scope
+                        else canonical_turn_id
+                    )
+                    segment_id = (
+                        session_scope.get_effective_turn_id()
+                        if session_scope
+                        else canonical_turn_id
+                    )
                     await push_tool_start(
                         ws,
                         tool_name=tool_name,
@@ -673,6 +718,8 @@ async def route_turn(
                         arguments=args,
                         is_acs=is_acs,
                         session_id=session_id,
+                        turn_id=root_turn_id,
+                        segment_id=segment_id,
                     )
                 except Exception:
                     logger.debug("Failed to emit tool_start frame", exc_info=True)
@@ -686,6 +733,17 @@ async def route_turn(
                     duration_ms = None
                     if info and info.get("started"):
                         duration_ms = (time.perf_counter() - info["started"]) * 1000.0
+                    session_scope = CascadeSessionScope.get_current()
+                    root_turn_id = (
+                        session_scope.get_root_turn_id()
+                        if session_scope
+                        else canonical_turn_id
+                    )
+                    segment_id = (
+                        session_scope.get_effective_turn_id()
+                        if session_scope
+                        else canonical_turn_id
+                    )
                     await push_tool_end(
                         ws,
                         tool_name=tool_name,
@@ -694,6 +752,8 @@ async def route_turn(
                         is_acs=is_acs,
                         session_id=session_id,
                         duration_ms=duration_ms,
+                        turn_id=root_turn_id,
+                        segment_id=segment_id,
                     )
                 except Exception:
                     logger.debug("Failed to emit tool_end frame", exc_info=True)
@@ -758,19 +818,29 @@ async def route_turn(
                 )
                 final_label = _resolve_agent_label(final_agent)
                 
-                # Use effective turn_id from CascadeSessionScope to match streaming envelopes
-                # This ensures the final message updates the streaming message rather than
-                # creating a duplicate when turn_id was advanced for tool calls
+                # Finalize the canonical turn bubble. The segment ID still shows
+                # which post-tool phase produced the final response.
                 session_scope = CascadeSessionScope.get_current()
-                effective_turn_id = session_scope.get_effective_turn_id() if session_scope else run_id
+                root_turn_id = (
+                    session_scope.get_root_turn_id()
+                    if session_scope
+                    else canonical_turn_id
+                )
+                segment_id = (
+                    session_scope.get_effective_turn_id()
+                    if session_scope
+                    else canonical_turn_id
+                )
                 
                 payload = {
                     "type": "assistant",
                     "message": result.response_text,
                     "content": result.response_text,
                     "streaming": False,
-                    "turn_id": effective_turn_id,
-                    "response_id": effective_turn_id,
+                    "turn_id": root_turn_id,
+                    "segment_id": segment_id,
+                    "response_id": segment_id,
+                    "content_mode": "final_turn",
                     "status": "error" if result.error else "completed",
                     "sender": final_agent,
                     "speaker": final_agent,
@@ -803,7 +873,7 @@ async def route_turn(
                         "Sent final assistant envelope | agent=%s text_len=%d turn_id=%s (run_id=%s)",
                         final_agent,
                         len(result.response_text),
-                        effective_turn_id,
+                        root_turn_id,
                         run_id,
                     )
                 except Exception:
@@ -869,6 +939,11 @@ def _emit_turn_kpis(
     turn_wall_ms = (time.perf_counter() - turn_start_ts) * 1000
     llm_ttft_ms = getattr(result, "ttft_ms", None)
     final_agent = result.agent_name or adapter.current_agent or "unknown"
+    # Deployment/model that actually processed this turn (resolved per-turn from
+    # the active agent's cascade model). Enables selected-vs-processed validation.
+    turn_model = getattr(adapter, "last_model_name", None) or getattr(
+        getattr(adapter, "config", None), "model_name", None
+    )
 
     first_audio_perf = tts_ttfb_holder[0] if tts_ttfb_holder else None
     # Legacy turn-start-anchored TTFB (kept for span back-compat + record_turn_kpis).
@@ -914,6 +989,9 @@ def _emit_turn_kpis(
     span.set_attribute(
         "turn.latency_anchor", "recog_end" if recog_end_perf is not None else "turn_start"
     )
+    if turn_model:
+        span.set_attribute("turn.model", turn_model)
+        span.set_attribute("gen_ai.request.model", turn_model)
     if recog_to_ttft_ms is not None:
         span.set_attribute("turn.ttft_ms", round(recog_to_ttft_ms, 1))
     if recog_to_ttfb_ms is not None:
@@ -937,6 +1015,7 @@ def _emit_turn_kpis(
                 agent_name=final_agent,
                 latency_anchor="recog_end" if recog_end_perf is not None else "turn_start",
                 llm_ttft_ms=llm_ttft_ms,
+                model=turn_model,
             )
         except Exception:
             logger.debug("Failed to stamp turn KPIs on headline span", exc_info=True)
@@ -982,10 +1061,11 @@ def _emit_turn_kpis(
     # latencies. ttft = end of speech -> first LLM token; ttfb = end of speech ->
     # first audio byte; synth isolates the TTS render + delivery delta (ttfb-ttft).
     logger.info(
-        "[Cascade] Turn %s complete | agent=%s | ttft=%s ttfb=%s synth=%s "
+        "[Cascade] Turn %s complete | agent=%s model=%s | ttft=%s ttfb=%s synth=%s "
         "| turn_wall=%.0fms | session=%s",
         turn_no if turn_no is not None else "?",
         final_agent,
+        turn_model or "unknown",
         f"{recog_to_ttft_ms:.0f}ms" if recog_to_ttft_ms is not None else "N/A",
         ttfb_display,
         synth_display,

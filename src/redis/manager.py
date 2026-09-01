@@ -83,6 +83,10 @@ class AzureRedisManager:
             self.use_cluster = str(use_cluster_env).lower() in {"1", "true", "yes", "on"}
         else:
             self.use_cluster = False
+        # Set once a MOVED reply proves the endpoint is a cluster. When True we must
+        # never silently fall back to a standalone client (doing so re-triggers MOVED
+        # in an endless ping-pong), so cluster construction failures surface instead.
+        self._cluster_required = False
         if not self.host:
             raise ValueError(
                 "Redis host must be provided either as argument or environment variable."
@@ -194,9 +198,22 @@ class AzureRedisManager:
                     command_name,
                     moved_err,
                 )
-                if not self.use_cluster:
-                    self.use_cluster = True
-                self._create_client()
+                # A MOVED reply is authoritative: the endpoint is an OSS-cluster.
+                # Latch cluster mode so a transient build failure can't drop us back
+                # to a standalone client that would just raise MOVED again.
+                self.use_cluster = True
+                self._cluster_required = True
+                try:
+                    self._create_client()
+                except Exception as create_err:
+                    # Cluster client couldn't be built (e.g. topology unreachable).
+                    # Stop retrying and surface the original MOVED to the caller.
+                    self.logger.error(
+                        "Failed to switch to Redis cluster mode after MOVED on %s: %s",
+                        command_name,
+                        create_err,
+                    )
+                    break
             except (RedisConnectionError, TimeoutError, RedisError) as redis_err:
                 last_exc = redis_err
                 self.logger.warning(
@@ -265,6 +282,11 @@ class AzureRedisManager:
             "reinitialize_steps": 1,
             "read_from_replicas": os.getenv("REDIS_READ_FROM_REPLICAS", "false").lower()
             in {"1", "true", "yes", "on"},
+            # Topology discovery has to reach every shard node during CLUSTER
+            # SLOTS/NODES; the standalone 0.2s connect budget is too tight and makes
+            # cluster init flap on transient latency. Give discovery more headroom.
+            "socket_connect_timeout": float(os.getenv("REDIS_CLUSTER_CONNECT_TIMEOUT", "5.0")),
+            "socket_timeout": float(os.getenv("REDIS_CLUSTER_SOCKET_TIMEOUT", "5.0")),
         }
 
         if self.access_key:
@@ -290,9 +312,16 @@ class AzureRedisManager:
                 self.redis_client = redis.Redis(**standalone_kwargs)
                 self.logger.debug("Azure Redis connection initialized in standalone mode.")
         except RedisClusterException as exc:
-            self.logger.warning("Redis cluster initialization failed (will try standalone): %s", exc)
-            if not self.use_cluster:
+            if self._cluster_required:
+                # A prior MOVED proved this endpoint requires cluster mode; falling
+                # back to standalone would just loop on MOVED. Surface the error.
+                self.logger.error(
+                    "Redis cluster initialization failed and cluster mode is required "
+                    "(endpoint returned MOVED); not falling back to standalone: %s",
+                    exc,
+                )
                 raise
+            self.logger.warning("Redis cluster initialization failed (will try standalone): %s", exc)
             self.logger.debug("Falling back to standalone Redis client.")
             standalone_kwargs = {**common_kwargs, "db": self.db, **auth_kwargs}
             self.redis_client = redis.Redis(**standalone_kwargs)

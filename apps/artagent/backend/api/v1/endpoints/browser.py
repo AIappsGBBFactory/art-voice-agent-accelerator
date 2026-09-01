@@ -33,6 +33,7 @@ from apps.artagent.backend.src.services.acs.session_terminator import (
     TerminationReason,
     terminate_session,
 )
+from apps.artagent.backend.src.utils.auth import extract_client_identity
 from apps.artagent.backend.src.utils.tracing import log_with_context
 from apps.artagent.backend.src.ws_helpers.barge_in import BargeInController
 from apps.artagent.backend.src.ws_helpers.envelopes import (
@@ -45,6 +46,7 @@ from apps.artagent.backend.src.ws_helpers.shared_ws import (
     send_agent_inventory,
 )
 from apps.artagent.backend.voice import VoiceLiveSDKHandler
+from apps.artagent.backend.voice.shared.errors import fail_websocket_session
 from fastapi import (
     APIRouter,
     HTTPException,
@@ -194,6 +196,22 @@ async def browser_conversation_endpoint(
     session_id: str | None = Query(None),
     streaming_mode: str | None = Query(None),
     user_email: str | None = Query(None),
+    auth_user_id: str | None = Query(
+        None,
+        description="Authenticated operator id (from /.auth/me) when the backend is not behind EasyAuth.",
+    ),
+    auth_user_email: str | None = Query(
+        None,
+        description="Authenticated operator email (from /.auth/me) when the backend is not behind EasyAuth.",
+    ),
+    client_traceparent: str | None = Query(
+        None,
+        description="W3C traceparent from the browser App Insights operation, for end-to-end trace correlation.",
+    ),
+    client_user_id: str | None = Query(
+        None,
+        description="Persistent anonymous browser/device id (App Insights ai_user). Groups anonymous sessions when EasyAuth is off.",
+    ),
     scenario: str | None = Query(None, description="Scenario name (e.g., 'banking', 'default')"),
 ) -> None:
     """
@@ -202,9 +220,14 @@ async def browser_conversation_endpoint(
     Supports two modes:
     - Voice Live: VoiceLiveSDKHandler (direct, like media.py)
     - Speech Cascade: VoiceHandler.create() factory
-    
+
     Query Parameters:
     - scenario: Industry scenario (banking, default, etc.)
+    - user_email: Demo customer profile email (preloads customer data; not the
+      signed-in operator).
+    - auth_user_id / auth_user_email: Signed-in operator identity forwarded by
+      the SPA from ``/.auth/me``. Used only for telemetry attribution and is
+      superseded by EasyAuth headers when the backend is fronted by EasyAuth.
     """
     handler: Any = None  # VoiceHandler or VoiceLiveSDKHandler
     memory_manager: MemoManager | None = None
@@ -217,12 +240,29 @@ async def browser_conversation_endpoint(
     # Resolve session ID early for context
     session_id = _resolve_session_id(websocket, session_id)
 
+    # Resolve the authenticated operator identity for telemetry. Prefers
+    # EasyAuth headers (x-ms-client-principal) and falls back to the identity
+    # the SPA forwards from /.auth/me. This is intentionally separate from
+    # ``user_email`` (the demo customer being impersonated).
+    telemetry_user_id, telemetry_user_email = extract_client_identity(
+        websocket.headers,
+        fallback_id=auth_user_id,
+        fallback_email=auth_user_email,
+    )
+
     # Wrap entire session in session_context for automatic correlation
-    # All logs and spans within this block inherit session_id and call_connection_id
+    # All logs and spans within this block inherit session_id and call_connection_id.
+    # client_traceparent (from the browser App Insights operation) roots the
+    # backend trace under the same operation so App Insights shows one
+    # end-to-end transaction: browser -> WS session -> LLM/tool spans.
     async with session_context(
         call_connection_id=session_id,  # For browser, session_id is the correlation key
         session_id=session_id,
         transport_type="BROWSER",
+        user_id=telemetry_user_id,
+        user_email=telemetry_user_email,
+        device_id=client_user_id,
+        trace_parent=client_traceparent,
         component="browser.conversation",
     ):
         try:
@@ -306,9 +346,16 @@ async def browser_conversation_endpoint(
             logger.warning("[%s] WebSocketDisconnect caught: code=%s", session_id, e.code)
             _log_disconnect("conversation", session_id, e)
         except Exception as e:
-            logger.error("[%s] Exception caught before handler started: %s", session_id, e, exc_info=True)
+            logger.error("[%s] Conversation session failed: %s", session_id, e, exc_info=True)
             _log_error("conversation", session_id, e)
-            raise
+            await fail_websocket_session(
+                websocket,
+                e,
+                session_id=session_id,
+                conn_id=conn_id,
+                source="voicelive" if stream_mode == StreamMode.VOICE_LIVE else "config",
+                preclassified=getattr(handler, "_startup_error", None),
+            )
         finally:
             await _cleanup_conversation(
                 websocket, session_id, handler, memory_manager, conn_id, stream_mode
@@ -467,6 +514,12 @@ async def _process_voice_live_messages(
     with tracer.start_as_current_span(
         "api.v1.browser.process_voice_live",
         attributes={"session_id": session_id},
+        # A client-initiated WebSocket close is a normal lifecycle event, not an
+        # error. Disable OTel's automatic exception recording/error status so a
+        # WebSocketDisconnect propagating out of this block is not surfaced as an
+        # Exception in telemetry; we set span status explicitly below.
+        record_exception=False,
+        set_status_on_exception=False,
     ) as span:
         try:
             await handler.start()
@@ -544,7 +597,12 @@ async def _process_voice_live_messages(
 
             span.set_status(Status(StatusCode.OK))
 
-        except WebSocketDisconnect:
+        except WebSocketDisconnect as disc:
+            # Normal client-initiated close (code 1000) or any WS teardown. Mark
+            # the span OK, annotate the close code, and re-raise so the outer
+            # handler records the disconnect via _log_disconnect (info/warning).
+            span.set_attribute("websocket.close_code", disc.code)
+            span.set_status(Status(StatusCode.OK))
             raise
         except Exception as exc:
             logger.error("[%s] Voice Live error: %s", session_id, exc, exc_info=True)

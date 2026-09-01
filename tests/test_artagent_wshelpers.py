@@ -43,6 +43,52 @@ def test_make_envelope_family_shapes_payloads():
     assert event["payload"]["data"]["foo"] == "bar"
 
 
+def test_every_envelope_carries_a_unique_id():
+    """Clients dedupe on this id when a session fans out to several sockets."""
+    session_id = "sess-1"
+    built = [
+        envelopes.make_envelope(
+            etype="event",
+            sender="Tester",
+            payload={"message": "hello"},
+            topic="session",
+            session_id=session_id,
+        ),
+        envelopes.make_status_envelope("ready", session_id=session_id),
+        envelopes.make_assistant_envelope("hi", session_id=session_id),
+        envelopes.make_assistant_streaming_envelope("hi", session_id=session_id),
+        envelopes.make_event_envelope("custom", {"foo": "bar"}, session_id=session_id),
+        envelopes.make_error_envelope("boom", session_id=session_id),
+    ]
+
+    for envelope in built:
+        assert isinstance(envelope["id"], str)
+        assert envelope["id"]
+
+    ids = [envelope["id"] for envelope in built]
+    assert len(set(ids)) == len(ids)
+
+
+def test_ensure_envelope_id_is_idempotent():
+    """One id per logical emission, even for envelopes built as ad-hoc dicts."""
+    made = envelopes.make_envelope(
+        etype="event", sender="Tester", payload={}, topic="session"
+    )
+    original = made["id"]
+    assert envelopes.ensure_envelope_id(made) == original
+    assert made["id"] == original
+
+    ad_hoc: dict = {"type": "event", "sender": "Tester", "payload": {}}
+    assigned = envelopes.ensure_envelope_id(ad_hoc)
+    assert ad_hoc["id"] == assigned
+    assert envelopes.ensure_envelope_id(ad_hoc) == assigned
+
+    for blank in ({"id": None}, {"id": ""}, {"id": 42}):
+        replaced = envelopes.ensure_envelope_id(blank)
+        assert isinstance(replaced, str) and replaced
+        assert blank["id"] == replaced
+
+
 def test_route_turn_signature_is_stable():
     signature = inspect.signature(orchestrator.route_turn)
     assert "cm" in signature.parameters

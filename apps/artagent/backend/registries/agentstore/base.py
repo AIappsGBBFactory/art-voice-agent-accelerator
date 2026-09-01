@@ -161,6 +161,22 @@ class ModelConfig:
         family = self.model_family or self._detect_model_family()
         return family in ("o1", "o3", "o4")
 
+    @property
+    def supports_reasoning_effort(self) -> bool:
+        """True when the deployment accepts a ``reasoning_effort`` value.
+
+        Broader than :attr:`is_reasoning_model`: the o-series are reasoning-only
+        models, but the gpt-5 family also accepts ``reasoning_effort`` — including
+        ``"none"``/``"minimal"`` to suppress reasoning, which is what a real-time
+        voice agent wants since reasoning latency is paid on every turn.
+
+        Without this, ``reasoning_effort`` set on a gpt-5 agent was accepted by the
+        schema and then silently dropped when building the request, so there was no
+        way to pin "no reasoning" for the models Voice Live BYOM runs on.
+        """
+        family = self.model_family or self._detect_model_family()
+        return family in ("o1", "o3", "o4", "gpt-5")
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ModelConfig:
         """Create ModelConfig from dict."""
@@ -333,6 +349,115 @@ class VoiceLiveBYOMConfig:
         if not self.mode:
             return None
         return {"profile": self.mode}
+
+
+# Models the Voice Live service can host itself — i.e. valid to run with BYOM OFF.
+# A model NOT in this set (o3-mini, o1, o3, plain gpt-5-chat, or any custom /
+# fine-tuned deployment) can ONLY run via a BYOM profile: selecting it for
+# VoiceLive without BYOM lets the socket open but the model never responds, so the
+# agent goes silent until the ~900s idle timeout. This set is the single-source
+# invariant used to catch that (previously silent) misconfiguration.
+# Keep in sync with the frontend MANAGED_VOICELIVE_MODELS (foundryModels.js) and:
+# https://learn.microsoft.com/azure/ai-services/speech-service/voice-live#supported-models-and-regions
+MANAGED_VOICELIVE_MODELS = frozenset(
+    {
+        # Native speech-to-speech (realtime).
+        "gpt-realtime-1.5",
+        "gpt-realtime",
+        "gpt-realtime-mini",
+        "phi4-mm-realtime",
+        "azure-realtime",
+        # Cascaded (Azure STT -> text LLM -> Azure TTS).
+        "gpt-5.4",
+        "gpt-5.3-chat",
+        "gpt-5.2",
+        "gpt-5.2-chat",
+        "gpt-5.1",
+        "gpt-5.1-chat",
+        "gpt-5",
+        "gpt-5-mini",
+        "gpt-5-nano",
+        "gpt-4.1",
+        "gpt-4.1-mini",
+        "gpt-4.1-nano",
+        "gpt-4o",
+        "gpt-4o-mini",
+        "phi4-mini",
+    }
+)
+
+_MANAGED_VOICELIVE_MODELS_LOWER = frozenset(m.lower() for m in MANAGED_VOICELIVE_MODELS)
+
+
+def is_managed_voicelive_model(deployment_id: str | None) -> bool:
+    """True when ``deployment_id`` is a model managed Voice Live can host itself.
+
+    Managed Voice Live can only serve the models in ``MANAGED_VOICELIVE_MODELS``.
+    Any other deployment (o3-mini, o1, a fine-tuned/custom name, ...) REQUIRES a
+    BYOM profile — connecting it as managed makes the agent go silent. An empty id
+    is treated as managed (nothing to validate; the runtime applies its default).
+    """
+    if not deployment_id:
+        return True
+    return deployment_id.strip().lower() in _MANAGED_VOICELIVE_MODELS_LOWER
+
+
+# A BYOM profile selects the wire protocol Voice Live drives your deployment with,
+# so the deployment has to actually expose that API:
+#   byom-azure-openai-realtime        -> /realtime         (gpt-realtime, phi4-mm-realtime, ...)
+#   byom-azure-openai-chat-completion -> /chat/completions  (gpt-4o, gpt-5.x, o3-mini, ...)
+# Pairing a profile with a deployment that speaks the *other* protocol is a second
+# silent-failure mode, distinct from the managed-model one above: the socket opens,
+# the session contract validates, and STT keeps transcribing, but the LLM leg never
+# answers — so the agent is mute until the ~900s idle timeout. Observed in App
+# Insights: byom-azure-openai-chat-completion pinned to gpt-realtime produced
+# ``ttft=N/A ttfb=N/A synth=N/A`` on every turn while the same agent without the
+# profile answered in ~1.1s.
+BYOM_REALTIME_MODE = "byom-azure-openai-realtime"
+BYOM_CHAT_COMPLETION_MODE = "byom-azure-openai-chat-completion"
+
+
+def is_realtime_voicelive_model(deployment_id: str | None) -> bool:
+    """True when ``deployment_id`` names a realtime (speech-to-speech) deployment.
+
+    Mirrors the frontend ``classifyVoiceLiveArch`` heuristic: Azure realtime model
+    and deployment names carry ``realtime`` (gpt-realtime, gpt-realtime-mini,
+    phi4-mm-realtime, azure-realtime).
+    """
+    return "realtime" in (deployment_id or "").lower()
+
+
+def byom_profile_model_conflict(
+    mode: str | None, deployment_id: str | None
+) -> str | None:
+    """Explain why BYOM profile ``mode`` cannot drive ``deployment_id``.
+
+    Returns ``None`` when the pairing is valid (or not decidable). Only the two
+    Azure OpenAI profiles are checked — ``byom-foundry-anthropic-messages`` points
+    at arbitrarily named Foundry deployments, so there is no reliable signal to
+    validate it against and we must not guess.
+    """
+    if not mode or not deployment_id:
+        return None
+
+    realtime = is_realtime_voicelive_model(deployment_id)
+    if mode == BYOM_CHAT_COMPLETION_MODE and realtime:
+        return (
+            f"BYOM profile '{mode}' drives the deployment over the chat completions "
+            f"API, but '{deployment_id}' is a realtime (speech-to-speech) deployment "
+            "and does not serve /chat/completions. The session connects and STT keeps "
+            "working, but the model never responds. Use a chat deployment (gpt-4o, "
+            f"gpt-5.x, ...) or switch the profile to '{BYOM_REALTIME_MODE}'."
+        )
+    if mode == BYOM_REALTIME_MODE and not realtime:
+        return (
+            f"BYOM profile '{mode}' drives the deployment over the realtime API, but "
+            f"'{deployment_id}' is not a realtime deployment and does not serve "
+            "/realtime. The session connects but the model never responds. Use a "
+            "realtime deployment (gpt-realtime, ...) or switch the profile to "
+            f"'{BYOM_CHAT_COMPLETION_MODE}'."
+        )
+    return None
 
 
 @dataclass
@@ -1111,6 +1236,29 @@ class UnifiedAgent:
                 self.name,
                 getattr(voice_payload, "name", None) if voice_payload else None,
             )
+
+            # Voice is the field most likely to be silently dropped (SDK missing,
+            # empty name, or a type the builder doesn't map), and the symptom —
+            # "the TTS voice I picked isn't used" — is otherwise indistinguishable
+            # from the service ignoring it. Log the exact request so it can be
+            # diffed against the session.updated echo.
+            if voice_payload is None:
+                logger.warning(
+                    "[%s] voice_not_applied | configured=%r type=%r — no voice will be "
+                    "sent on session.update, the service default will be used",
+                    self.name,
+                    getattr(self.voice, "name", None),
+                    getattr(self.voice, "type", None),
+                )
+            else:
+                logger.info(
+                    "[%s] voice_requested | name=%s type=%s style=%s rate=%s",
+                    self.name,
+                    getattr(voice_payload, "name", None),
+                    getattr(voice_payload, "type", None),
+                    getattr(voice_payload, "style", None),
+                    getattr(voice_payload, "rate", None),
+                )
 
             # Build transcription settings
             transcription_cfg = self.session.get("input_audio_transcription_settings") or {}

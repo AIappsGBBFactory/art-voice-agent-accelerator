@@ -227,7 +227,11 @@ class TestSpeechSDKCallbacks:
         recognizer.on_partial("hello there", "en-US", "spk-1")
 
         bridge.schedule_barge_in.assert_called_once_with(thread.barge_in_handler)
-        on_partial_transcript.assert_called_once_with("hello there", "en-US", "spk-1")
+        on_partial_transcript.assert_called_once()
+        text, language, speaker, turn_id, sequence = on_partial_transcript.call_args.args
+        assert (text, language, speaker) == ("hello there", "en-US", "spk-1")
+        assert turn_id
+        assert sequence == 1
 
     def test_partial_ignored_during_turn_guard(self):
         """Trailing partials are suppressed while the pre-speech guard is armed."""
@@ -262,6 +266,8 @@ class TestSpeechSDKCallbacks:
         event = queue.get_nowait()
         assert event.event_type == SpeechEventType.FINAL
         assert event.text == "hello there"
+        assert event.turn_id
+        assert event.sequence == 1
         assert event.recognition_end_perf is not None
         # Utterance start is reset for the next utterance.
         assert thread._utterance_start_ts is None

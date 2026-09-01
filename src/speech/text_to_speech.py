@@ -614,6 +614,12 @@ class SpeechSynthesizer:
         self.tracer = None
         self._session_span = None
 
+        # ``cancellation_details.error_details`` from the most recent failed
+        # synthesis. The Speech SDK does not raise for a bad voice name or a bad
+        # key — it cancels and stashes the real cause here — so callers read this
+        # to classify and surface the failure instead of reporting silence.
+        self.last_synthesis_error: str | None = None
+
         if self.enable_tracing:
             try:
                 # Use same pattern as speech_recognizer
@@ -1483,6 +1489,11 @@ class SpeechSynthesizer:
                         logger.error("Failed to refresh authentication for speech synthesis")
 
                 error_msg = f"Speech synthesis failed: {result.reason}"
+                cancellation = getattr(result, "cancellation_details", None)
+                detail_text = getattr(cancellation, "error_details", "") if cancellation else ""
+                self.last_synthesis_error = detail_text or str(result.reason)
+                if detail_text:
+                    error_msg = f"{error_msg} | {detail_text}"
                 logger.error(error_msg)
 
                 if self._session_span:
@@ -1936,6 +1947,7 @@ class SpeechSynthesizer:
         retry_delay = 0.1
         last_result = None
         last_error_details = ""
+        self.last_synthesis_error = None
 
         for attempt in range(max_attempts):
             synthesizer = speechsdk.SpeechSynthesizer(
@@ -1970,6 +1982,7 @@ class SpeechSynthesizer:
                 cancellation = result.cancellation_details
                 error_details = getattr(cancellation, "error_details", "")
                 last_error_details = error_details or "canceled"
+                self.last_synthesis_error = last_error_details
                 logger.warning(
                     "PCM synthesis canceled (attempt=%s): reason=%s error=%s (voice=%s, text_preview=%s)",
                     attempt + 1,
@@ -1989,6 +2002,7 @@ class SpeechSynthesizer:
                     continue
             else:
                 last_error_details = str(result.reason)
+                self.last_synthesis_error = last_error_details
                 logger.warning(
                     "PCM synthesis returned reason=%s (attempt=%s, voice=%s)",
                     result.reason,
@@ -2003,8 +2017,13 @@ class SpeechSynthesizer:
             break
 
         if last_result and last_result.reason:
-            raise RuntimeError(f"TTS failed: {last_result.reason}")
-        raise RuntimeError(f"TTS failed: {last_error_details or 'unknown error'}")
+            raise RuntimeError(
+                f"TTS failed for voice '{voice}': "
+                f"{last_error_details or last_result.reason} (reason={last_result.reason})"
+            )
+        raise RuntimeError(
+            f"TTS failed for voice '{voice}': {last_error_details or 'unknown error'}"
+        )
 
     def synthesize_to_pcm_stream(
         self,
@@ -2126,6 +2145,9 @@ class SpeechSynthesizer:
                     f"Streaming TTS canceled: reason="
                     f"{getattr(details, 'reason', 'unknown')} error={error_details or 'none'}"
                 )
+                # Record the real cause so callers can classify and surface it
+                # instead of reporting a bare "no audio".
+                self.last_synthesis_error = error_details or error_msg
                 if produced:
                     # Partial audio already streamed; log and stop rather than raise
                     # so the turn degrades gracefully instead of erroring mid-utterance.

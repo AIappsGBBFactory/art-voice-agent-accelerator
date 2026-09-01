@@ -85,7 +85,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 
 import { API_BASE_URL } from '../config/constants.js';
 import logger from '../utils/logger.js';
-import { fetchFoundryModels, deriveModelOptions, MANAGED_VOICELIVE_OPTIONS } from '../utils/foundryModels.js';
+import { fetchFoundryModels, fetchVoiceLiveModels, deriveModelOptions, MANAGED_VOICELIVE_OPTIONS, isManagedVoiceLiveModel } from '../utils/foundryModels.js';
 import { OrchestrationDiagramModal } from './OrchestrationDiagram.jsx';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -239,6 +239,16 @@ const BYOM_MODES = [
 const ALL_VOICELIVE_PRESET_IDS = new Set(
   [...VOICELIVE_MODEL_PRESETS, ...REGION_GATED_VOICELIVE_PRESETS].map((p) => p.id),
 );
+
+// Display labels for the TTS voice categories returned by
+// GET /api/v1/agent-builder/voices. The backend sorts voices by category (HD
+// first), which MUI's Autocomplete groupBy relies on.
+const VOICE_CATEGORY_LABELS = {
+  hd: 'HD (high definition)',
+  turbo: 'Turbo (lowest latency)',
+  standard: 'Standard neural',
+  mai: 'MAI-Voice-2 (preview)',
+};
 
 // Classify a VoiceLive model by its audio architecture. This is the #1 confusion
 // point: within VoiceLive, the chosen model — not a separate toggle — decides whether
@@ -1092,6 +1102,8 @@ export default function AgentBuilderContent({
   const [audioSubTab, setAudioSubTab] = useState('cascade');
   // Interactive "how orchestration works" diagram dialog.
   const [showOrchestrationDiagram, setShowOrchestrationDiagram] = useState(false);
+  // Stable identity so the (memoized) diagram modal doesn't re-render with the builder.
+  const closeOrchestrationDiagram = useCallback(() => setShowOrchestrationDiagram(false), []);
   const [isEditMode, setIsEditMode] = useState(editMode);
   // Guard so the live-agent deep-link only auto-applies once per open.
   const liveEditAppliedRef = useRef(false);
@@ -1105,6 +1117,10 @@ export default function AgentBuilderContent({
   // Available options from backend
   const [availableTools, setAvailableTools] = useState([]);
   const [availableVoices, setAvailableVoices] = useState([]);
+  const hdVoiceCount = useMemo(
+    () => availableVoices.filter((v) => v.is_hd).length,
+    [availableVoices],
+  );
   const [availableTemplates, setAvailableTemplates] = useState([]);
   // Set of lowercased deployment_ids actually deployed in the connected Azure
   // region (from /models). null = not yet loaded. Used to region-gate the
@@ -1113,6 +1129,10 @@ export default function AgentBuilderContent({
   // Live model deployments derived into per-mode option lists ({cascade,
   // voicelive}). null = not loaded / query failed → fall back to static presets.
   const [liveModelOptions, setLiveModelOptions] = useState(null);
+  // Deployments on the Voice Live (AVL) resource — usually a SEPARATE Azure
+  // account from the primary Foundry one. VoiceLive/BYOM can only serve what's
+  // deployed here. { options, resourceName, resourceFallback } | null.
+  const [voiceLiveModelInfo, setVoiceLiveModelInfo] = useState(null);
   // Region-verification metadata for the TTS voice list (from /voices).
   const [voicesRegionVerified, setVoicesRegionVerified] = useState(null);
   const [detailAgent, setDetailAgent] = useState(null);
@@ -1239,29 +1259,38 @@ export default function AgentBuilderContent({
     return live && live.length ? live : CASCADE_MODEL_PRESETS;
   }, [liveModelOptions]);
 
-  // VoiceLive model dropdown options — BYOM-aware:
+  // VoiceLive model dropdown options — BYOM-aware, and ALWAYS sourced from the
+  // Voice Live (AVL) resource rather than the primary Foundry one:
   //   • BYOM OFF (managed VoiceLive): the curated managed VoiceLive models
   //     (pricing tiers). Managed VoiceLive runs VoiceLive-hosted models, NOT
-  //     your resource deployments.
-  //   • BYOM ON: your LIVE deployments from the connected Foundry resource.
+  //     your resource deployments — those that are also deployed on the AVL
+  //     resource are marked so you can see what's actually provisioned.
+  //   • BYOM ON: the deployments on the AVL resource VoiceLive connects to.
+  //     Offering the primary Foundry resource's deployments here yields a
+  //     session that connects but never responds.
   // A saved value not in the list is appended so a selection is never lost.
   const voiceLiveModelPresets = useMemo(() => {
     const savedId = (config.voicelive_model?.deployment_id || '').trim();
     const byomOn = Boolean(config.byom?.mode);
+    const deployed = voiceLiveModelInfo?.options || [];
     if (byomOn) {
-      const live = liveModelOptions?.voicelive;
-      const base = live && live.length ? live : MANAGED_VOICELIVE_OPTIONS;
+      const base = deployed.length ? deployed : MANAGED_VOICELIVE_OPTIONS;
       if (savedId && !base.some((o) => o.id === savedId)) {
         return [...base, { id: savedId, label: savedId }];
       }
       return base;
     }
-    // Managed VoiceLive → curated managed model list (by tier).
-    if (savedId && !MANAGED_VOICELIVE_OPTIONS.some((o) => o.id === savedId)) {
-      return [...MANAGED_VOICELIVE_OPTIONS, { id: savedId, label: savedId }];
+    // Managed VoiceLive → curated managed model list (by tier), annotated with
+    // which entries the Voice Live resource also has deployed.
+    const deployedIds = new Set(deployed.map((o) => o.id));
+    const managed = MANAGED_VOICELIVE_OPTIONS.map((o) =>
+      deployedIds.has(o.id) ? { ...o, label: `${o.label} · deployed` } : o,
+    );
+    if (savedId && !managed.some((o) => o.id === savedId)) {
+      return [...managed, { id: savedId, label: savedId }];
     }
-    return MANAGED_VOICELIVE_OPTIONS;
-  }, [liveModelOptions, config.byom?.mode, config.voicelive_model?.deployment_id]);
+    return managed;
+  }, [voiceLiveModelInfo, config.byom?.mode, config.voicelive_model?.deployment_id]);
 
   // Known (selectable) ids per mode = the rendered option list ∪ the static
   // presets. Used to decide whether a SAVED deployment is a known option vs a
@@ -1358,6 +1387,8 @@ export default function AgentBuilderContent({
         setVoicesRegionVerified({
           verified: Boolean(data.verified_against_region),
           source: data.source || 'static-catalog',
+          hdFromCatalog: Boolean(data.hd_from_catalog),
+          notes: data.notes || [],
         });
       }
     } catch (err) {
@@ -1366,6 +1397,8 @@ export default function AgentBuilderContent({
   }, []);
 
   const fetchAvailableModels = useCallback(async () => {
+    // VoiceLive reads its own resource (AZURE_VOICELIVE_ENDPOINT); never throws.
+    fetchVoiceLiveModels().then(setVoiceLiveModelInfo);
     const live = await fetchFoundryModels();
     if (!live) {
       // Query failed or returned nothing — keep static presets as the fallback.
@@ -1973,9 +2006,26 @@ export default function AgentBuilderContent({
     setSaving(true);
     setError(null);
 
+    // Guardrail: a non-managed Voice Live model (o3-mini, o1, custom/fine-tuned,
+    // etc.) can ONLY run via a BYOM profile. Saving it with BYOM off persists an
+    // agent that connects to managed Voice Live, which can't serve the model —
+    // the agent then goes silent and the client reconnect-loops. Block it here
+    // with a clear fix instead of shipping a broken override.
+    const vlModelId = (config.voicelive_model?.deployment_id || '').trim();
+    const byomEnabled = Boolean(config.byom?.mode);
+    if (vlModelId && !byomEnabled && !isManagedVoiceLiveModel(vlModelId)) {
+      setError(
+        `"${vlModelId}" isn't a managed Voice Live model, so it needs a BYOM profile. ` +
+          'Turn on "Bring Your Own Model (BYOM)" below (e.g. Azure OpenAI / Foundry ' +
+          'chat-completion) and re-save, or pick a managed Voice Live model. Saving it ' +
+          'with BYOM off makes the agent go silent.',
+      );
+      setSaving(false);
+      return;
+    }
+
     try {
-      const cascadeApiVersion = config.cascade_model?.api_version || 'v1';
-      const payload = {
+      const cascadeApiVersion = config.cascade_model?.api_version || 'v1';      const payload = {
         name: config.name,
         description: config.description,
         greeting: draftGreeting,
@@ -3066,7 +3116,7 @@ export default function AgentBuilderContent({
                 {/* Interactive "how orchestration works" diagram — same modal as Quick Tune */}
                 <OrchestrationDiagramModal
                   open={showOrchestrationDiagram}
-                  onClose={() => setShowOrchestrationDiagram(false)}
+                  onClose={closeOrchestrationDiagram}
                   initialMode={audioSubTab}
                 />
 
@@ -3085,8 +3135,17 @@ export default function AgentBuilderContent({
                           label={
                             voicesRegionVerified.verified
                               ? `Region-verified (${availableVoices.length})`
-                              : 'Catalog (region not verified)'
+                              : `Catalog (${availableVoices.length}, region not verified)`
                           }
+                          sx={{ height: 20, fontSize: '11px' }}
+                        />
+                      )}
+                      {hdVoiceCount > 0 && (
+                        <Chip
+                          size="small"
+                          variant="outlined"
+                          color="secondary"
+                          label={`${hdVoiceCount} HD`}
                           sx={{ height: 20, fontSize: '11px' }}
                         />
                       )}
@@ -3095,9 +3154,43 @@ export default function AgentBuilderContent({
                     {!isCustomVoice ? (
                       <Autocomplete
                         options={availableVoices}
+                        groupBy={(opt) => VOICE_CATEGORY_LABELS[opt.category] || opt.category}
                         getOptionLabel={(opt) => opt.display_name || opt.name}
                         value={availableVoices.find((v) => v.name === config.voice?.name) || null}
                         onChange={(e, v) => v && handleNestedConfigChange('voice', 'name', v.name)}
+                        renderOption={(props, option) => {
+                          const { key, ...restProps } = props;
+                          return (
+                            <Box component="li" {...restProps} key={key}>
+                              <Stack sx={{ minWidth: 0, flex: 1 }}>
+                                <Stack direction="row" spacing={0.75} alignItems="center">
+                                  <Typography variant="body2" noWrap>
+                                    {option.display_name || option.name}
+                                  </Typography>
+                                  {option.is_hd && (
+                                    <Chip
+                                      size="small"
+                                      label="HD"
+                                      color="secondary"
+                                      sx={{ height: 16, fontSize: '10px' }}
+                                    />
+                                  )}
+                                  {option.region_verified === false && (
+                                    <Chip
+                                      size="small"
+                                      variant="outlined"
+                                      label="unverified"
+                                      sx={{ height: 16, fontSize: '10px' }}
+                                    />
+                                  )}
+                                </Stack>
+                                <Typography variant="caption" color="text.secondary" noWrap>
+                                  {option.name}
+                                </Typography>
+                              </Stack>
+                            </Box>
+                          );
+                        }}
                         renderInput={(params) => <TextField {...params} label="Voice" />}
                       />
                     ) : (
@@ -3569,7 +3662,7 @@ export default function AgentBuilderContent({
                         size="small"
                         helperText={
                           config.byom?.mode
-                            ? 'BYOM: your deployments on the connected Foundry resource'
+                            ? `BYOM: deployments on the Voice Live resource${voiceLiveModelInfo?.resourceName ? ` (${voiceLiveModelInfo.resourceName})` : ''}`
                             : 'Managed Voice Live models (by pricing tier). Turn on BYOM to use your own deployments.'
                         }
                         SelectProps={{ native: true }}

@@ -322,3 +322,87 @@ async def test_cascade_announced_handoff_success_state() -> None:
     assert result.agent_name == "Advisor"
     assert result.response_text == "Happy to help with your policy."
     assert adapter.handoff_service.last_greet_on_switch is True
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SCENARIO PROPAGATION INTO THE VOICELIVE ORCHESTRATOR
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _banking_registry():
+    from apps.artagent.backend.registries.agentstore.loader import (
+        build_handoff_map,
+        discover_agents,
+    )
+
+    agents = discover_agents()
+    return agents, build_handoff_map(agents)
+
+
+def test_seeded_scenario_drives_declarative_handoff_routing():
+    """A seeded config must give the orchestrator real scenario-based routing.
+
+    Without seeding, ``_orchestrator_config`` re-resolves with no scenario name and
+    returns ``scenario=None``, so ``HandoffService`` falls back to the global
+    handoff map and the scenario's declarative ``type``/``share_context`` never
+    apply. This is what a Quick Tune reconnect used to land in.
+    """
+    from apps.artagent.backend.voice.shared import (
+        build_effective_registry,
+        resolve_orchestrator_config,
+    )
+
+    base_agents, app_state_handoff_map = _banking_registry()
+    config = resolve_orchestrator_config(
+        session_id="handoff-states-session", scenario_name="banking"
+    )
+    agents, start_agent, handoff_map = build_effective_registry(
+        config,
+        base_agents=base_agents,
+        app_state_handoff_map=app_state_handoff_map,
+    )
+
+    orchestrator = LiveOrchestrator(
+        conn=DummyVoiceLiveConnection(),
+        agents=agents,
+        handoff_map=handoff_map,
+        start_agent=start_agent,
+        orchestrator_config=config,
+    )
+
+    service = orchestrator.handoff_service
+    assert service.scenario_name == "banking"
+    assert service._get_scenario() is config.scenario
+
+    resolution = service.resolve_handoff(
+        tool_name="handoff_card_recommendation",
+        tool_args={"reason": "wants a travel card"},
+        source_agent="BankingConcierge",
+        current_system_vars={},
+    )
+
+    assert resolution.success
+    assert resolution.target_agent == "CardRecommendation"
+    # banking/orchestration.yaml declares this edge as discrete + share_context.
+    assert resolution.is_discrete
+    assert resolution.share_context
+
+    orchestrator.cleanup()
+
+
+def test_unseeded_orchestrator_loses_the_scenario(monkeypatch):
+    """Regression guard for the bug: no seed means no scenario, hence no routing."""
+    monkeypatch.delenv("AGENT_SCENARIO", raising=False)
+
+    orchestrator = LiveOrchestrator(
+        conn=DummyVoiceLiveConnection(),
+        agents={"Concierge": DummyVoiceLiveAgent("Concierge")},
+        handoff_map={},
+        start_agent="Concierge",
+    )
+
+    # No scenario name is available to the lazy fallback, so it cannot find one.
+    assert orchestrator._orchestrator_config.scenario is None
+    assert orchestrator.handoff_service.scenario_name is None
+
+    orchestrator.cleanup()

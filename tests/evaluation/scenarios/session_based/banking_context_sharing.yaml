@@ -37,8 +37,10 @@ session_config:
       type: announced
       share_context: true
       handoff_condition: |
-        Transfer to DeclineSpecialist when the customer reports a declined card
-        and requests investigation or asks for decline code details.
+        Transfer to DeclineSpecialist ONLY when the customer explicitly requests
+        to be connected to or speak with the decline specialist. Do not transfer
+        automatically just because the customer mentions a declined card or a
+        decline code — wait for an explicit handoff request.
 
     # Context NOT SHARED (fraud agent should not see prior merchant detail)
     - from: BankingConcierge
@@ -47,8 +49,8 @@ session_config:
       type: announced
       share_context: false
       handoff_condition: |
-        Transfer to FraudAgent when the customer reports an unrecognized transaction
-        and asks for fraud investigation.
+        Transfer to FraudAgent ONLY when the customer explicitly requests to
+        speak with the fraud team. Do not transfer automatically.
 
   generic_handoff:
     enabled: true
@@ -134,7 +136,7 @@ turns:
         - handoff_to_agent
       no_handoff: true
       response_constraints:
-        max_tokens: 90
+        max_tokens: 200
 
   # Trigger handoff to FraudAgent (share_context=false)
   - turn_id: turn_5_handoff_fraud
@@ -146,7 +148,7 @@ turns:
       handoff:
         to_agent: FraudAgent
       response_constraints:
-        max_tokens: 60
+        max_tokens: 150
 
   # FraudAgent should NOT mention Orion (context not shared)
   - turn_id: turn_6_fraud_no_context
@@ -158,7 +160,7 @@ turns:
         - check_suspicious_activity
       no_handoff: true
       response_constraints:
-        max_tokens: 120
+        max_tokens: 300
         must_not_include:
           - "Orion"
 

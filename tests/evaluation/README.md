@@ -49,6 +49,86 @@ pytest tests/evaluation/test_scenarios.py -v
 pytest tests/evaluation/test_scenarios.py -k "banking" -v
 ```
 
+## Real Voice WebSocket E2E and Performance Runs
+
+The scenario runner above exercises the orchestrator in-process. It is useful
+for deterministic tool, handoff, response, and server-side latency assertions,
+but it does not measure the browser audio transport. The live driver exercises
+the active `/api/v1/browser/conversation` WebSocket with production-format PCM
+frames and records client-observed:
+
+- EOS-to-first response frame
+- EOS-to-first audio frame
+- EOS-to-completed-turn wall time
+- WebSocket connect time
+- W3C trace correlation and the generated `eval_live_...` session ID
+
+Server-only KPIs such as TTFT and TTS first-byte remain authoritative in the
+`voice.turn.N.total` spans. The live driver reports these expectations as
+unmeasured rather than incorrectly treating client first-audio time as TTFT.
+
+### Local reproduction
+
+Start the backend on port 8010 with the normal local environment, then generate
+input audio once and run both browser orchestration modes:
+
+```bash
+make start_backend
+make eval-live-synth
+make eval-live EVAL_LIVE_URL=http://localhost:8010
+```
+
+`eval-live-synth` requires Azure Speech credentials or the configured App
+Configuration bootstrap. The measured `eval-live` command uses only the cached
+PCM files, so it does not include Speech synthesis time. Results are written to
+`runs/live-evals/`, including one JSON file per mode and a `matrix_summary.json`
+comparison. The cache and run output are intentionally ignored by Git.
+
+Useful overrides:
+
+```bash
+make eval-live \
+  EVAL_LIVE_SCENARIO=tests/evaluation/scenarios/session_based/banking_context_sharing.yaml \
+  EVAL_LIVE_MODES=realtime,voice_live \
+  EVAL_LIVE_REPEAT=3 \
+  EVAL_LIVE_URL=http://localhost:8010
+```
+
+For a deployed endpoint, set `EVAL_LIVE_URL` to its `https://` base URL; the
+driver converts it to `wss://`. Use `--require-audio-cache` (already enabled by
+the Make target) to prevent an accidental measured run from synthesizing audio
+on demand.
+
+The CI workflow runs the same driver for both `realtime` (Speech Cascade) and
+`voice_live`, uploads the raw JSON artifacts, and verifies the corresponding
+`eval_live_` sessions in Application Insights. A live driver pass does not
+replace functional assertions: the in-process scenario job remains responsible
+for tools, handoffs, response constraints, and seeded demo-user behavior.
+
+To verify a local run's server-side telemetry, copy the `session_id` from its
+JSON result and run this query in the connected Application Insights resource:
+
+```kusto
+let live_session = "eval_live_realtime_latency_first_audio_<suffix>";
+union isfuzzy=true dependencies, requests, traces
+| where timestamp > ago(1h)
+| extend p = parse_json(tostring(customDimensions))
+| where tostring(p["session.id"]) == live_session
+| where name startswith "voice.turn."
+| project timestamp, name,
+  turn_wall_ms=todouble(p["turn.wall_ms"]),
+  ttft_ms=todouble(p["turn.ttft_ms"]),
+  ttfb_ms=todouble(p["turn.ttfb_ms"]),
+  model=tostring(p["turn.model"]),
+  transport=tostring(p["turn.transport_type"])
+| order by timestamp asc
+```
+
+The local JSON is the client-side truth for first response/audio and turn wall
+time; this query is the server-side truth for TTFT, TTFB, model, and transport.
+Keep both when diagnosing a regression instead of comparing client first audio
+directly with the server-only TTS first-chunk budget.
+
 ## Package Structure
 
 ```text

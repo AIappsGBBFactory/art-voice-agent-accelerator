@@ -32,6 +32,7 @@ from apps.artagent.backend.registries.agentstore.loader import build_agent_summa
 from apps.artagent.backend.src.services.acs.acs_helpers import play_response_with_queue
 from apps.artagent.backend.src.services.speech_services import SpeechSynthesizer
 from apps.artagent.backend.src.ws_helpers.envelopes import (
+    ensure_envelope_id,
     make_envelope,
     make_event_envelope,
     make_status_envelope,
@@ -120,6 +121,7 @@ async def send_user_transcript(
     turn_id: str | None = None,
     active_agent: str | None = None,
     active_agent_label: str | None = None,
+    sequence: int | None = None,
 ) -> None:
     """Emit a user transcript using the standard session envelope.
 
@@ -135,10 +137,15 @@ async def send_user_transcript(
         "message": text,
         "content": text,
         "streaming": False,
+        "streaming_type": "stt_final",
+        "content_mode": "final_turn",
+        "is_final": True,
         "status": "completed",
         "turn_id": turn_id,
         "response_id": turn_id,
     }
+    if sequence is not None:
+        payload_data["sequence"] = sequence
     if active_agent:
         payload_data["active_agent"] = active_agent
         payload_data["active_agent_label"] = active_agent_label
@@ -168,8 +175,11 @@ async def send_user_partial_transcript(
     language: str | None = None,
     speaker_id: str | None = None,
     session_id: str | None = None,
+    turn_id: str | None = None,
+    sequence: int | None = None,
+    source: str = "cascade",
 ) -> None:
-    """Emit partial user speech updates for ACS parity with realtime."""
+    """Emit a cumulative partial user transcript for one canonical turn."""
     payload_session_id = session_id or getattr(ws.state, "session_id", None)
 
     partial_payload = {
@@ -179,8 +189,14 @@ async def send_user_partial_transcript(
         "language": language,
         "speaker_id": speaker_id,
         "session_id": payload_session_id,
+        "turn_id": turn_id,
+        "response_id": turn_id,
+        "content_mode": "snapshot",
+        "source": source,
         "is_final": False,
     }
+    if sequence is not None:
+        partial_payload["sequence"] = sequence
 
     envelope = make_event_envelope(
         event_type="stt_partial",
@@ -307,6 +323,11 @@ async def send_session_envelope(
     resolved_conn_id = conn_id or getattr(ws.state, "conn_id", None)
     resolved_session_id = session_id or getattr(ws.state, "session_id", None)
 
+    # One id per logical emission, assigned before any fan-out, so clients can
+    # discard the duplicate copies they receive when they hold more than one
+    # connection for the same session.
+    ensure_envelope_id(envelope)
+
     if manager and resolved_session_id and broadcast_only:
         try:
             sent = await broadcast_session_envelope(
@@ -396,6 +417,7 @@ async def send_session_envelope(
     if _ws_is_connected(ws):
         try:
             await ws.send_json(envelope)
+            return True
         except Exception as exc:  # noqa: BLE001
             logger.error(
                 "Final websocket fallback failed",
@@ -565,12 +587,10 @@ async def send_tts_audio(
             try:
                 if executor:
                     return await asyncio.wait_for(
-                        loop.run_in_executor(executor, synth_partial),
-                        timeout=synthesis_timeout
+                        loop.run_in_executor(executor, synth_partial), timeout=synthesis_timeout
                     )
                 return await asyncio.wait_for(
-                    loop.run_in_executor(None, synth_partial),
-                    timeout=synthesis_timeout
+                    loop.run_in_executor(None, synth_partial), timeout=synthesis_timeout
                 )
             except asyncio.TimeoutError:
                 logger.error(
@@ -829,7 +849,7 @@ async def send_response_to_acs(
                     style,
                     eff_rate,
                 ),
-                timeout=synthesis_timeout
+                timeout=synthesis_timeout,
             )
         except asyncio.TimeoutError:
             logger.error(
@@ -857,7 +877,7 @@ async def send_response_to_acs(
                         "",
                         "",
                     ),
-                    timeout=synthesis_timeout
+                    timeout=synthesis_timeout,
                 )
             except asyncio.TimeoutError:
                 logger.error(
@@ -1183,6 +1203,8 @@ async def broadcast_session_envelope(
     target_session = session_id or envelope.get("session_id")
     if not target_session:
         raise ValueError("session_id must be provided for envelope broadcasts")
+
+    ensure_envelope_id(envelope)
 
     sent_count = await app_state.conn_manager.broadcast_session(
         target_session,

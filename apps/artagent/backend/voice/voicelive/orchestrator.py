@@ -37,6 +37,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import time
 from collections import deque
@@ -50,6 +51,12 @@ from apps.artagent.backend.registries.toolstore import (
 from apps.artagent.backend.src.services.session_loader import load_user_profile_by_client_id
 from apps.artagent.backend.voice.handoffs import sanitize_handoff_context
 from apps.artagent.backend.voice.shared.handoff_service import HandoffService
+from apps.artagent.backend.voice.shared.errors import (
+    BENIGN_VOICELIVE_ERROR_CODES,
+    classify_voice_error,
+    classify_voicelive_server_error,
+    emit_voice_error,
+)
 from apps.artagent.backend.voice.shared.metrics import OrchestratorMetrics
 from apps.artagent.backend.voice.shared.session_state import (
     sync_state_from_memo,
@@ -92,13 +99,169 @@ CALL_CENTER_TRIGGER_PHRASES = {
     "transfer me to the call center",
 }
 
+# How long `_schedule_greeting_fallback()` waits before delivering the greeting
+# itself. The bootstrap `session.updated` echo is the only reliable signal that
+# the agent's voice/instructions are actually live, and it arrives ~550-600ms
+# after `apply_voicelive_session()` returns (observed on production calls). At
+# the previous 0.35s this "fallback" therefore won *every* time, which inverted
+# its intent: it greeted against a session the service had not acknowledged yet,
+# and the echo that landed ~200ms later tore the half-spoken greeting down. The
+# delay must sit comfortably above the echo latency so the echo is the normal
+# trigger and this timer only covers the case where no echo ever arrives.
+GREETING_FALLBACK_DELAY_S = 1.5
+
 # Benign VoiceLive server-error codes emitted when a barge-in / response.cancel
 # races a response that already finished. These are expected and must NOT be
-# logged as errors or surfaced to the UI. Mirrors the handler's suppression set.
-_BENIGN_ERROR_CODES = {
-    "response_cancel_not_active",
-    "response_cancel_no_active_response",
-}
+# logged as errors or surfaced to the UI. Shared with the handler so both layers
+# suppress exactly the same set.
+_BENIGN_ERROR_CODES = BENIGN_VOICELIVE_ERROR_CODES
+
+
+def _voice_identity(voice: Any) -> str | None:
+    """Extract a comparable voice identity from a payload or a server echo.
+
+    The Voice Live wire format allows ``voice`` to be either a plain string
+    (OpenAI voices such as ``alloy``) or an object with a ``name`` (Azure
+    standard / custom / personal voices), and the SDK echoes it back in the
+    same shape it was accepted. Normalizing both to a lowercase name is what
+    makes "did the voice I asked for actually apply?" answerable.
+    """
+    if voice is None:
+        return None
+    if isinstance(voice, str):
+        return voice.strip().lower() or None
+    name = getattr(voice, "name", None)
+    if name is None and isinstance(voice, dict):
+        name = voice.get("name")
+    if isinstance(name, str):
+        return name.strip().lower() or None
+    return None
+
+
+# Azure OpenAI / AI Foundry deployment names routinely carry the *deployment
+# tier* (SKU) as a suffix on the base model name: a session that requested
+# ``gpt-realtime`` is echoed back as ``gpt-realtime-datazone-standard``. That is
+# the same underlying model on a differently-provisioned deployment, not a
+# substitution — treating it as one fires a warning on every ``session.updated``
+# and pins the ``session_contract_ok`` KPI to False.
+#
+# This is an explicit allowlist on purpose. A generic "applied starts with
+# requested" rule would also accept ``gpt-realtime-mini``, a genuinely different
+# and cheaper model — exactly the substitution this contract check exists to
+# catch. Widening the tolerance therefore has to be a deliberate edit here.
+_MODEL_SKU_SUFFIXES: tuple[str, ...] = tuple(
+    sorted(
+        (
+            "datazone-standard",
+            "data-zone-standard",
+            "datazonestandard",
+            "datazone-batch",
+            "datazone",
+            "global-standard",
+            "globalstandard",
+            "global-batch",
+            "globalbatch",
+            "global-provisioned-managed",
+            "provisioned-managed",
+            "provisionedmanaged",
+            "provisioned",
+            "regional",
+            "standard",
+            "batch",
+            "global",
+        ),
+        key=len,
+        reverse=True,
+    )
+)
+
+
+def _model_base_and_sku(model: str | None) -> tuple[str | None, str | None]:
+    """Split a normalized deployment name into its base model and deployment tier.
+
+    Strips **at most one** recognized SKU suffix, longest match first so
+    ``-datazone-standard`` wins over ``-standard``. A single bounded strip against
+    a known list keeps the transform auditable: an unrecognized tail stays on the
+    base, where it correctly registers as a mismatch.
+
+    Returns ``(base, sku)``; ``sku`` is ``None`` when the name carries no
+    recognized tier suffix.
+    """
+    if not model:
+        return None, None
+    for suffix in _MODEL_SKU_SUFFIXES:
+        marker = f"-{suffix}"
+        if model.endswith(marker) and len(model) > len(marker):
+            return model[: -len(marker)], suffix
+    return model, None
+
+
+def verify_voicelive_session_contract(
+    *,
+    requested_voice: Any,
+    requested_model: str | None,
+    session_obj: Any,
+) -> dict[str, Any]:
+    """Compare the session config we asked for against what the service echoed.
+
+    ``session.updated`` is the only ground truth for a Voice Live session: the
+    service echoes the config it actually accepted. Without this comparison a
+    rejected/ignored voice or a model that silently differs from the one the
+    agent selected is indistinguishable from success — which is exactly how a
+    "the TTS voice isn't being respected" bug stays invisible.
+
+    Unknown/absent echo fields are treated as "not verifiable" (``None``) rather
+    than as a mismatch, so older service versions don't produce false alarms.
+
+    The model comparison is **SKU-tolerant**: Azure echoes the deployment name,
+    which usually appends the provisioned tier to the base model
+    (``gpt-realtime`` → ``gpt-realtime-datazone-standard``). Both sides are run
+    through :func:`_model_base_and_sku`, which removes at most one *recognized*
+    tier suffix, and the bases are compared. An allowlist is used rather than a
+    prefix/substring rule precisely so a genuinely different model still fails:
+    ``gpt-4o-realtime-preview`` and ``gpt-realtime-mini`` are not tiers of
+    ``gpt-realtime`` and are both reported as mismatches. Normalizing both sides
+    also makes the check symmetric, for when our own configured deployment name
+    is the SKU-qualified one.
+
+    Returns a dict with ``voice_requested``/``voice_applied``/``voice_ok``,
+    ``model_requested``/``model_applied``/``model_ok`` and an aggregate ``ok``
+    that is False only when something is verifiably wrong. ``model_applied``
+    stays the *raw* normalized echo so operators can still see which tier the
+    session landed on; the SKU-stripped values used for the comparison are
+    exposed separately as ``model_*_base`` / ``model_*_sku``.
+    """
+    voice_requested = _voice_identity(requested_voice)
+    voice_applied = _voice_identity(getattr(session_obj, "voice", None))
+    voice_ok: bool | None = None
+    if voice_requested is not None and voice_applied is not None:
+        voice_ok = voice_requested == voice_applied
+
+    model_requested = (requested_model or "").strip().lower() or None
+    raw_model_applied = getattr(session_obj, "model", None)
+    model_applied = (
+        raw_model_applied.strip().lower() if isinstance(raw_model_applied, str) else None
+    )
+    model_requested_base, model_requested_sku = _model_base_and_sku(model_requested)
+    model_applied_base, model_applied_sku = _model_base_and_sku(model_applied)
+    model_ok: bool | None = None
+    if model_requested_base is not None and model_applied_base is not None:
+        model_ok = model_requested_base == model_applied_base
+
+    return {
+        "voice_requested": voice_requested,
+        "voice_applied": voice_applied,
+        "voice_ok": voice_ok,
+        "model_requested": model_requested,
+        "model_applied": model_applied,
+        "model_ok": model_ok,
+        "model_requested_base": model_requested_base,
+        "model_applied_base": model_applied_base,
+        "model_requested_sku": model_requested_sku,
+        "model_applied_sku": model_applied_sku,
+        "ok": voice_ok is not False and model_ok is not False,
+    }
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SESSION ORCHESTRATOR REGISTRY
@@ -247,6 +410,7 @@ class LiveOrchestrator:
         transport: str = "acs",
         model_name: str | None = None,
         memo_manager: MemoManager | None = None,
+        orchestrator_config: Any | None = None,
     ):
         self.conn = conn
         self.agents = agents
@@ -260,6 +424,19 @@ class LiveOrchestrator:
         self._pending_greeting_agent: str | None = None
         # Bounded deque to preserve last N user utterances for better handoff context
         self._user_message_history: deque[str] = deque(maxlen=5)
+        # User turns carried over from a *previous* connection (restored from
+        # MemoManager in _sync_from_memo_manager). Kept out of the live deque so
+        # the recap stays frozen for the connection's lifetime, which is what
+        # keeps the rendered instructions constant across turns.
+        #
+        # These are also injected as native conversation items at bootstrap
+        # (start -> _switch_to -> _inject_conversation_history, which sees them
+        # because __init__ restores them first), so this block is defence in
+        # depth rather than the sole carrier: that injection is best-effort and
+        # only ever runs on the switch path. It costs nothing in steady state
+        # because it never changes, but it does mean the model currently sees
+        # these turns twice — as items and as prose. See _build_conversation_recap.
+        self._restored_user_messages: tuple[str, ...] = ()
         self._last_user_message: str | None = None  # Keep for backward compatibility
         # Track assistant responses for conversation history persistence
         self._last_assistant_message: str | None = None
@@ -268,9 +445,22 @@ class LiveOrchestrator:
         self._transport = transport
         self._greeting_tasks: set[asyncio.Task] = set()
         self._active_response_id: str | None = None
+        # De-dupe assistant transcript deltas by their unique server event_id.
+        # Some Voice Live model configs (observed with cascaded / BYOM chat models)
+        # re-deliver the same response.audio_transcript.delta event, which the
+        # append-based accumulator would otherwise render as doubled words
+        # ("Let'sLet's take take"). Bounded to the active response; cleared on
+        # response.done and each new user turn.
+        self._seen_transcript_delta_ids: set[str] = set()
         self._system_vars: dict[str, Any] = {}
         # Flag to prevent SESSION_UPDATED from cancelling handoff-triggered responses
         self._handoff_response_pending: bool = False
+        # Same guard for a greeting the fallback timer already put on the wire.
+        # The bootstrap echo races that response, and because a greeting really
+        # is in flight the `_active_response_id` guard below does not stop the
+        # cancel — the caller hears the opening line cut off mid-word. No fixed
+        # timer can rule this out, so the flag is the correlation, not the delay.
+        self._greeting_response_pending: bool = False
 
         # Scenario switch flag — prevents _sync_from_memo_manager from overwriting
         # self.active with stale MemoManager data after an explicit scenario switch
@@ -296,6 +486,23 @@ class LiveOrchestrator:
         self._session_update_min_interval: float = 2.0  # Min seconds between updates
         self._pending_session_update: bool = False
 
+        # Number of context-only session.update() calls still awaiting their
+        # `session.updated` echo. Context-only updates change *instructions*
+        # only; the service echoes them exactly like a fresh bootstrap, so
+        # without this correlation _handle_session_updated would tear down
+        # audio on every conversational turn. A counter (not a bool) because
+        # _update_session_context() runs both from a background task
+        # (_schedule_throttled_session_update) and inline from the tool-call
+        # path, so two updates can legitimately be in flight at once.
+        self._pending_context_session_updates: int = 0
+
+        # Fingerprint of the instruction blob last *successfully* pushed, as
+        # (active_agent, sha256). The rendered prompt is ~24KB and over 99% of it
+        # is identical from one turn to the next, so re-uploading it after every
+        # turn is pure waste. Comparing against this lets _update_session_context()
+        # skip the network round-trip entirely when nothing changed.
+        self._last_pushed_instructions: tuple[str, str] | None = None
+
         if self.messenger:
             try:
                 self.messenger.set_active_agent(self.active)
@@ -309,11 +516,41 @@ class LiveOrchestrator:
         # Normalize active to the actual key in agents dict
         self.active = actual_key
 
+        # The agent this *connection* was established for. `connect()` binds the
+        # generative model (and any BYOM profile) to the start agent and neither
+        # can change for the rest of the call, so this is the only value the
+        # bound model can legitimately be attributed to. `self.active` is not a
+        # substitute: `_sync_from_memo_manager()` below can restore an agent
+        # persisted by an *earlier* connection on the same session_id, which is
+        # exactly the drift the session contract needs to be able to report.
+        self._bound_start_agent: str = actual_key
+
+        # Whether that start agent was *pinned* for this connection by a
+        # session-scoped (Quick Tune / Agent Builder) agent, as opposed to being
+        # the scenario or deployment default. Read straight off the constructor
+        # argument rather than the `_orchestrator_config` property, because the
+        # property lazily re-resolves (session lookup + scenario load) and must
+        # not be triggered from __init__ on the connection-establishment path.
+        #
+        # `_sync_from_memo_manager()` below consults it: a deliberately tuned
+        # agent is configuration for *this* connection and outranks any agent
+        # persisted by a previous one.
+        self._start_agent_authoritative: bool = bool(
+            getattr(orchestrator_config, "start_agent_authoritative", False)
+        )
+
         # Initialize the tool registry
         initialize_tools()
 
         # Initialize HandoffService for unified handoff resolution
         self._handoff_service: HandoffService | None = None
+
+        # Seed the resolved scenario config from the caller (the handler already
+        # resolved it with the connection's scenario name). Without this the
+        # lazy property re-resolves WITHOUT a scenario name and silently returns
+        # scenario=None, which drops declarative handoff instructions and routing.
+        if orchestrator_config is not None:
+            self._cached_orchestrator_config = orchestrator_config
 
         # Sync state from MemoManager if available
         if self._memo_manager:
@@ -343,19 +580,33 @@ class LiveOrchestrator:
             return getattr(self.messenger, "session_id", None)
         return None
 
+    def _websocket_for_errors(self) -> Any | None:
+        """Return the session WebSocket used to surface errors, if reachable."""
+        if self.messenger is not None:
+            return getattr(self.messenger, "_ws", None)
+        return None
+
     @property
     def _orchestrator_config(self):
         """
         Get cached orchestrator config for scenario resolution.
 
-        Lazily resolves and caches the config on first access to avoid
-        repeated calls to resolve_orchestrator_config() during the session.
+        Normally seeded by the handler via the ``orchestrator_config`` constructor
+        argument, so the orchestrator sees exactly the scenario the connection was
+        established with.
+
+        The lazy fallback below exists only for callers that construct the
+        orchestrator directly. It cannot know the connection's scenario name, so it
+        can only find session-scoped scenarios or the ``AGENT_SCENARIO`` default —
+        prefer passing ``orchestrator_config``.
 
         The config is cached per-instance (session lifetime), which is appropriate
         because scenario changes during a call would be disruptive anyway.
         """
         if not hasattr(self, "_cached_orchestrator_config"):
-            from apps.artagent.backend.voice.shared.config_resolver import resolve_orchestrator_config
+            from apps.artagent.backend.voice.shared.config_resolver import (
+                resolve_orchestrator_config,
+            )
 
             self._cached_orchestrator_config = resolve_orchestrator_config(
                 session_id=self._session_id
@@ -367,18 +618,96 @@ class LiveOrchestrator:
             )
         return self._cached_orchestrator_config
 
+    def _memo_restore_conflict(self, agent_name: str) -> str | None:
+        """Say why a MemoManager-restored agent must not take over this connection.
+
+        ``_sync_from_memo_manager()`` runs once, from ``__init__``, at which point
+        the Voice Live WebSocket is already established. Restoring an agent is
+        therefore never a neutral act: the connection was opened *for* a specific
+        start agent, and ``connect()`` has already frozen the generative model and
+        the BYOM profile around that agent for the rest of the call.
+
+        Two restores are unsafe, and both were observed as the same production
+        report ("I tuned the agent and only the model took"):
+
+        ``session_agent_authoritative``
+            A Quick Tune / Agent Builder agent was pinned for this connection
+            (see :attr:`_start_agent_authoritative`). It is configuration the
+            caller just chose; an agent left behind by an *earlier* connection on
+            the same ``session_id`` is stale state and must not displace it —
+            doing so silently swaps in the other agent's voice and instructions.
+
+        ``model_bound``
+            The restored agent asks for a different Voice Live model than the one
+            bound at ``connect()``. The model cannot change mid-call, so the agent
+            would be served by a model it did not ask for: the observed failure is
+            a session that greets and then never answers again. A wrong-but-
+            serviceable agent beats a mute call.
+
+        Everything else is genuine continuity and is allowed — notably resuming on
+        the agent a previous connection handed off to, when the bound model can
+        still serve it.
+
+        Args:
+            agent_name: Registry key of the agent MemoManager wants to restore.
+
+        Returns:
+            A short machine-greppable reason, or ``None`` when the restore is safe.
+        """
+        if agent_name == self.active:
+            return None
+
+        if self._start_agent_authoritative:
+            return "session_agent_authoritative"
+
+        agent = self.agents.get(agent_name)
+        if agent is None:
+            return None
+
+        try:
+            # self.agents holds UnifiedAgent directly; ``_agent`` is the adapter
+            # shape used elsewhere in this file. Same unwrap as _switch_to().
+            ua = getattr(agent, "_agent", agent)
+            target_deployment = getattr(ua.get_model_for_mode("voicelive"), "deployment_id", None)
+        except Exception:  # pragma: no cover - defensive
+            logger.debug(
+                "Failed to resolve per-agent model for restore check | agent=%s",
+                agent_name,
+                exc_info=True,
+            )
+            return None
+
+        if not target_deployment or not self._model_name:
+            # Nothing to compare against — never turn an unknown into a refusal.
+            return None
+
+        # SKU-tolerant, exactly like the session contract: Azure deployment names
+        # append the provisioned tier (``gpt-realtime`` →
+        # ``gpt-realtime-datazone-standard``) and that is the same model.
+        requested_base, _ = _model_base_and_sku(target_deployment.strip().lower())
+        bound_base, _ = _model_base_and_sku(self._model_name.strip().lower())
+        if requested_base == bound_base:
+            return None
+
+        return "model_bound"
+
     def _sync_from_memo_manager(self) -> None:
         """
         Sync orchestrator state from MemoManager.
         Called at initialization and optionally at turn boundaries.
 
         Uses shared sync_state_from_memo for consistency with CascadeOrchestratorAdapter.
-        
+
         NOTE: For VoiceLive, we intentionally DO NOT sync visited_agents because:
         - VoiceLive starts with a fresh conversation history each connection
         - If we sync visited_agents, we'd show return_greeting but model has no context
-        - This causes the model to behave inconsistently (greeting says "welcome back" 
+        - This causes the model to behave inconsistently (greeting says "welcome back"
           but model doesn't know what happened before)
+
+        The restored ``active_agent`` gets the same per-connection scepticism, one
+        step short of the outright refusal ``visited_agents`` gets: it is applied
+        only when :meth:`_memo_restore_conflict` finds nothing that makes it unsafe
+        for *this* connection. See that method for where the line sits.
         """
         if not self._memo_manager:
             return
@@ -401,8 +730,24 @@ class LiveOrchestrator:
             sync_state_to_memo(self._memo_manager, active_agent=self.active)
             self._scenario_switch_pending = False
         elif state.active_agent:
-            self.active = state.active_agent
-            logger.debug("[LiveOrchestrator] Synced active_agent: %s", self.active)
+            conflict = self._memo_restore_conflict(state.active_agent)
+            if conflict:
+                logger.warning(
+                    "[LiveOrchestrator] active_agent restore refused | reason=%s memo_active=%s "
+                    "keeping=%s bound_model=%s — the agent this connection was established for "
+                    "stays live",
+                    conflict,
+                    state.active_agent,
+                    self.active,
+                    self._model_name,
+                )
+                # Re-anchor the persisted state on the agent that is actually
+                # live, so the next connection on this session_id does not
+                # inherit the same stale value and re-run this refusal.
+                sync_state_to_memo(self._memo_manager, active_agent=self.active)
+            else:
+                self.active = state.active_agent
+                logger.debug("[LiveOrchestrator] Synced active_agent: %s", self.active)
 
         # IMPORTANT: Do NOT sync visited_agents for VoiceLive
         # Each VoiceLive connection starts fresh - syncing visited_agents causes
@@ -423,6 +768,11 @@ class LiveOrchestrator:
             stored_history = self._memo_manager.get_value_from_corememory("user_message_history")
             if stored_history and isinstance(stored_history, list):
                 self._user_message_history = deque(stored_history, maxlen=5)
+                # Snapshot separately so the recap stays frozen for this
+                # connection: turns spoken *on* this connection are appended to
+                # the deque later and must NOT end up here, because the service
+                # already holds those as conversation items.
+                self._restored_user_messages = tuple(self._user_message_history)
                 if stored_history:
                     self._last_user_message = stored_history[-1]
                 logger.debug(
@@ -436,9 +786,24 @@ class LiveOrchestrator:
         if state.pending_handoff:
             target = state.pending_handoff.get("target_agent")
             if target and target in self.agents:
-                logger.info("[LiveOrchestrator] Pending handoff detected: %s", target)
-                self.active = target
-                # Clear the pending handoff
+                # Same per-connection check as the active_agent restore above:
+                # a queued handoff is memo state too, and landing on an agent the
+                # bound model cannot serve is a mute call however it was reached.
+                conflict = self._memo_restore_conflict(target)
+                if conflict:
+                    logger.warning(
+                        "[LiveOrchestrator] Pending handoff refused | reason=%s target=%s "
+                        "keeping=%s bound_model=%s",
+                        conflict,
+                        target,
+                        self.active,
+                        self._model_name,
+                    )
+                else:
+                    logger.info("[LiveOrchestrator] Pending handoff detected: %s", target)
+                    self.active = target
+                # Clear the pending handoff either way — leaving it queued would
+                # just re-run the same refusal on the next connection.
                 sync_state_to_memo(
                     self._memo_manager, active_agent=self.active, clear_pending_handoff=True
                 )
@@ -511,6 +876,8 @@ class LiveOrchestrator:
 
         # Clear user message history
         self._user_message_history.clear()
+        self._restored_user_messages = ()
+        self._last_pushed_instructions = None
         self._last_user_message = None
         self._last_assistant_message = None
 
@@ -531,6 +898,8 @@ class LiveOrchestrator:
         handoff_map: dict[str, str],
         start_agent: str | None = None,
         scenario_name: str | None = None,
+        *,
+        scenario: Any | None = None,
     ) -> None:
         """
         Update the orchestrator with a new scenario configuration.
@@ -544,6 +913,12 @@ class LiveOrchestrator:
             handoff_map: New handoff routing map
             start_agent: Optional new start agent to switch to
             scenario_name: Optional scenario name for logging
+
+        Keyword Args:
+            scenario: Optional ``ScenarioConfig`` for the new scenario. When given,
+                the cached config is re-seeded with it so handoff instructions and
+                routing follow the new scenario. When omitted the cache is simply
+                dropped, which forces a re-resolve that cannot see a scenario name.
         """
         old_agents = list(self.agents.keys())
         old_active = self.active
@@ -558,10 +933,27 @@ class LiveOrchestrator:
         # Clear cached HandoffService so it's recreated with new scenario
         self._handoff_service = None
 
-        # Clear cached orchestrator config so it's resolved with new scenario
+        # A new scenario means new handoff instructions, so the fingerprint of the
+        # last pushed blob no longer describes what the session should be running.
+        self._last_pushed_instructions = None
+
+        # Refresh the cached orchestrator config for the new scenario.
         # CRITICAL: Without this, _update_session_context() uses the OLD cached config
-        # and injects the wrong handoff instructions for the new scenario
-        if hasattr(self, "_cached_orchestrator_config"):
+        # and injects the wrong handoff instructions for the new scenario.
+        if scenario is not None:
+            from apps.artagent.backend.voice.shared.config_resolver import (
+                OrchestratorConfigResult,
+            )
+
+            self._cached_orchestrator_config = OrchestratorConfigResult(
+                start_agent=start_agent or self.active,
+                agents=agents,
+                handoff_map=handoff_map,
+                scenario=scenario,
+                scenario_name=scenario_name or getattr(scenario, "name", None),
+                template_vars=dict(getattr(scenario, "global_template_vars", None) or {}),
+            )
+        elif hasattr(self, "_cached_orchestrator_config"):
             delattr(self, "_cached_orchestrator_config")
 
         # Clear visited agents for fresh scenario experience
@@ -620,6 +1012,7 @@ class LiveOrchestrator:
 
         This runs in the background to avoid blocking the scenario update call.
         """
+
         async def _do_update():
             try:
                 agent = self.agents.get(self.active)
@@ -640,6 +1033,13 @@ class LiveOrchestrator:
                 # CRITICAL: Apply the FULL agent session config, not just instructions
                 # This includes voice, tools, VAD settings, etc.
                 # This is the same as what _switch_to() does during handoffs
+                # Drop any outstanding context-only credits first: this echo is a
+                # genuine bootstrap and must run the audio reset, even if a
+                # throttled context update is still unaccounted for.
+                self._pending_context_session_updates = 0
+                # apply_voicelive_session pushes its own instructions, so whatever
+                # we last fingerprinted no longer describes the live session.
+                self._last_pushed_instructions = None
                 await agent.apply_voicelive_session(
                     self.conn,
                     system_vars=system_vars,
@@ -699,14 +1099,14 @@ class LiveOrchestrator:
             for msg in self._user_message_history:
                 if not msg or not msg.strip():
                     continue
-                
+
                 # Create user message item with text content
                 text_part = InputTextContentPart(text=msg)
                 user_item = UserMessageItem(content=[text_part])
-                
+
                 # Add to conversation
                 await self.conn.conversation.item.create(item=user_item)
-            
+
             # Also inject last assistant message if available
             if self._last_assistant_message:
                 # Create assistant message with text content
@@ -768,17 +1168,22 @@ class LiveOrchestrator:
 
     async def _update_session_context(self) -> None:
         """
-        Update VoiceLive session instructions with current context.
+        Push the active agent's instructions onto the live VoiceLive session.
 
-        This is called BEFORE each model response to ensure the model's instructions
-        reflect the latest conversation context. Without this, the realtime model
-        tends to forget what was discussed in previous turns.
+        Called before a model response so the instructions reflect anything that
+        changed out-of-band (slots written by a tool, a refreshed session profile,
+        a new scenario handoff block).
 
-        The update includes:
+        The rendered blob is large (~24KB for a typical agent) and almost always
+        identical to the previous turn's, so the push is gated on a fingerprint of
+        the fully-rendered text: when nothing changed, no ``session.update()`` is
+        sent at all. In steady state that means zero per-turn uploads.
+
+        The instructions include:
         - Base agent instructions (from prompt template)
-        - Explicit conversation recap (critical for context retention)
-        - Collected slots (e.g., user's name, account info)
-        - Tool outputs (e.g., CRM lookup results)
+        - Scenario handoff instructions
+        - Cross-connection context that the service does not hold itself
+          (see :meth:`_build_conversation_recap`)
         """
         if not self.conn or not self.active:
             return
@@ -802,20 +1207,32 @@ class LiveOrchestrator:
             if self._last_assistant_message:
                 context_vars["last_assistant_response"] = self._last_assistant_message
 
+            # ``self.agents`` holds UnifiedAgent instances directly (see
+            # update_scenario: "no adapter needed"). Older adapter-wrapped agents
+            # exposed the UnifiedAgent as ``_agent``, so unwrap defensively —
+            # matching _switch_to/_init_mcp_for_agent. Reaching for ``_agent``
+            # unconditionally raised AttributeError on every turn, which silently
+            # disabled instruction refresh and conversation recap entirely.
+            ua = getattr(agent, "_agent", agent)
+
             # Render base instructions from agent prompt template
-            base_instructions = agent._agent.render_prompt(context_vars) or ""
+            base_instructions = ua.render_prompt(context_vars) or ""
 
             # Inject handoff instructions from scenario configuration
             # Use the cached orchestrator config (supports both file-based and session-scoped)
             config = self._orchestrator_config
-            if config.scenario and agent._agent.name:
+            if config.scenario and ua.name:
                 # Use scenario.build_handoff_instructions directly (works for session scenarios)
-                handoff_instructions = config.scenario.build_handoff_instructions(agent._agent.name)
+                handoff_instructions = config.scenario.build_handoff_instructions(ua.name)
                 if handoff_instructions:
-                    base_instructions = f"{base_instructions}\n\n{handoff_instructions}" if base_instructions else handoff_instructions
+                    base_instructions = (
+                        f"{base_instructions}\n\n{handoff_instructions}"
+                        if base_instructions
+                        else handoff_instructions
+                    )
                     logger.info(
                         "[LiveOrchestrator] Injected handoff instructions | agent=%s scenario=%s len=%d",
-                        agent._agent.name,
+                        ua.name,
                         config.scenario_name,
                         len(handoff_instructions),
                     )
@@ -823,7 +1240,7 @@ class LiveOrchestrator:
                 logger.debug(
                     "[LiveOrchestrator] No scenario or agent name for handoff instructions | scenario=%s agent=%s",
                     config.scenario_name if config.scenario else None,
-                    agent._agent.name if hasattr(agent, '_agent') else None,
+                    getattr(ua, "name", None),
                 )
 
             # Build conversation recap to append to instructions
@@ -839,12 +1256,49 @@ class LiveOrchestrator:
             if not updated_instructions:
                 return
 
+            # Nothing changed since the last successful push, so the round-trip
+            # would be a pure no-op: the same ~24KB blob back onto the wire, plus
+            # a `session.updated` echo the handler then has to classify. Skip it.
+            #
+            # CRITICAL: return *before* touching _pending_context_session_updates.
+            # No update means no echo, so crediting the counter here would leave a
+            # dangling credit that the next genuine bootstrap echo would consume —
+            # and that echo would then skip the audio reset it needs.
+            fingerprint = (
+                self.active,
+                hashlib.sha256(updated_instructions.encode("utf-8")).hexdigest(),
+            )
+            if fingerprint == self._last_pushed_instructions:
+                logger.debug(
+                    "[LiveOrchestrator] Session instructions unchanged - skipping update | agent=%s",
+                    self.active,
+                )
+                return
+
             # Update session with new instructions
             from azure.ai.voicelive.models import RequestSession
 
-            await self.conn.session.update(
-                session=RequestSession(instructions=updated_instructions)
-            )
+            # Mark this as a context-only update *before* it goes on the wire.
+            # The `session.updated` echo can arrive before this coroutine
+            # resumes, so incrementing afterwards would race the handler.
+            self._pending_context_session_updates += 1
+            try:
+                await self.conn.session.update(
+                    session=RequestSession(instructions=updated_instructions)
+                )
+            except Exception:
+                # The service never applied it, so no echo is coming. Hand the
+                # credit back, otherwise a later genuine bootstrap echo would be
+                # misread as this one and skip the audio reset it needs.
+                self._pending_context_session_updates = max(
+                    0, self._pending_context_session_updates - 1
+                )
+                raise
+
+            # Only record the fingerprint once the service has actually taken the
+            # payload. Caching a failed push would suppress the retry and leave
+            # the session running on stale instructions.
+            self._last_pushed_instructions = fingerprint
 
             logger.debug(
                 "[LiveOrchestrator] Updated session | agent=%s history_len=%d slots=%s",
@@ -852,8 +1306,27 @@ class LiveOrchestrator:
                 len(self._user_message_history),
                 list(context_vars.get("slots", {}).keys()) if context_vars.get("slots") else [],
             )
-        except Exception:
-            logger.debug("Failed to update session context", exc_info=True)
+        except Exception as exc:
+            # A rejected session.update (unsupported voice/model, expired auth)
+            # otherwise looks like "my settings silently didn't apply".
+            info = classify_voice_error(
+                exc,
+                source="voicelive",
+                model=self._model_name,
+                agent=self.active,
+            )
+            logger.warning(
+                "[LiveOrchestrator] Failed to update session context | agent=%s %s",
+                self.active,
+                info.log_summary(),
+                exc_info=True,
+            )
+            await emit_voice_error(
+                self._websocket_for_errors(),
+                info,
+                session_id=self._session_id,
+                call_id=self.call_connection_id,
+            )
 
     async def apply_live_session_settings(
         self,
@@ -888,10 +1361,13 @@ class LiveOrchestrator:
             sess["turn_detection"] = td
             ua.session = sess
         if voice and ua.voice is not None:
-            if voice.get("name"):
-                ua.voice.name = voice["name"]
-            if voice.get("rate"):
-                ua.voice.rate = voice["rate"]
+            # Apply every field the caller actually set. Ignoring style/pitch here
+            # made those Quick Tune controls silent no-ops: the UI reported
+            # success while the live session kept the previous voice settings.
+            for field in ("name", "rate", "style", "pitch"):
+                value = voice.get(field)
+                if value:
+                    setattr(ua.voice, field, value)
 
         try:
             from azure.ai.voicelive.models import RequestSession
@@ -914,58 +1390,90 @@ class LiveOrchestrator:
 
         await self.conn.session.update(session=RequestSession(**kwargs))
         logger.info(
-            "[LiveOrchestrator] Pushed live session settings | agent=%s keys=%s",
+            "[LiveOrchestrator] Pushed live session settings | agent=%s keys=%s voice=%s",
             self.active,
             list(kwargs.keys()),
+            _voice_identity(kwargs.get("voice")),
         )
         return True
 
     def _build_conversation_recap(self) -> str:
         """
-        Build an explicit conversation recap to inject into instructions.
+        Build the context block that VoiceLive's own conversation state does not
+        reliably cover.
 
-        This ensures the realtime model remembers what was discussed,
-        even if it tends to forget context between turns.
+        Deliberately narrow. VoiceLive keeps conversation state server-side: every
+        user audio turn becomes a conversation item (the orchestrator handles
+        ``conversation.item.input_audio_transcription.completed``), every assistant
+        turn is an item, and tool results are pushed as ``FunctionCallOutputItem``
+        in :meth:`_handle_response_done`. Re-listing any of that in the
+        instructions is duplication that costs a ~24KB upload every turn, so the
+        turn-by-turn transcript and the "your last response" recap are gone.
+
+        What remains:
+
+        - **Turns restored from a previous connection.** These *are* also injected
+          as native conversation items at bootstrap — ``start()`` calls
+          :meth:`_switch_to`, which calls :meth:`_inject_conversation_history`,
+          and ``__init__`` has already restored them by then. So this block is
+          defence in depth, not the sole carrier. It is retained because that
+          injection is best-effort (its failures are swallowed at debug level) and
+          only ever runs on the switch path — :meth:`_inject_conversation_history`
+          has exactly one call site and never runs mid-call. Being frozen at
+          restore time, it costs nothing in steady state.
+
+          FOLLOW-UP: because the injection already covers them, the model
+          currently sees these turns twice — as conversation items and as prose
+          here. This block is plausibly removable; that is a separate change with
+          its own verification, not a drive-by cleanup.
+
+        - **Collected slots.** Written from tool results into MemoManager and
+          re-read after a reconnect, by which point the originating
+          ``function_call_output`` items are gone. Nothing re-injects these the
+          way ``_inject_conversation_history`` re-injects turns, and no agent
+          prompt template renders them, so this block really is their only channel.
+
+        Both are constant or change only when a tool writes a slot, which is what
+        lets the fingerprint check in :meth:`_update_session_context` short-circuit
+        the per-turn push.
         """
         parts = []
 
-        # Add conversation history recap
-        if self._user_message_history and len(self._user_message_history) > 0:
-            parts.append("## CONVERSATION CONTEXT (DO NOT FORGET)")
-            parts.append("The user has said the following in this conversation:")
-            for i, msg in enumerate(self._user_message_history, 1):
-                parts.append(f"  {i}. \"{msg}\"")
+        # Carried over from a previous connection only — turns spoken on this
+        # connection are already conversation items on the service side.
+        if self._restored_user_messages:
+            parts.append("## EARLIER IN THIS CONVERSATION")
+            parts.append("Before this point the user told you:")
+            for i, msg in enumerate(self._restored_user_messages, 1):
+                parts.append(f'  {i}. "{msg}"')
             parts.append("")
-            parts.append("IMPORTANT: Remember and refer back to what the user has already told you. Do NOT ask them to repeat information they've already provided.")
+            parts.append(
+                "IMPORTANT: Do NOT ask the user to repeat information they've already provided."
+            )
 
         # Add collected slots/information
         slots = self._system_vars.get("slots", {})
         if slots:
-            parts.append("")
+            if parts:
+                parts.append("")
             parts.append("## COLLECTED INFORMATION")
             for key, value in slots.items():
                 if value:
                     parts.append(f"  - {key}: {value}")
 
-        # Add last assistant response for context
-        if self._last_assistant_message:
-            parts.append("")
-            parts.append("## YOUR LAST RESPONSE")
-            # Truncate if too long
-            last_resp = self._last_assistant_message
-            if len(last_resp) > 200:
-                last_resp = last_resp[:200] + "..."
-            parts.append(f'You last said: "{last_resp}"')
-
         return "\n".join(parts) if parts else ""
 
     def _schedule_throttled_session_update(self) -> None:
         """
-        Schedule a throttled session context update in the background.
+        Schedule a throttled session context refresh in the background.
 
-        This avoids calling session.update() on the hot path,
-        which can add significant latency to each turn.
-        The actual network call is performed in a background task.
+        The network push itself is now change-gated in
+        :meth:`_update_session_context`, so in steady state this schedules work
+        that sends nothing. The throttle still earns its keep: re-rendering the
+        agent's Jinja prompt is ~24KB of string work, and both
+        :meth:`_refresh_session_context` and the render would otherwise run on
+        every ``response.done``. It also bounds bursts when the tool-call path
+        pushes an update inline at the same time.
         """
         now = time.perf_counter()
         elapsed = now - self._last_session_update_time
@@ -1072,20 +1580,23 @@ class LiveOrchestrator:
             logger.info("[Orchestrator] Starting with agent: %s", self.active)
             orch_start_ts = time.perf_counter()
             self._system_vars = dict(system_vars or {})
-            
+
             # Initialize MCP servers for the active agent (non-blocking)
             t0 = time.perf_counter()
             await self._init_mcp_for_agent(self.active)
             mcp_ms = (time.perf_counter() - t0) * 1000
-            
+
             t0 = time.perf_counter()
             await self._switch_to(self.active, self._system_vars)
             switch_ms = (time.perf_counter() - t0) * 1000
-            
+
             total_ms = (time.perf_counter() - orch_start_ts) * 1000
             logger.info(
                 "[VoiceLive Startup] orchestrator.start total_ms=%.1f | mcp_init_ms=%.1f switch_to_ms=%.1f | agent=%s",
-                total_ms, mcp_ms, switch_ms, self.active,
+                total_ms,
+                mcp_ms,
+                switch_ms,
+                self.active,
             )
             start_span.set_attribute("voicelive.orch_start_ms", round(total_ms, 2))
             start_span.set_status(trace.StatusCode.OK)
@@ -1093,23 +1604,23 @@ class LiveOrchestrator:
     async def _init_mcp_for_agent(self, agent_name: str) -> None:
         """
         Initialize MCP server connections for an agent's configured servers.
-        
+
         Connects to MCP servers listed in the agent's mcp_servers field.
         Tools from connected servers become available for the session.
-        
+
         Args:
             agent_name: Name of the agent to initialize MCP for
         """
         if not self._memo_manager:
             return
-            
+
         agent = self.agents.get(agent_name)
         if not agent or not agent.mcp_servers:
             return
-            
+
         try:
             from apps.artagent.backend.registries.toolstore.mcp import get_mcp_configs_for_agent
-            
+
             configs = get_mcp_configs_for_agent(agent.mcp_servers)
             if not configs:
                 logger.debug(
@@ -1117,12 +1628,12 @@ class LiveOrchestrator:
                     agent_name,
                 )
                 return
-                
+
             results = await self._memo_manager.init_mcp_servers(configs)
-            
+
             connected = [name for name, success in results.items() if success]
             failed = [name for name, success in results.items() if not success]
-            
+
             if connected:
                 logger.info(
                     "[LiveOrchestrator] MCP servers connected for %s: %s",
@@ -1190,22 +1701,221 @@ class LiveOrchestrator:
             # The handler already suppresses these; mirror that here so we don't
             # emit a noisy duplicate ERROR for an expected condition.
             if code in _BENIGN_ERROR_CODES:
-                logger.info(
-                    "VoiceLive benign cancel-race ignored | code=%s", code
-                )
+                logger.info("VoiceLive benign cancel-race ignored | code=%s", code)
             else:
-                logger.error("VoiceLive error: %s", message)
+                # code/type/param identify WHICH field the service rejected. A
+                # rejected `voice` (unsupported name or style) or `model` fails the
+                # whole session.update, so without these fields the symptom is just
+                # "my settings didn't apply" with no way to tell why. The handler
+                # owns delivery to the client; here we only enrich the log.
+                info = classify_voicelive_server_error(
+                    code,
+                    message,
+                    details=getattr(err, "param", None),
+                    model=self._model_name,
+                    agent=self.active,
+                )
+                logger.error(
+                    "VoiceLive error: %s | code=%s type=%s param=%s agent=%s model=%s "
+                    "classified=%s remediation=%s",
+                    message,
+                    code,
+                    getattr(err, "type", None),
+                    getattr(err, "param", None),
+                    self.active,
+                    self._model_name,
+                    info.code if info else None,
+                    info.remediation if info else None,
+                )
 
     # ═══════════════════════════════════════════════════════════════════════════
     # EVENT HANDLERS
     # ═══════════════════════════════════════════════════════════════════════════
+
+    def _verify_session_contract(self, session_obj) -> dict[str, Any] | None:
+        """Confirm the voice/model the service accepted match what we asked for.
+
+        Emits a single KPI line per ``session.updated`` so a call can be audited
+        after the fact: ``session_contract_ok`` means the selected TTS voice and
+        the selected (possibly BYOM) model are the ones actually driving the
+        session; ``session_contract_mismatch`` means the service quietly
+        substituted or dropped one of them.
+
+        The service-side comparison from
+        :func:`verify_voicelive_session_contract` is returned verbatim (``ok``
+        keeps meaning "the service accepted the voice and model we asked for")
+        and enriched with the two *local* divergences that explain most
+        "my tuning didn't take" reports, neither of which the echo can show:
+
+        ``bound_agent`` / ``active_agent`` / ``agent_ok`` / ``tuned_voice``
+            The connection was established for ``bound_agent``; if a stale
+            ``active_agent`` was restored from a previous connection on the same
+            session, the live agent — and therefore its voice and instructions —
+            is not the one that was tuned. ``tuned_voice`` names the voice that
+            was displaced, which ``voice_ok`` cannot show: the service *did*
+            apply the voice we sent, we simply sent the wrong agent's.
+        ``connection_model`` / ``agent_requested_model`` / ``model_override_ignored``
+            Voice Live binds the model at ``connect()`` and cannot change it
+            mid-call, so an agent that asks for a different ``voicelive_model``
+            is silently served by the bound one.
+
+        ``overall_ok`` is the aggregate to render: the service contract held
+        *and* neither local divergence is present.
+        """
+        if session_obj is None:
+            return None
+
+        agent = self.agents.get(self.active)
+        if agent is None:
+            return None
+        ua = getattr(agent, "_agent", agent)
+
+        try:
+            requested_voice = ua.build_voicelive_voice()
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("Failed to build requested voice for verification", exc_info=True)
+            return None
+
+        result = verify_voicelive_session_contract(
+            requested_voice=requested_voice,
+            requested_model=self._model_name,
+            session_obj=session_obj,
+        )
+
+        bound_agent = getattr(self, "_bound_start_agent", None)
+        agent_ok: bool | None = None
+        if bound_agent is not None:
+            agent_ok = bound_agent == self.active
+
+        agent_requested_model: str | None = None
+        try:
+            target_model = ua.get_model_for_mode("voicelive")
+            agent_requested_model = getattr(target_model, "deployment_id", None)
+        except Exception:  # pragma: no cover - defensive
+            logger.debug("Failed to resolve per-agent model for verification", exc_info=True)
+
+        model_override_ignored = bool(
+            agent_requested_model and self._model_name and agent_requested_model != self._model_name
+        )
+
+        # The voice the *tuned* agent would have spoken with. Only meaningful
+        # when the live agent is not the one this connection was set up for:
+        # `voice_ok` correctly reports that the service applied the voice we
+        # sent, but we sent the drifted agent's voice, so on its own that row
+        # reads "MATCH" while the caller is hearing a voice they never chose.
+        # Naming what was lost is what makes the drift legible.
+        tuned_voice: str | None = None
+        if agent_ok is False and bound_agent:
+            bound = self.agents.get(bound_agent)
+            if bound is not None:
+                try:
+                    tuned_voice = _voice_identity(
+                        getattr(bound, "_agent", bound).build_voicelive_voice()
+                    )
+                except Exception:  # pragma: no cover - defensive
+                    logger.debug("Failed to resolve tuned voice for verification", exc_info=True)
+
+        result.update(
+            {
+                "active_agent": self.active,
+                "bound_agent": bound_agent,
+                "agent_ok": agent_ok,
+                "tuned_voice": tuned_voice,
+                "connection_model": self._model_name,
+                "agent_requested_model": agent_requested_model,
+                "model_override_ignored": model_override_ignored,
+                "overall_ok": bool(
+                    result["ok"] and agent_ok is not False and not model_override_ignored
+                ),
+            }
+        )
+
+        span = trace.get_current_span()
+        if result["voice_applied"] is not None:
+            span.set_attribute("voicelive.voice_applied", result["voice_applied"])
+        if result["voice_requested"] is not None:
+            span.set_attribute("voicelive.voice_requested", result["voice_requested"])
+        span.set_attribute("voicelive.session_contract_ok", bool(result["ok"]))
+        span.set_attribute("voicelive.session_contract_overall_ok", result["overall_ok"])
+        if agent_ok is False:
+            span.set_attribute("voicelive.bound_agent", bound_agent or "")
+
+        if result["ok"]:
+            logger.info(
+                "[VoiceLive] session_contract_ok | agent=%s voice=%s model=%s sku=%s",
+                self.active,
+                result["voice_applied"] or result["voice_requested"],
+                result["model_applied"] or result["model_requested"],
+                result["model_applied_sku"] or result["model_requested_sku"] or "-",
+            )
+        else:
+            logger.warning(
+                "[VoiceLive] session_contract_mismatch | agent=%s "
+                "voice_requested=%s voice_applied=%s model_requested=%s model_applied=%s "
+                "— the service did not accept the selected configuration",
+                self.active,
+                result["voice_requested"],
+                result["voice_applied"],
+                result["model_requested"],
+                result["model_applied"],
+            )
+
+        # Logged separately from the service contract: the session config is
+        # exactly what we asked for, we are simply asking on behalf of the wrong
+        # agent. Folding it into the line above would misattribute the cause.
+        if agent_ok is False:
+            logger.warning(
+                "[VoiceLive] session_agent_drift | bound=%s active=%s tuned_voice=%s — the live "
+                "agent is not the one this connection was established for, so its voice and "
+                "instructions are not the tuned ones",
+                bound_agent,
+                self.active,
+                tuned_voice or "-",
+            )
+        if model_override_ignored:
+            logger.warning(
+                "[VoiceLive] session_model_override_ignored | agent=%s requested=%s bound=%s — "
+                "Voice Live binds the model at connect() and cannot change it mid-call",
+                self.active,
+                agent_requested_model,
+                self._model_name,
+            )
+        return result
 
     async def _handle_session_updated(self, event) -> None:
         """Handle SESSION_UPDATED event."""
         session_obj = getattr(event, "session", None)
         session_id = getattr(session_obj, "id", "unknown") if session_obj else "unknown"
         voice_info = getattr(session_obj, "voice", None) if session_obj else None
-        logger.info("Session ready: %s | voice=%s", session_id, voice_info)
+
+        # Consume exactly one context-only credit. `_update_session_context()`
+        # refreshes *instructions* after every turn, and the service echoes that
+        # back as `session.updated` ~200ms later — while TTS audio is still
+        # draining. Treating that echo as a bootstrap would stop playback
+        # mid-sentence and spam the UI with a SESSION UPDATED entry per turn.
+        context_only = self._pending_context_session_updates > 0
+        if context_only:
+            self._pending_context_session_updates -= 1
+            logger.debug("Session context refreshed: %s | voice=%s", session_id, voice_info)
+        else:
+            logger.info("Session ready: %s | voice=%s", session_id, voice_info)
+
+        # Keep the contract KPI on every echo — a service-side voice/model
+        # substitution is just as worth catching on a context refresh.
+        contract = self._verify_session_contract(session_obj)
+
+        if context_only:
+            # Nothing was reconfigured, so there is nothing to re-bootstrap:
+            # leave playback, capture, any in-flight response, and the
+            # pending-greeting / handoff state exactly as they are.
+            #
+            # The contract is deliberately NOT broadcast here either: a
+            # context-only refresh happens after every assistant turn, so
+            # emitting an envelope would restore the per-turn UI spam that the
+            # early-return exists to prevent. It is still logged and still
+            # recorded on the span; the UI picks the contract up on the next
+            # bootstrap / agent-switch echo.
+            return
 
         if self.messenger:
             try:
@@ -1213,6 +1923,7 @@ class LiveOrchestrator:
                     agent_name=self.active,
                     session_obj=session_obj,
                     transport=self._transport,
+                    contract=contract,
                 )
             except Exception:
                 logger.debug("Failed to emit session update envelope", exc_info=True)
@@ -1226,12 +1937,31 @@ class LiveOrchestrator:
                 await self.audio.start_capture()
             return
 
+        # A greeting the fallback timer already put on the wire is *our* response.
+        # The bootstrap echo it races must not tear it down: with a greeting
+        # genuinely in flight `_active_response_id` is set, so the guard below
+        # would happily cancel it and the caller hears the opening line cut off
+        # mid-word. Mirrors the handoff shortcut above.
+        if self._greeting_response_pending:
+            logger.debug(
+                "[Session Updated] Skipping audio reset - greeting response already in flight"
+            )
+            self._greeting_response_pending = False
+            if self.audio:
+                await self.audio.start_capture()
+            return
+
         if self.audio:
             await self.audio.stop_playback()
-        try:
-            await self.conn.response.cancel()
-        except Exception:
-            logger.debug("response.cancel() failed during session_ready", exc_info=True)
+        # Only cancel when a response is actually in flight. Cancelling with no
+        # active response makes VoiceLive emit a `response_cancel_not_active`
+        # server error, which the handler treats as a hard error (StopAudio +
+        # UI error) and breaks the next turn. Same guard as the barge-in path.
+        if self._active_response_id:
+            try:
+                await self.conn.response.cancel()
+            except Exception:
+                logger.debug("response.cancel() failed during session_ready", exc_info=True)
         if self.audio:
             await self.audio.start_capture()
 
@@ -1256,11 +1986,11 @@ class LiveOrchestrator:
     async def _handle_speech_started(self) -> None:
         """Handle user speech started (barge-in)."""
         logger.debug("User speech started → cancel current response")
-        
+
         # Sync state to MemoManager in background - don't block barge-in response
         # This ensures any partial response context is preserved
         self._schedule_background_sync()
-        
+
         if self.audio:
             await self.audio.stop_playback()
         # Only cancel when a response is actually in flight. Cancelling with no
@@ -1283,6 +2013,9 @@ class LiveOrchestrator:
             except Exception:
                 logger.debug("Failed to notify assistant cancellation on barge-in", exc_info=True)
         self._active_response_id = None
+        # Barge-in ends the current response stream — reset the dedup guard so the
+        # next response accumulates cleanly.
+        self._seen_transcript_delta_ids.clear()
 
     async def _handle_speech_stopped(self) -> None:
         """Handle user speech stopped."""
@@ -1302,19 +2035,19 @@ class LiveOrchestrator:
             self._last_user_message = user_text
             # Add to bounded history for better handoff context
             self._user_message_history.append(user_text)
-            
+
             # Persist user turn to MemoManager for session continuity (fast, local)
             if self._memo_manager:
                 try:
                     self._memo_manager.append_to_history(self.active, "user", user_text)
                 except Exception:
                     logger.debug("Failed to persist user turn to history", exc_info=True)
-            
+
             # Mark that we need a session update (will be done in throttled fashion)
             # Don't call _update_session_context here - it's too slow for the hot path
             # The response_done handler will do a throttled update
             self._pending_session_update = True
-            
+
             await self._maybe_trigger_call_center_transfer(user_transcript)
 
     async def _handle_transcription_delta(self, event) -> None:
@@ -1328,6 +2061,23 @@ class LiveOrchestrator:
 
     async def _handle_transcript_delta(self, event) -> None:
         """Handle assistant transcript delta (streaming)."""
+        # Drop re-delivered transcript deltas. The accumulator appends each delta,
+        # so a duplicated event doubles every word in the streaming bubble. The
+        # server event_id is unique per event, so this only drops true duplicates
+        # (a legitimately repeated word arrives as a distinct event_id).
+        event_id = getattr(event, "event_id", None)
+        if event_id:
+            if event_id in self._seen_transcript_delta_ids:
+                logger.warning(
+                    "[Orchestrator] Dropped duplicate assistant transcript delta | "
+                    "event_id=%s response=%s agent=%s (Voice Live re-delivery)",
+                    event_id,
+                    getattr(event, "response_id", None),
+                    self.active,
+                )
+                return
+            self._seen_transcript_delta_ids.add(event_id)
+
         transcript_delta = getattr(event, "delta", "") or getattr(event, "transcript", "")
 
         # Track LLM TTFT for agent-level token/timing accounting. The canonical
@@ -1365,14 +2115,14 @@ class LiveOrchestrator:
             logger.info("[%s] Agent: %s", self.active, full_transcript)
             # Track assistant response for history persistence
             self._last_assistant_message = full_transcript
-            
+
             # Persist assistant turn to MemoManager for session continuity
             if self._memo_manager:
                 try:
                     self._memo_manager.append_to_history(self.active, "assistant", full_transcript)
                 except Exception:
                     logger.debug("Failed to persist assistant turn to history", exc_info=True)
-            
+
             if self.messenger:
                 response_id = self._response_id_from_event(event)
                 if not response_id:
@@ -1401,6 +2151,8 @@ class LiveOrchestrator:
         response_id = self._response_id_from_event(event)
         if response_id and response_id == self._active_response_id:
             self._active_response_id = None
+        # New response starts a fresh transcript stream — reset the dedup guard.
+        self._seen_transcript_delta_ids.clear()
 
         self._emit_model_metrics(event)
 
@@ -1566,7 +2318,13 @@ class LiveOrchestrator:
                 # voicelive_model than the model bound to the live connection, the override
                 # is silently ignored for the rest of the call. Surface that clearly.
                 try:
-                    target_model = agent._agent.get_model_for_mode("voicelive")
+                    # Same unwrap as elsewhere: self.agents holds UnifiedAgent
+                    # directly. Reaching for ``_agent`` raised AttributeError that
+                    # the except below swallowed at debug level, so this warning —
+                    # the one that tells you a per-agent voicelive_model is being
+                    # ignored — could never actually fire.
+                    ua = getattr(agent, "_agent", agent)
+                    target_model = ua.get_model_for_mode("voicelive")
                     target_deployment = getattr(target_model, "deployment_id", None)
                     if (
                         target_deployment
@@ -1582,7 +2340,9 @@ class LiveOrchestrator:
                             target_deployment,
                             self._model_name,
                         )
-                        switch_span.set_attribute("voicelive.model_override_ignored", target_deployment)
+                        switch_span.set_attribute(
+                            "voicelive.model_override_ignored", target_deployment
+                        )
                 except Exception:  # pragma: no cover - defensive
                     logger.debug("Failed to evaluate per-agent model on switch", exc_info=True)
 
@@ -1617,6 +2377,11 @@ class LiveOrchestrator:
                         getattr(self.messenger, "session_id", None) if self.messenger else None
                     )
                     t_apply = time.perf_counter()
+                    # Drop any outstanding context-only credits: an agent switch
+                    # is a genuine bootstrap whose echo must run the audio reset.
+                    self._pending_context_session_updates = 0
+                    # The new agent's instructions replace the ones we fingerprinted.
+                    self._last_pushed_instructions = None
                     await agent.apply_voicelive_session(
                         self.conn,
                         system_vars=system_vars,
@@ -1627,7 +2392,8 @@ class LiveOrchestrator:
                     apply_ms = (time.perf_counter() - t_apply) * 1000
                     logger.info(
                         "[VoiceLive Startup] apply_session_ms=%.1f | agent=%s",
-                        apply_ms, agent_name,
+                        apply_ms,
+                        agent_name,
                     )
 
                 # CRITICAL: Inject conversation history as text items for context retention
@@ -1639,7 +2405,8 @@ class LiveOrchestrator:
                 if hist_ms > 5:
                     logger.info(
                         "[VoiceLive Startup] inject_history_ms=%.1f | items=%d",
-                        hist_ms, len(self._user_message_history),
+                        hist_ms,
+                        len(self._user_message_history),
                     )
 
                 # Schedule greeting fallback if we have a pending greeting
@@ -1757,11 +2524,17 @@ class LiveOrchestrator:
                 if self._user_message_history:
                     # Use last message for immediate context
                     if last_user_message:
-                        for field in ("details", "issue_summary", "summary", "topic", "handoff_reason"):
+                        for field in (
+                            "details",
+                            "issue_summary",
+                            "summary",
+                            "topic",
+                            "handoff_reason",
+                        ):
                             if not args.get(field):
                                 args[field] = last_user_message
                         args.setdefault("user_last_utterance", last_user_message)
-                    
+
                     # Include full conversation context for richer handoff
                     if len(self._user_message_history) > 1:
                         conversation_context = " | ".join(self._user_message_history)
@@ -1802,7 +2575,15 @@ class LiveOrchestrator:
                 # span, which already carries the tool name, args, and timing — no
                 # separate child span is needed.
                 result = await execute_tool(name, args)
+            except (asyncio.CancelledError, KeyboardInterrupt):
+                raise
             except Exception as exc:
+                # CRITICAL: Do NOT re-raise here. This exception bubbles up through
+                # handle_event() into the handler's top-level _event_loop(), whose
+                # broad except clause treats ANY exception as fatal and shuts down
+                # the entire VoiceLive session (self._shutdown.set()). A single
+                # failed tool call must not kill the call — it must be reported
+                # back to the model as a tool error so the conversation continues.
                 notify_status = "error"
                 notify_error = str(exc)
                 tool_span.set_status(trace.StatusCode.ERROR, str(exc))
@@ -1810,6 +2591,10 @@ class LiveOrchestrator:
                     "tool.execution_error",
                     {"error.type": type(exc).__name__, "error.message": str(exc)},
                 )
+                logger.exception(
+                    "Tool execution raised an exception | tool=%s call_id=%s", name, call_id
+                )
+                result = {"success": False, "error": notify_error}
                 if self.messenger:
                     try:
                         await self.messenger.notify_tool_end(
@@ -1821,7 +2606,6 @@ class LiveOrchestrator:
                         )
                     except Exception:
                         logger.debug("Tool end messenger notification failed", exc_info=True)
-                raise
 
             elapsed_ms = (time.perf_counter() - start_ts) * 1000
             tool_span.set_attribute("execution.duration_ms", elapsed_ms)
@@ -1889,7 +2673,11 @@ class LiveOrchestrator:
                         )
 
                     # Persist loaded profile to corememory for cross-agent availability
-                    if result.get("success") and result.get("profile") and isinstance(result["profile"], dict):
+                    if (
+                        result.get("success")
+                        and result.get("profile")
+                        and isinstance(result["profile"], dict)
+                    ):
                         profile = result["profile"]
                         self._memo_manager.set_corememory("session_profile", profile)
                         self._system_vars["session_profile"] = profile
@@ -1900,10 +2688,16 @@ class LiveOrchestrator:
                             self._memo_manager.set_corememory("caller_name", profile["full_name"])
                             self._system_vars["caller_name"] = profile["full_name"]
                         if profile.get("customer_intelligence"):
-                            self._memo_manager.set_corememory("customer_intelligence", profile["customer_intelligence"])
-                            self._system_vars["customer_intelligence"] = profile["customer_intelligence"]
+                            self._memo_manager.set_corememory(
+                                "customer_intelligence", profile["customer_intelligence"]
+                            )
+                            self._system_vars["customer_intelligence"] = profile[
+                                "customer_intelligence"
+                            ]
                         if profile.get("institution_name"):
-                            self._memo_manager.set_corememory("institution_name", profile["institution_name"])
+                            self._memo_manager.set_corememory(
+                                "institution_name", profile["institution_name"]
+                            )
                             self._system_vars["institution_name"] = profile["institution_name"]
                         logger.info(
                             "📋 Persisted user profile to corememory | client=%s name=%s",
@@ -1996,7 +2790,9 @@ class LiveOrchestrator:
                 tool_span.set_attribute("voicelive.handoff.target_agent", target)
                 tool_span.add_event("tool.handoff_triggered", {"target_agent": target})
                 tool_span.set_attribute("voicelive.handoff.share_context", resolution.share_context)
-                tool_span.set_attribute("voicelive.handoff.greet_on_switch", resolution.greet_on_switch)
+                tool_span.set_attribute(
+                    "voicelive.handoff.greet_on_switch", resolution.greet_on_switch
+                )
                 tool_span.set_attribute("voicelive.handoff.type", resolution.handoff_type)
 
                 # CRITICAL: Cancel any ongoing response from the OLD agent immediately.
@@ -2112,7 +2908,7 @@ class LiveOrchestrator:
                                 await self.conn.conversation.item.create(item=user_item)
                                 logger.debug(
                                     "[Handoff] Injected user question as conversation item: %s",
-                                    user_question[:50] if user_question else "none"
+                                    user_question[:50] if user_question else "none",
                                 )
                             except Exception:
                                 logger.debug(
@@ -2154,7 +2950,9 @@ class LiveOrchestrator:
                             target_service="azure_voicelive",
                             call_connection_id=self.call_connection_id,
                             session_id=(
-                                getattr(self.messenger, "session_id", None) if self.messenger else None
+                                getattr(self.messenger, "session_id", None)
+                                if self.messenger
+                                else None
                             ),
                         ),
                     ):
@@ -2163,7 +2961,9 @@ class LiveOrchestrator:
                         )
                     logger.info(
                         "[Handoff] Triggered new agent '%s' | greet=%s | question=%s",
-                        target, greet_on_switch, user_question[:50] if user_question else "none"
+                        target,
+                        greet_on_switch,
+                        user_question[:50] if user_question else "none",
                     )
                 except Exception as e:
                     logger.warning("[Handoff] Failed to trigger response: %s", e)
@@ -2184,7 +2984,8 @@ class LiveOrchestrator:
                 self._response_had_tool_calls = True
                 logger.debug(
                     "[Business Tool] Queued output for call_id=%s | pending_count=%d",
-                    call_id, len(self._pending_tool_outputs)
+                    call_id,
+                    len(self._pending_tool_outputs),
                 )
 
                 if self.messenger:
@@ -2251,6 +3052,11 @@ class LiveOrchestrator:
         return greeting
 
     def _cancel_pending_greeting_tasks(self) -> None:
+        # Whoever cancels greeting delivery also owns the in-flight guard: a
+        # stale flag would let the *next* genuine bootstrap echo skip the audio
+        # reset it needs. Cleared before the early return so it holds even when
+        # no fallback task was ever scheduled.
+        self._greeting_response_pending = False
         if not self._greeting_tasks:
             return
         for task in list(self._greeting_tasks):
@@ -2263,19 +3069,24 @@ class LiveOrchestrator:
 
         async def _fallback() -> None:
             try:
-                await asyncio.sleep(0.35)
+                await asyncio.sleep(GREETING_FALLBACK_DELAY_S)
                 if self._pending_greeting and self._pending_greeting_agent == agent_name:
                     logger.debug(
                         "[GreetingFallback] Triggering fallback introduction for %s", agent_name
                     )
+                    # Claim the guard *before* awaiting the trigger: the echo can
+                    # land while this coroutine is suspended inside response.create().
+                    self._greeting_response_pending = True
                     try:
                         await self.agents[agent_name].trigger_voicelive_response(
                             self.conn,
                             say=self._pending_greeting,
                         )
                     except asyncio.CancelledError:
+                        self._greeting_response_pending = False
                         raise
                     except Exception:
+                        self._greeting_response_pending = False
                         logger.debug("[GreetingFallback] Failed to deliver greeting", exc_info=True)
                         return
                     self._pending_greeting = None
@@ -2475,12 +3286,14 @@ class LiveOrchestrator:
         output_tokens = 0
 
         if usage:
-            input_tokens = getattr(usage, "input_tokens", None) or getattr(
-                usage, "prompt_tokens", None
-            ) or 0
-            output_tokens = getattr(usage, "output_tokens", None) or getattr(
-                usage, "completion_tokens", None
-            ) or 0
+            input_tokens = (
+                getattr(usage, "input_tokens", None) or getattr(usage, "prompt_tokens", None) or 0
+            )
+            output_tokens = (
+                getattr(usage, "output_tokens", None)
+                or getattr(usage, "completion_tokens", None)
+                or 0
+            )
 
         # Track tokens and response via unified metrics
         self._metrics.add_tokens(input_tokens=input_tokens, output_tokens=output_tokens)
@@ -2577,4 +3390,3 @@ __all__ = [
     "get_voicelive_orchestrator",
     "get_orchestrator_registry_size",
 ]
-

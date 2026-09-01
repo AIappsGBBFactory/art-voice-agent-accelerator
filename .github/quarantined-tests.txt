@@ -1,0 +1,48 @@
+# Quarantined tests
+#
+# Tests listed here are EXCLUDED from the blocking unit-test CI job, but are
+# still executed by the non-blocking "quarantined" job in test-unit.yml so a
+# fix gets noticed instead of the quarantine becoming permanent.
+#
+# Every entry must record WHY it is here. Nothing lands here to silence a
+# regression in new work -- these are pre-existing failures that predate the
+# introduction of the unit-test gate, captured so the gate could be switched on
+# without being red from day one.
+#
+# THIS FILE IS THE TRACKING RECORD. GitHub Issues are disabled on this
+# repository, so there is no ticket to point at: the rationale below is the
+# record, and the non-blocking `quarantined` job in test-unit.yml is the
+# reminder. An entry that starts passing shows up as "✅ Quarantined tests are
+# passing" in the workflow summary and should be deleted from this file.
+#
+# Definition of done: every entry is either fixed or deliberately removed with a
+# rationale, at which point this file and the `quarantined` job both go away.
+#
+# Baseline when this file was created: 953 passed, 8 failed, 27 skipped
+# (verified with no .env present, so these are genuine failures rather than
+# local environment artifacts).
+#
+# Format: one pytest node id per line.
+
+# --- ACS managed-identity selection ------------------------------------------
+# should_use_managed_identity_for_acs() returns False where these tests expect
+# True. The tests set AZURE_CLIENT_ID and clear ACS_USE_MANAGED_IDENTITY, so the
+# assertion encodes an autodetect rule the implementation no longer applies.
+# Either the detection logic or the expectation is stale; needs an owner call.
+tests/test_acs_managed_identity.py::test_should_use_mi_autodetect_in_azure
+tests/test_acs_managed_identity.py::test_acs_caller_prefers_managed_identity_when_endpoint_set
+tests/test_acs_managed_identity.py::test_email_service_prefers_managed_identity
+tests/test_acs_managed_identity.py::test_sms_service_prefers_managed_identity
+tests/test_acs_managed_identity.py::test_sms_service_uses_endpoint_mi_when_no_connection_string
+
+# --- Azure OpenAI manager invocation config ----------------------------------
+# Asserts the responses/chat config plumbed into generate_response(); the
+# invocation shape drifted from what the tests pin.
+tests/test_aoai_manager_invocation.py::test_generate_response_respects_responses_config
+tests/test_aoai_manager_invocation.py::test_generate_response_respects_chat_config
+
+# --- VoiceLive background-sync timing ----------------------------------------
+# Wall-clock assertion that _schedule_background_sync() returns "fast enough".
+# Timing-sensitive by construction and therefore flaky on shared CI runners;
+# should be rewritten to assert the scheduling contract, not elapsed time.
+tests/test_voicelive_memory.py::TestHotPathOptimization::test_schedule_background_sync_is_non_blocking

@@ -18,7 +18,7 @@ from azure.identity import (
 )
 from dotenv import load_dotenv
 from openai import AzureOpenAI
-from utils.azure_auth import get_credential
+from utils.azure_auth import _is_azure_hosted, get_credential
 from utils.ml_logging import logging
 
 logger = logging.getLogger(__name__)
@@ -57,7 +57,11 @@ def create_azure_openai_client(
 
     resolved_credential = credential
     if not resolved_credential:
-        if azure_client_id:
+        # AZURE_CLIENT_ID identifies a user-assigned managed identity ONLY when
+        # Azure-hosted. On CI runners (GitHub Actions) it's the OIDC/SP app id,
+        # which would make ManagedIdentityCredential fail (no IMDS), so fall
+        # through to get_credential() (AzureCliCredential after az login).
+        if azure_client_id and _is_azure_hosted():
             logger.info("Using user-assigned managed identity with client ID: %s", azure_client_id)
             resolved_credential = ManagedIdentityCredential(client_id=azure_client_id)
         else:
