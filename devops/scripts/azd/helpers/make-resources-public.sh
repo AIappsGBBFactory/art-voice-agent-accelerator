@@ -297,6 +297,50 @@ get_public_network_access() {
         --query properties.publicNetworkAccess -o tsv 2>/dev/null || true
 }
 
+# Name the Azure Policy `modify` effect that rewrites publicNetworkAccess on
+# write, if one is assigned above this subscription.
+#
+# This exists because such a policy is invisible from the outside: ARM accepts
+# the request, returns HTTP 200, and hands back the value the policy just
+# overwrote. Both the CLI call and the readback therefore "succeed" while
+# nothing changed, and the only symptom is a later data-plane 403 from whatever
+# actually needed the resource — Terraform's refresh, in our case. Reporting
+# "skipped" without the cause turns a one-line governance fact into a multi-day
+# investigation, so we look the reason up and print it.
+policy_modify_reason() {
+    az policy state list "${AZ_SUB_ARGS[@]}" --resource "$1" \
+        --query "[?policyDefinitionAction=='modify'] | [0].policyDefinitionName" \
+        -o tsv 2>/dev/null | head -1 || true
+}
+
+# Compose the detail string for a resource whose publicNetworkAccess would not
+# change, naming the governing policy when there is one.
+blocked_detail() {
+    local id="$1" observed="$2" reason
+    reason="$(policy_modify_reason "$id")"
+    if [[ -n "$reason" && "$reason" != "None" ]]; then
+        printf 'publicNetworkAccess=%s — overridden by Azure Policy modify effect "%s"; this cannot be forced from the subscription' \
+            "${observed:-unknown}" "$reason"
+    else
+        printf 'publicNetworkAccess=%s after update (no modify policy found; check permissions/resource SKU)' \
+            "${observed:-unknown}"
+    fi
+}
+
+# Re-run the vault update capturing stderr, purely to report *why* it failed.
+# The main call discards stderr to keep the progress output readable; without
+# replaying it here a hard failure is indistinguishable from an unsupported
+# resource, which is what previously reduced a policy override to a bare
+# "skipped" line.
+kv_update_error() {
+    local name="$1" rg="$2" err
+    err="$(az keyvault update "${AZ_SUB_ARGS[@]}" \
+        --name "$name" --resource-group "$rg" \
+        --public-network-access Enabled --default-action Allow \
+        --output none 2>&1 >/dev/null | tr '\n' ' ' | sed 's/  */ /g')"
+    printf '%s' "${err:0:300}"
+}
+
 # Open a single resource's data plane. Runs inside a background job; emits one
 # result line. Type-specific where needed, generic publicNetworkAccess otherwise.
 flip_one() {
@@ -327,7 +371,13 @@ flip_one() {
             fi
             ;;
         Microsoft.ContainerRegistry/registries)
-            if az acr update "${AZ_SUB_ARGS[@]}" --ids "$id" \
+            # Basic/Standard registries do not support network rules at all, so
+            # `az acr update --public-network-enabled` fails on them even though
+            # they are already publicly reachable. Checking the observed state
+            # first turns that permanent false alarm into an accurate OK.
+            if [[ "$(get_public_network_access "$id")" == "Enabled" ]]; then
+                emit OK "$name" "publicNetworkAccess=Enabled (already open)"
+            elif az acr update "${AZ_SUB_ARGS[@]}" --ids "$id" \
                     --public-network-enabled true --output none 2>/dev/null; then
                 az acr update "${AZ_SUB_ARGS[@]}" --ids "$id" \
                     --default-action Allow --output none 2>/dev/null || true
@@ -362,7 +412,22 @@ flip_one() {
             fi
             ;;
         Microsoft.KeyVault/vaults)
-            if az keyvault update "${AZ_SUB_ARGS[@]}" --ids "$id" \
+            # `az keyvault update` is one of the few commands with no --ids
+            # support: it requires --name (and --resource-group to disambiguate).
+            # Passing --ids made every invocation fail argument parsing, so this
+            # branch never actually ran — it fell straight to the else and
+            # reported a bare "skipped" with the resource type as the reason.
+            local kv_resource_group
+            kv_resource_group="${id#*/resourceGroups/}"
+            kv_resource_group="${kv_resource_group%%/*}"
+            if [[ -z "$kv_resource_group" || "$kv_resource_group" == "$id" ]]; then
+                emit SKIP "$name" "key vault update failed: resource group could not be resolved"
+            # Report a vault that is already reachable as OK instead of trying
+            # (and appearing to fail) to re-enable it.
+            elif [[ "$(get_public_network_access "$id")" == "Enabled" ]]; then
+                emit OK "$name" "publicNetworkAccess=Enabled (already open)"
+            elif az keyvault update "${AZ_SUB_ARGS[@]}" \
+                    --name "$name" --resource-group "$kv_resource_group" \
                     --public-network-access Enabled --default-action Allow \
                     --output none 2>/dev/null; then
                 local keyvault_public_network_access
@@ -376,7 +441,8 @@ flip_one() {
                 elif ! merge_security_control_ignore_tag "$id"; then
                     emit SKIP "$name" \
                         "publicNetworkAccess=${keyvault_public_network_access:-unknown} after update; SecurityControl=Ignore tag failed"
-                elif az keyvault update "${AZ_SUB_ARGS[@]}" --ids "$id" \
+                elif az keyvault update "${AZ_SUB_ARGS[@]}" \
+                        --name "$name" --resource-group "$kv_resource_group" \
                         --public-network-access Enabled --default-action Allow \
                         --output none 2>/dev/null; then
                     keyvault_public_network_access="$(get_public_network_access "$id")"
@@ -385,13 +451,14 @@ flip_one() {
                             "publicNetworkAccess=Enabled acl=Allow SecurityControl=Ignore (retry)"
                     else
                         emit SKIP "$name" \
-                            "tagged SecurityControl=Ignore; publicNetworkAccess=${keyvault_public_network_access:-unknown} after retry"
+                            "$(blocked_detail "$id" "$keyvault_public_network_access")"
                     fi
                 else
                     emit SKIP "$name" "tagged SecurityControl=Ignore; retry failed"
                 fi
             else
-                emit SKIP "$name" "$type"
+                emit SKIP "$name" \
+                    "az keyvault update failed: $(kv_update_error "$name" "$kv_resource_group")"
             fi
             ;;
         Microsoft.Storage/storageAccounts)
@@ -540,6 +607,7 @@ fi
 CHANGED=0
 SKIPPED=0
 TAG_FAILED=0
+POLICY_BLOCKED=0
 echo ""
 while IFS=$'\t' read -r st name detail; do
     [[ -z "$st" ]] && continue
@@ -549,6 +617,7 @@ while IFS=$'\t' read -r st name detail; do
         SKIP)
             warn "$name — ${detail:-failed/unsupported, skipped}"
             SKIPPED=$((SKIPPED + 1))
+            [[ "$detail" == *"Azure Policy modify effect"* ]] && POLICY_BLOCKED=$((POLICY_BLOCKED + 1))
             ;;
         WARN)
             warn "$name — $detail"
@@ -567,6 +636,16 @@ else
     [[ "$TAG_FAILED" -gt 0 ]] && fail "SecurityControl=Ignore tag failed for $TAG_FAILED updated resource(s)."
 fi
 echo ""
+
+# A policy-blocked resource is not a transient failure and re-running will never
+# clear it, so say so once, here, rather than letting the caller infer it from a
+# data-plane 403 several minutes later in `terraform plan`.
+if [[ "$POLICY_BLOCKED" -gt 0 ]]; then
+    warn "$POLICY_BLOCKED resource(s) are held private by Azure Policy and cannot be opened from this subscription."
+    dim  "Anything that reaches them over the public data plane (e.g. Terraform refreshing"
+    dim  "key vault secrets) will fail until it runs from an allowed network, or stops"
+    dim  "needing public access. Retrying this script will not change the outcome."
+fi
 
 if ! $DRY_RUN && [[ "$TAG_FAILED" -gt 0 ]]; then
     exit 1
