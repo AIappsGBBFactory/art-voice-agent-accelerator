@@ -44,6 +44,7 @@ from apps.artagent.backend.src.utils.tracing import (
     create_service_handler_attrs,
 )
 from apps.artagent.backend.voice.shared.config_resolver import resolve_orchestrator_config
+from apps.artagent.backend.voice.shared.session_state import sync_state_to_memo
 from src.stateful.state_managment import MemoManager
 from apps.artagent.backend.voice import (
     CascadeOrchestratorAdapter,
@@ -163,6 +164,22 @@ def _get_or_create_adapter(
     if session_agent:
         adapter.agents[session_agent.name] = session_agent
         adapter._active_agent = session_agent.name
+        # Persist it as the session's active agent of record, not just on the
+        # adapter. route_turn() calls adapter.sync_from_memo_manager(cm) on the
+        # very next line, and that read is authoritative — so without this write
+        # an ``active_agent`` left in MemoManager by an *earlier* connection on
+        # the same session_id silently undoes the assignment above, and the call
+        # runs with the stale agent's voice and instructions instead of the tuned
+        # ones. (Same root cause as the Voice Live split-brain fixed in 9530f30;
+        # Cascade resolves the model per turn so it degrades to the wrong voice
+        # rather than a mute call, but the tuning is lost either way.)
+        #
+        # Safe to write unconditionally here: this branch only runs when the
+        # adapter is first created — cached adapters return above — so it cannot
+        # stomp a handoff made later in the call, which continues to propagate
+        # through MemoManager exactly as before.
+        if memo_manager is not None:
+            sync_state_to_memo(memo_manager, active_agent=session_agent.name)
         logger.info(
             "🎨 Injected pre-existing session agent | session=%s agent=%s voice=%s",
             session_id,
