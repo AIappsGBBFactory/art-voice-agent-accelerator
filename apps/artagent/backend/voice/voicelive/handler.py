@@ -970,6 +970,12 @@ class VoiceLiveSDKHandler:
         self._startup_error: VoiceErrorInfo | None = None
         self._event_task: asyncio.Task | None = None
         self._running = False
+        # Re-entry guard for stop(). `start()` acquires the connection, registers
+        # the orchestrator, and spawns tasks *before* it flips `_running`, so a
+        # failure in that window still needs a full unwind. stop() therefore keys
+        # its teardown off resource presence rather than `_running`, and this flag
+        # makes a second (or concurrent) stop() a no-op.
+        self._stopping = False
         self._shutdown = asyncio.Event()
         self._acs_sample_rate = 16000
         self._active_response_ids: set[str] = set()
@@ -1597,12 +1603,21 @@ class VoiceLiveSDKHandler:
                 raise
 
     async def stop(self) -> None:
-        """Stop event processing and release VoiceLive resources."""
-        if not self._running:
-            if self._prepared_connection:
-                await self._prepared_connection.close()
-                self._prepared_connection = None
+        """Stop event processing and release VoiceLive resources.
+
+        Idempotent and safe after a *partial* startup. ``start()`` adopts/opens a
+        connection, registers the orchestrator, and spawns tasks all before it
+        sets ``_running = True``; a failure anywhere in that window must still
+        unwind whatever was actually acquired. Every step below is therefore
+        guarded by resource presence rather than by ``_running``, and the
+        ``_stopping`` re-entry guard makes a second call a no-op.
+        """
+        if self._stopping:
             return
+        self._stopping = True
+        was_running = self._running
+        self._running = False
+        self._shutdown.set()
 
         with tracer.start_as_current_span(
             "voicelive_handler.stop",
@@ -1613,36 +1628,44 @@ class VoiceLiveSDKHandler:
                 session_id=self.session_id,
             ),
         ) as stop_span:
-            self._running = False
-            self._shutdown.set()
-
-            # Unregister from scenario update callbacks
+            # Unregister first so a scenario-update callback can never target a
+            # half-torn-down orchestrator. Idempotent (pop with default).
             unregister_voicelive_orchestrator(self.session_id)
 
-            # Persist session state to Redis before stopping
-            try:
-                memo_manager = getattr(self.websocket.state, "cm", None) if self.websocket else None
-                redis_mgr = (
-                    getattr(self.websocket.app.state, "redis", None) if self.websocket else None
-                )
-                if memo_manager and redis_mgr:
-                    # Sync orchestrator state to memo_manager first
-                    if self._orchestrator and hasattr(self._orchestrator, "_sync_to_memo_manager"):
-                        self._orchestrator._sync_to_memo_manager()
-                    await memo_manager.persist_to_redis_async(redis_mgr)
-                    logger.info(
-                        "📦 Session state persisted to Redis | session=%s",
+            # Persist session state to Redis before stopping. Only for a session
+            # that genuinely started: a partial startup has no meaningful state
+            # to checkpoint and its stores may be half-wired.
+            if was_running:
+                try:
+                    memo_manager = (
+                        getattr(self.websocket.state, "cm", None) if self.websocket else None
+                    )
+                    redis_mgr = (
+                        getattr(self.websocket.app.state, "redis", None) if self.websocket else None
+                    )
+                    if memo_manager and redis_mgr:
+                        # Sync orchestrator state to memo_manager first
+                        if self._orchestrator and hasattr(
+                            self._orchestrator, "_sync_to_memo_manager"
+                        ):
+                            self._orchestrator._sync_to_memo_manager()
+                        await memo_manager.persist_to_redis_async(redis_mgr)
+                        logger.info(
+                            "📦 Session state persisted to Redis | session=%s",
+                            self.session_id,
+                        )
+                except Exception as persist_error:
+                    logger.warning(
+                        "Failed to persist session state: %s | session=%s",
+                        persist_error,
                         self.session_id,
                     )
-            except Exception as persist_error:
-                logger.warning(
-                    "Failed to persist session state: %s | session=%s",
-                    persist_error,
-                    self.session_id,
-                )
 
-            # Cleanup DTMFProcessor
-            await self._dtmf_processor.cleanup()
+            # Cleanup DTMFProcessor (safe on an idle processor).
+            try:
+                await self._dtmf_processor.cleanup()
+            except Exception:
+                logger.debug("DTMF cleanup failed during stop", exc_info=True)
 
             if self._event_task:
                 self._event_task.cancel()
@@ -1671,6 +1694,17 @@ class VoiceLiveSDKHandler:
                 finally:
                     self._connection_cm = None
                     self._connection = None
+
+            # An unclaimed warm connection: start() never adopted it (e.g. it
+            # failed before the warm-vs-target model check, or the handler was
+            # stopped before starting). Close it so the warm socket is not leaked.
+            if self._prepared_connection:
+                try:
+                    await self._prepared_connection.close()
+                except Exception:
+                    logger.debug("Failed to close prepared connection", exc_info=True)
+                finally:
+                    self._prepared_connection = None
 
             # Cleanup orchestrator resources (greeting tasks, references)
             if self._orchestrator:
