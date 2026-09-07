@@ -1,15 +1,16 @@
 """
-Audio Codec for Genesys AudioConnector
-========================================
+Audio codec helpers for the Genesys AudioHook bridge.
 
-Handles audio format conversion between Genesys AudioConnector (µ-law 8kHz)
-and Azure VoiceLive API (PCM16 24kHz).
+Genesys AudioHook uses 8 kHz µ-law audio on the wire. VoiceLive audio deltas are
+PCM16 at 24 kHz. The bridge therefore needs streaming-safe conversion in both
+directions:
 
-Conversions:
-    Inbound (Genesys → VoiceLive):  µ-law 8kHz → PCM16 24kHz (decode + 3x upsample)
-    Outbound (VoiceLive → Genesys): PCM16 24kHz → µ-law 8kHz (3x downsample + encode)
+* Inbound: µ-law 8 kHz -> PCM16 24 kHz -> base64 for VoiceLive
+* Outbound: PCM16 24 kHz -> µ-law 8 kHz for Genesys
 
-Uses numpy for efficient batch processing of audio samples.
+The converters below retain enough residual state to make results invariant to
+how input is chunked across frames. That is important for realtime streaming,
+where arbitrary transport chunking must not change the produced audio.
 """
 
 from __future__ import annotations
@@ -18,10 +19,7 @@ import base64
 
 import numpy as np
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# µ-law Decode Table (256 entries: µ-law byte → 16-bit PCM sample)
-# ═══════════════════════════════════════════════════════════════════════════════
-
+# µ-law decode table (µ-law byte -> 16-bit PCM sample).
 _ULAW_DECODE_TABLE = np.array(
     [
         -32124, -31100, -30076, -29052, -28028, -27004, -25980, -24956,
@@ -60,10 +58,7 @@ _ULAW_DECODE_TABLE = np.array(
     dtype=np.int16,
 )
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# µ-law Encode Table (exponent lookup for PCM → µ-law conversion)
-# ═══════════════════════════════════════════════════════════════════════════════
-
+# µ-law encode exponent lookup.
 _ULAW_ENCODE_TABLE = np.array(
     [
         0, 0, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3,
@@ -91,31 +86,20 @@ _ULAW_CLIP = 32635
 
 
 def ulaw_decode(ulaw_bytes: bytes) -> np.ndarray:
-    """Decode µ-law bytes to PCM16 samples at 8kHz.
-
-    Args:
-        ulaw_bytes: Raw µ-law encoded audio bytes.
-
-    Returns:
-        numpy int16 array of PCM16 samples at 8kHz.
-    """
+    """Decode µ-law bytes to 8 kHz PCM16 samples."""
+    if not ulaw_bytes:
+        return np.array([], dtype=np.int16)
     indices = np.frombuffer(ulaw_bytes, dtype=np.uint8)
     return _ULAW_DECODE_TABLE[indices]
 
 
 def ulaw_encode(pcm16_samples: np.ndarray) -> bytes:
-    """Encode PCM16 samples to µ-law bytes.
-
-    Args:
-        pcm16_samples: numpy int16 array of PCM16 audio samples.
-
-    Returns:
-        Raw µ-law encoded bytes.
-    """
+    """Encode PCM16 samples to µ-law bytes."""
+    if pcm16_samples.size == 0:
+        return b""
     samples = pcm16_samples.astype(np.int32)
     sign = (samples >> 8) & 0x80
-    neg_mask = sign.astype(bool)
-    samples = np.where(neg_mask, -samples, samples)
+    samples = np.where(sign.astype(bool), -samples, samples)
     samples = np.clip(samples, 0, _ULAW_CLIP)
     samples = samples + _ULAW_BIAS
     exponent = _ULAW_ENCODE_TABLE[(samples >> 7) & 0xFF]
@@ -124,128 +108,189 @@ def ulaw_encode(pcm16_samples: np.ndarray) -> bytes:
     return ulaw.astype(np.uint8).tobytes()
 
 
+class StreamingUpsampler3x:
+    """Streaming-safe 8 kHz -> 24 kHz cubic upsampler."""
+
+    def __init__(self) -> None:
+        self._pending = np.array([], dtype=np.int16)
+        self._previous_sample: int | None = None
+
+    def process(self, pcm_8khz: np.ndarray) -> np.ndarray:
+        """Process another chunk and emit all now-stable 24 kHz output."""
+        if pcm_8khz.size:
+            self._pending = np.concatenate((self._pending, pcm_8khz.astype(np.int16, copy=False)))
+        return self._emit(final=False)
+
+    def flush(self) -> np.ndarray:
+        """Flush the remaining tail using edge-repeated boundary samples."""
+        return self._emit(final=True)
+
+    def _emit(self, *, final: bool) -> np.ndarray:
+        if self._pending.size == 0:
+            return np.array([], dtype=np.int16)
+
+        ready = self._pending.size if final else max(self._pending.size - 2, 0)
+        if ready == 0:
+            return np.array([], dtype=np.int16)
+
+        samples = self._pending.astype(np.float64, copy=False)
+        out = np.empty(ready * 3, dtype=np.float64)
+
+        for index in range(ready):
+            if index == 0 and self._previous_sample is not None:
+                y0 = float(self._previous_sample)
+            else:
+                y0 = samples[index - 1] if index > 0 else samples[index]
+            y1 = samples[index]
+            y2 = samples[index + 1] if index + 1 < samples.size else samples[-1]
+            y3 = samples[index + 2] if index + 2 < samples.size else y2
+
+            t1 = 1.0 / 3.0
+            t2 = 2.0 / 3.0
+            a0 = y3 - y2 - y0 + y1
+            a1 = y0 - y1 - a0
+            a2 = y2 - y0
+
+            out[index * 3] = y1
+            out[index * 3 + 1] = a0 * t1**3 + a1 * t1**2 + a2 * t1 + y1
+            out[index * 3 + 2] = a0 * t2**3 + a1 * t2**2 + a2 * t2 + y1
+
+        self._previous_sample = int(self._pending[ready - 1])
+        self._pending = self._pending[ready:].copy()
+        return np.clip(np.round(out), -32768, 32767).astype(np.int16)
+
+
+class StreamingDownsampler3x:
+    """Streaming-safe 24 kHz -> 8 kHz downsampler with residual retention."""
+
+    def __init__(self) -> None:
+        self._pending = np.array([], dtype=np.int16)
+
+    def process(self, pcm_24khz: np.ndarray) -> np.ndarray:
+        """Process another chunk and emit complete 3-sample groups."""
+        if pcm_24khz.size:
+            self._pending = np.concatenate((self._pending, pcm_24khz.astype(np.int16, copy=False)))
+        return self._emit(final=False)
+
+    def flush(self) -> np.ndarray:
+        """Flush trailing residual samples by edge-padding the final group."""
+        return self._emit(final=True)
+
+    def _emit(self, *, final: bool) -> np.ndarray:
+        if self._pending.size == 0:
+            return np.array([], dtype=np.int16)
+
+        if final and self._pending.size % 3:
+            remainder = 3 - (self._pending.size % 3)
+            pad = np.repeat(self._pending[-1], remainder).astype(np.int16)
+            self._pending = np.concatenate((self._pending, pad))
+
+        ready = (self._pending.size // 3) * 3
+        if ready == 0:
+            return np.array([], dtype=np.int16)
+
+        groups = self._pending[:ready].astype(np.float64).reshape(-1, 3)
+        averaged = np.mean(groups, axis=1)
+        self._pending = self._pending[ready:].copy()
+        return np.clip(np.round(averaged), -32768, 32767).astype(np.int16)
+
+
+class ULaw8kToPCM16_24kStreamDecoder:
+    """Streaming µ-law decoder producing VoiceLive-ready 24 kHz PCM."""
+
+    def __init__(self) -> None:
+        self._upsampler = StreamingUpsampler3x()
+
+    def decode_chunk(self, ulaw_bytes: bytes) -> bytes:
+        samples_8khz = ulaw_decode(ulaw_bytes)
+        return self._upsampler.process(samples_8khz).tobytes()
+
+    def decode_chunk_b64(self, ulaw_bytes: bytes) -> str:
+        return base64.b64encode(self.decode_chunk(ulaw_bytes)).decode("ascii")
+
+    def flush(self) -> bytes:
+        return self._upsampler.flush().tobytes()
+
+    def flush_b64(self) -> str:
+        return base64.b64encode(self.flush()).decode("ascii")
+
+
+class PCM16_24kToULaw8kStreamEncoder:
+    """Streaming PCM16 encoder producing Genesys-ready 8 kHz µ-law."""
+
+    def __init__(self) -> None:
+        self._pending_pcm_bytes = bytearray()
+        self._downsampler = StreamingDownsampler3x()
+
+    def encode_chunk(self, raw_bytes: bytes) -> bytes:
+        if not raw_bytes:
+            return b""
+
+        self._pending_pcm_bytes.extend(raw_bytes)
+        ready_bytes = len(self._pending_pcm_bytes) & ~0x1
+        if ready_bytes == 0:
+            return b""
+
+        chunk = bytes(self._pending_pcm_bytes[:ready_bytes])
+        del self._pending_pcm_bytes[:ready_bytes]
+
+        pcm_24khz = np.frombuffer(chunk, dtype=np.int16)
+        return ulaw_encode(self._downsampler.process(pcm_24khz))
+
+    def encode_base64_chunk(self, pcm16_b64: str) -> bytes:
+        try:
+            raw_bytes = base64.b64decode(pcm16_b64, validate=True)
+        except Exception as exc:  # noqa: BLE001 - normalize decode failures
+            raise ValueError("VoiceLive audio delta is not valid base64 PCM16") from exc
+        return self.encode_chunk(raw_bytes)
+
+    def flush(self) -> bytes:
+        if self._pending_pcm_bytes:
+            raise ValueError(
+                "VoiceLive PCM16 stream ended with an incomplete sample byte pair"
+            )
+        return ulaw_encode(self._downsampler.flush())
+
+
 def upsample_3x(pcm_8khz: np.ndarray) -> np.ndarray:
-    """Upsample PCM16 from 8kHz to 24kHz using cubic interpolation.
-
-    Args:
-        pcm_8khz: PCM16 samples at 8kHz (int16 array).
-
-    Returns:
-        PCM16 samples at 24kHz (int16 array, 3x length).
-    """
-    n = len(pcm_8khz)
-    if n == 0:
-        return np.array([], dtype=np.int16)
-
-    samples = pcm_8khz.astype(np.float64)
-    result = np.empty(n * 3, dtype=np.float64)
-
-    for i in range(n):
-        y0 = samples[i - 1] if i > 0 else samples[i]
-        y1 = samples[i]
-        y2 = samples[i + 1] if i < n - 1 else samples[i]
-        y3 = samples[i + 2] if i < n - 2 else y2
-
-        result[i * 3] = y1
-        # Cubic interpolation at 1/3 and 2/3 positions
-        t1, t2 = 1.0 / 3.0, 2.0 / 3.0
-        a0 = y3 - y2 - y0 + y1
-        a1 = y0 - y1 - a0
-        a2 = y2 - y0
-        result[i * 3 + 1] = a0 * t1**3 + a1 * t1**2 + a2 * t1 + y1
-        result[i * 3 + 2] = a0 * t2**3 + a1 * t2**2 + a2 * t2 + y1
-
-    return np.clip(np.round(result), -32768, 32767).astype(np.int16)
+    """Upsample PCM16 from 8 kHz to 24 kHz using the streaming-safe path."""
+    upsampler = StreamingUpsampler3x()
+    return np.concatenate((upsampler.process(pcm_8khz), upsampler.flush()))
 
 
 def downsample_3x(pcm_24khz: np.ndarray) -> np.ndarray:
-    """Downsample PCM16 from 24kHz to 8kHz using averaging anti-alias filter.
-
-    Args:
-        pcm_24khz: PCM16 samples at 24kHz (int16 array).
-
-    Returns:
-        PCM16 samples at 8kHz (int16 array, 1/3 length).
-    """
-    n = len(pcm_24khz)
-    out_len = n // 3
-    if out_len == 0:
-        return np.array([], dtype=np.int16)
-
-    # Reshape and average groups of 3 for anti-aliasing
-    trimmed = pcm_24khz[: out_len * 3].astype(np.float64)
-    groups = trimmed.reshape(out_len, 3)
-    averaged = np.mean(groups, axis=1)
-    return np.clip(np.round(averaged), -32768, 32767).astype(np.int16)
+    """Downsample PCM16 from 24 kHz to 8 kHz using the streaming-safe path."""
+    downsampler = StreamingDownsampler3x()
+    return np.concatenate((downsampler.process(pcm_24khz), downsampler.flush()))
 
 
 def ulaw_8khz_to_pcm16_24khz_b64(ulaw_bytes: bytes) -> str:
-    """Convert µ-law 8kHz audio to base64-encoded PCM16 24kHz.
-
-    This is the inbound conversion path: Genesys → VoiceLive.
-
-    Args:
-        ulaw_bytes: Raw µ-law encoded audio at 8kHz.
-
-    Returns:
-        Base64-encoded PCM16 audio at 24kHz for VoiceLive SDK.
-    """
-    pcm_8khz = ulaw_decode(ulaw_bytes)
-    pcm_24khz = upsample_3x(pcm_8khz)
-    raw_bytes = pcm_24khz.tobytes()
-    return base64.b64encode(raw_bytes).decode("ascii")
+    """Convert µ-law 8 kHz audio to base64-encoded PCM16 24 kHz."""
+    decoder = ULaw8kToPCM16_24kStreamDecoder()
+    return decoder.decode_chunk_b64(ulaw_bytes) + decoder.flush_b64()
 
 
 def pcm16_24khz_b64_to_ulaw_8khz(pcm16_b64: str) -> bytes:
-    """Convert base64-encoded PCM16 24kHz audio to µ-law 8kHz.
-
-    This is the outbound conversion path: VoiceLive → Genesys.
-
-    Args:
-        pcm16_b64: Base64-encoded PCM16 audio at 24kHz from VoiceLive.
-
-    Returns:
-        Raw µ-law encoded audio at 8kHz for Genesys AudioConnector.
-    """
-    raw_bytes = base64.b64decode(pcm16_b64)
-    return pcm16_24khz_bytes_to_ulaw_8khz(raw_bytes)
+    """Convert base64 PCM16 24 kHz audio to µ-law 8 kHz."""
+    encoder = PCM16_24kToULaw8kStreamEncoder()
+    return encoder.encode_base64_chunk(pcm16_b64) + encoder.flush()
 
 
 def pcm16_24khz_bytes_to_ulaw_8khz(raw_bytes: bytes) -> bytes:
-    """Convert raw PCM16 24kHz bytes to µ-law 8kHz.
-
-    Args:
-        raw_bytes: Raw PCM16 audio bytes at 24kHz.
-
-    Returns:
-        Raw µ-law encoded audio at 8kHz for Genesys AudioConnector.
-    """
-    # Ensure even byte count for int16 alignment
-    if len(raw_bytes) % 2 != 0:
-        raw_bytes = raw_bytes[:-1]
-    if len(raw_bytes) == 0:
-        return b""
-    pcm_24khz = np.frombuffer(raw_bytes, dtype=np.int16)
-    pcm_8khz = downsample_3x(pcm_24khz)
-    if len(pcm_8khz) == 0:
-        return b""
-    return ulaw_encode(pcm_8khz)
+    """Convert raw PCM16 24 kHz bytes to µ-law 8 kHz."""
+    encoder = PCM16_24kToULaw8kStreamEncoder()
+    return encoder.encode_chunk(raw_bytes) + encoder.flush()
 
 
 def convert_voicelive_delta_to_ulaw(delta: bytes | str) -> bytes:
-    """Convert a VoiceLive audio delta (bytes or base64 str) to µ-law 8kHz.
+    """Convert one VoiceLive audio delta to µ-law 8 kHz.
 
-    The VoiceLive SDK may deliver audio deltas as raw bytes or base64 strings.
-    This function handles both formats transparently.
-
-    Args:
-        delta: Audio delta from VoiceLive SDK — either raw PCM16 bytes or base64 str.
-
-    Returns:
-        Raw µ-law encoded audio at 8kHz for Genesys AudioConnector.
+    The one-shot helper remains available for tests and non-streaming callers.
+    The Genesys handler uses :class:`PCM16_24kToULaw8kStreamEncoder` directly so
+    odd byte pairs and sample remainders can span arbitrary event boundaries.
     """
     if isinstance(delta, bytes):
         return pcm16_24khz_bytes_to_ulaw_8khz(delta)
     if isinstance(delta, str):
         return pcm16_24khz_b64_to_ulaw_8khz(delta)
-    return b""
+    raise TypeError(f"Unsupported VoiceLive audio delta type: {type(delta).__name__}")
