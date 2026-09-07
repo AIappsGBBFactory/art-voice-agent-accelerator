@@ -513,8 +513,10 @@ class AzureRedisManager:
             self.logger.error(f"Error in store_session_data_async for session {session_id}: {e}")
             return False
 
-    async def get_session_data_async(self, session_id: str) -> dict[str, str]:
-        """Async version of get_session_data using thread pool executor."""
+    async def get_session_data_async(
+        self, session_id: str, *, raise_on_failure: bool = False
+    ) -> dict[str, str]:
+        """Read through the executor, optionally distinguishing failure from an empty hash."""
         try:
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(None, self.get_session_data, session_id)
@@ -523,6 +525,8 @@ class AzureRedisManager:
             raise
         except Exception as e:
             self.logger.error(f"Error in get_session_data_async for session {session_id}: {e}")
+            if raise_on_failure:
+                raise
             return {}
 
     async def update_session_field_async(self, session_id: str, field: str, value: str) -> bool:

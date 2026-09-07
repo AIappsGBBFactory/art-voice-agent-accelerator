@@ -1,0 +1,161 @@
+# MemoManager persistence lifetime
+
+`src/stateful/state_managment.py` owns a session's in-process persistence queue.
+It does not introduce a shared singleton, another storage system, or a distributed
+lock. This contract applies equally to Cascade, VoiceLive, and their existing
+channels; callers must adopt the lifecycle explicitly.
+
+## Restore without blocking startup
+
+```python
+memo = await MemoManager.from_redis_async(session_id, redis_mgr)
+```
+
+The exact new factory signature is:
+
+```python
+@classmethod
+async def from_redis_async(
+    cls, session_id: str, redis_mgr: AzureRedisManager
+) -> MemoManager:
+    ...
+```
+
+It uses the existing executor-backed Redis async read, retains the manager for
+later calls, and decodes memory/history exactly like `from_redis_with_manager`.
+An absent hash or missing field keeps the same initialization defaults; legacy
+list-shaped history is still decoded by `ChatHistory.from_json`. Redis read
+failure, malformed JSON, and caller cancellation propagate. The additive Redis
+keyword `get_session_data_async(key, *, raise_on_failure=False)` lets restoration
+request strict errors without changing other read callers' default behavior.
+The synchronous `from_redis` and `from_redis_with_manager` factories remain
+available and keep their existing manager-retention behavior.
+
+## One writer, immutable snapshots, explicit barriers
+
+| Operation | Contract |
+| --- | --- |
+| `await memo.persist_background(redis_mgr=None, ttl_seconds=None)` | Captures both JSON fields immediately, without an intervening await, then schedules persistence. Adjacent pending background requests coalesce only when Redis manager identity and TTL match. Missing manager or unserializable state raises at submission. |
+| `await memo.persist_to_redis_async(redis_mgr, ttl_seconds=None, *, raise_on_failure=False)` | Captures a direct snapshot and waits for its ordered write and requested expiry. Never coalesces a direct snapshot or coalesces background requests across it. Returns `True`/`False`; strict mode raises the error. |
+| `await memo.flush_pending_persist(*, raise_on_failure=False)` | Waits for the requests submitted before entry and reports their failures. Does not capture currently unsaved state or stop new submissions. Returns `True`/`False`; strict mode raises the first observed failure after the entire boundary finishes. |
+| `memo.cancel_pending_persist()` | Withdraws only not-started background snapshots. Returns whether any were withdrawn. Does not cancel an active write or a direct request. Withdrawal is reported as failure by flush, not as durability. |
+| `memo.persist_to_redis(redis_mgr, ttl_seconds=None)` | Compatible synchronous path when there is no outstanding async writer. Rejects overlap rather than blocking the event loop on its own writer or allowing reordering. |
+
+Each instance submits at most one Redis write/expiry sequence at a time. A newer
+background snapshot can replace a pending background snapshot, but cannot cancel
+an already-started write. Direct requests remain FIFO durability barriers. Several
+unawaited direct requests can queue; callers should await durability-critical
+operations instead of building an unbounded direct queue.
+
+Snapshots are serialized on the owning event loop before yielding and contain
+both complete local core memory and history. Later nested-dictionary or history
+changes cannot mutate an already-submitted snapshot. State must not be mutated
+from other threads. Updating configuration on a hydrated, current MemoManager
+preserves unrelated tool outputs and conversation history; replacing its entire
+context with a configuration-only dictionary still loses those local fields.
+
+## Cancellation, errors, and end-of-call state
+
+Direct and flush callers await shielded completion futures. Cancelling either
+caller raises `asyncio.CancelledError` promptly, while the internal writer and
+executor-backed Redis operation remain owned by the MemoManager. Cancellation
+does **not** retract a Redis command. A later flush can await the original write.
+Do not cancel the private writer task or shut down the loop before flushing.
+Forced internal writer termination is reported as unconfirmed durability and
+permanently rejects additional writes on that instance: silently restarting
+could let a new writer overtake an executor operation that is still running.
+
+Write errors are logged when they occur, retained through later successful
+writes, and acknowledged by a completed flush covering their submission boundary.
+This includes errors already returned to a direct caller and explicit pending
+withdrawals. Flush waits for every captured request before returning a failure.
+Concurrent flushes waiting on a failed request each observe that failure;
+completed failure records are cleared when a covering flush acknowledges them.
+A cancelled flush does not acknowledge errors. A subsequent empty flush can
+succeed after errors were acknowledged; that is not a retry of failed writes.
+Forced-writer failure remains terminal and is never acknowledged as recovery.
+
+`persist()` keeps its compatible `None` return and best-effort behavior; use the
+checked direct method when completed tool effects or end-of-call state must be
+durable. `set_live_context_value` now returns `False`, not `True`, after a failed
+write. Redis's existing async write wrapper still logs and returns `False` for
+backend exceptions, which MemoManager strict mode exposes as `RuntimeError`.
+Exceptions raised directly by an async backend are propagated in strict mode.
+
+After stopping all state producers, capture the final state and drain:
+
+```python
+try:
+    await memo.persist_to_redis_async(redis_mgr, raise_on_failure=True)
+finally:
+    await memo.flush_pending_persist(raise_on_failure=True)
+```
+
+Run this before releasing Redis or closing the loop, in a lifecycle scope that
+is allowed to finish. Repeated cancellation of that cleanup scope still stops
+its waiter; retain the MemoManager and flush from the supervising cleanup scope.
+The `finally` also drains and surfaces earlier background failures if the final
+direct write fails or its waiter is cancelled. Application error handling must
+decide whether and when to retry; flush never retries or invents a final snapshot.
+External deadlines can cancel a waiter without cancelling writes, but cannot
+promise durability by that deadline.
+
+## Storage compatibility and limits
+
+Storage remains the `session:{session_id}` Redis hash with JSON strings in
+`corememory` and `chat_history`. Redis `HSET` updates both fields in one command
+and preserves other hash fields. Its return value of zero for existing fields is
+successful. No revision field, key migration, or new dependency is introduced.
+
+Truthy `ttl_seconds` still applies `EXPIRE` after the write; `None` and zero skip
+expiry. Skipping expiry does not remove a pre-existing Redis TTL. Expiry is part
+of the same ordered operation and must succeed before it reports success.
+`HSET` and `EXPIRE` are separate commands, not an atomic transaction: expiry
+failure can leave updated data with the previous TTL. Normal Redis socket/retry
+limits apply; a successful barrier means Redis acknowledged the operation, not
+a stronger disk-replication or failover guarantee.
+
+Ordering is **per MemoManager instance on its owning event loop**, not even a
+process-wide ordering guarantee. Two independently hydrated MemoManagers, another
+process/worker, a direct Redis writer, or a concurrent external configuration
+writer can still overwrite each other's whole-state snapshots. This change does
+not solve distributed read-modify-write races or merge stale snapshots. Active
+call mutations should use the same current instance. Configuration-only writers
+must not manufacture an empty MemoManager and persist it over live state.
+Coordinating independent writers requires a separately designed ownership/CAS/
+atomic-update contract; a process-global singleton is not a substitute.
+
+## Consumer integration
+
+Replace synchronous hydration in async startup with `await from_redis_async`.
+Route direct/background state writes for a live call through the same instance.
+Keep checked direct persistence at durability-critical tool and call boundaries.
+Replace cancellation-based teardown with stopped producers, a final checked
+snapshot, and a checked flush. Do not change tool/MCP effects or unregister MCP
+resources as a side effect of flushing; that lifecycle remains with the caller.
+
+These API changes do not independently migrate engine handlers, routes, or
+configuration stores. Their owners must integrate the lifecycle and handle
+strict errors explicitly.
+
+The existing registry and unified-orchestrator background callers pass Redis
+explicitly. Remaining synchronous callers needing coordinated adoption are
+`CallEventHandlers._update_dtmf_sequence` and `_validate_sequence` in
+`apps/artagent/backend/api/v1/events/acs_events.py`, and the latency persistence
+call in `src/tools/latency_helpers.py`. They now receive an actionable overlap
+error when the same instance has async writes outstanding; they must use the
+ordered async path rather than bypass the writer or assume the sync call waits.
+
+## Focused regression suite
+
+```bash
+python -m pytest tests/test_memo_optimization.py tests/test_memo_persistence.py \
+    tests/test_redis_manager.py tests/test_session_agent_redis_roundtrip.py -q
+```
+
+The controlled Redis client exercises production MemoManager methods, production
+Redis hash operations, and actual executor threads. It releases newer writes
+before older ones to expose forbidden overlap, and covers coalescing, direct
+barriers, waiter/flush cancellation, failure reporting, final-state flush, TTL,
+full-state preservation, restoration parity, and the separate-instance limit.
+No live Redis or Azure service is used.
