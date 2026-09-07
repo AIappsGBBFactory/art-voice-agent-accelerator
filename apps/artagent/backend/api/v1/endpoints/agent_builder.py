@@ -57,22 +57,21 @@ import time
 from functools import lru_cache
 from typing import Any
 
-import yaml
 from apps.artagent.backend.registries.agentstore.base import (
+    VOICELIVE_BYOM_MODES,
     HandoffConfig,
     ModelConfig,
     SpeechConfig,
     UnifiedAgent,
     VoiceConfig,
     VoiceLiveBYOMConfig,
-    VOICELIVE_BYOM_MODES,
     byom_profile_model_conflict,
     is_managed_voicelive_model,
 )
 from apps.artagent.backend.registries.agentstore.loader import (
     AGENTS_DIR,
+    load_agent,
     load_defaults,
-    load_prompt,
 )
 from apps.artagent.backend.registries.toolstore.registry import (
     _TOOL_DEFINITIONS,
@@ -84,12 +83,12 @@ from apps.artagent.backend.src.orchestration.session_agents import (
     list_session_agents,
     list_session_agents_by_session,
     persist_session_agents_to_redis,
-    remove_session_agent,
+    remove_session_agent_async,
     set_session_agent,
 )
 from config import DEFAULT_TTS_VOICE
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from utils.ml_logging import get_logger
 
 logger = get_logger("v1.agent_builder")
@@ -148,27 +147,39 @@ class ModelConfigSchema(BaseModel):
     # Responses API parameters
     endpoint_preference: str = Field(
         default="auto",
-        description="Endpoint selection: 'auto' (smart routing), 'chat' (chat/completions), 'responses' (responses API)"
+        description="Endpoint selection: 'auto' (smart routing), 'chat' (chat/completions), 'responses' (responses API)",
     )
-    verbosity: int = Field(default=0, ge=0, le=2, description="Response verbosity: 0=minimal, 1=standard, 2=detailed")
-    min_p: float | None = Field(default=None, ge=0.0, le=1.0, description="Minimum probability threshold")
-    typical_p: float | None = Field(default=None, ge=0.0, le=1.0, description="Typical sampling parameter")
+    verbosity: int = Field(
+        default=0, ge=0, le=2, description="Response verbosity: 0=minimal, 1=standard, 2=detailed"
+    )
+    min_p: float | None = Field(
+        default=None, ge=0.0, le=1.0, description="Minimum probability threshold"
+    )
+    typical_p: float | None = Field(
+        default=None, ge=0.0, le=1.0, description="Typical sampling parameter"
+    )
     reasoning_effort: str | None = Field(
         default=None,
-        description="Reasoning effort level: 'low', 'medium', 'high' (for o1/o3/o4 models)"
+        description="Reasoning effort level: 'low', 'medium', 'high' (for o1/o3/o4 models)",
     )
-    include_reasoning: bool = Field(default=False, description="Include reasoning tokens in response")
+    include_reasoning: bool = Field(
+        default=False, description="Include reasoning tokens in response"
+    )
     max_completion_tokens: int | None = Field(
         default=None,
         ge=1,
         le=32768,
-        description="Max completion tokens (for reasoning models and responses API)"
+        description="Max completion tokens (for reasoning models and responses API)",
     )
 
     # Enhanced parameters
     store: bool | None = Field(default=None, description="Store conversation for training")
     metadata: dict[str, Any] | None = Field(default=None, description="Custom metadata")
-    response_format: dict[str, Any] | None = Field(default=None, description="Structured output format")
+    response_format: dict[str, Any] | None = Field(
+        default=None, description="Structured output format"
+    )
+    api_version: str | None = Field(default="v1", description="Model API version override")
+    model_family: str | None = Field(default=None, description="Detected/declared model family")
 
 
 class ByomConfigSchema(BaseModel):
@@ -256,13 +267,31 @@ class SessionConfigSchema(BaseModel):
     silence_duration_ms: int = Field(
         default=700, ge=100, le=3000, description="Silence duration before turn ends"
     )
-    prefix_padding_ms: int = Field(
-        default=240, ge=0, le=1000, description="Audio prefix padding"
-    )
+    prefix_padding_ms: int = Field(default=240, ge=0, le=1000, description="Audio prefix padding")
     tool_choice: str = Field(default="auto", description="Tool choice mode (auto, none, required)")
     input_audio_transcription_settings: dict[str, Any] | None = Field(
         default=None, description="VoiceLive input transcription settings (model, language)"
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_nested_turn_detection(cls, data: Any) -> Any:
+        """Accept persisted VoiceLive session dictionaries on update round-trips."""
+        if not isinstance(data, dict):
+            return data
+        turn_detection = data.get("turn_detection")
+        if isinstance(turn_detection, dict):
+            aliases = {
+                "turn_detection_type": "type",
+                "turn_detection_threshold": "threshold",
+                "silence_duration_ms": "silence_duration_ms",
+                "prefix_padding_ms": "prefix_padding_ms",
+            }
+            data = dict(data)
+            for field_name, nested_name in aliases.items():
+                if field_name not in data and nested_name in turn_detection:
+                    data[field_name] = turn_detection[nested_name]
+        return data
 
 
 class DynamicAgentConfig(BaseModel):
@@ -275,10 +304,16 @@ class DynamicAgentConfig(BaseModel):
         default="", max_length=1024, description="Return greeting when caller comes back"
     )
     handoff_trigger: str = Field(
-        default="", max_length=128, description="Tool name that routes to this agent (e.g., handoff_my_agent)"
+        default="",
+        max_length=128,
+        description="Tool name that routes to this agent (e.g., handoff_my_agent)",
     )
     prompt: str = Field(..., min_length=10, description="System prompt for the agent")
     tools: list[str] = Field(default_factory=list, description="List of tool names to enable")
+    mcp_servers: list[str] = Field(
+        default_factory=list,
+        description="MCP server names whose tools should be attached to this agent",
+    )
     cascade_model: ModelConfigSchema | None = Field(
         default=None, description="Model config for cascade mode (STT→LLM→TTS)"
     )
@@ -290,7 +325,8 @@ class DynamicAgentConfig(BaseModel):
         description="Voice Live BYOM (Bring Your Own Model) config (VoiceLive mode only)",
     )
     model: ModelConfigSchema | None = Field(
-        default=None, description="Legacy: fallback model config (use cascade_model/voicelive_model instead)"
+        default=None,
+        description="Legacy: fallback model config (use cascade_model/voicelive_model instead)",
     )
     voice: VoiceConfigSchema | None = None
     speech: SpeechConfigSchema | None = None
@@ -360,11 +396,17 @@ class AgentTemplateInfo(BaseModel):
     prompt_preview: str
     prompt_full: str
     tools: list[str]
+    mcp_servers: list[str] = []
     voice: dict[str, Any] | None = None
     model: dict[str, Any] | None = None
     cascade_model: dict[str, Any] | None = None
     voicelive_model: dict[str, Any] | None = None
     byom: dict[str, Any] | None = None
+    speech: dict[str, Any] | None = None
+    session: dict[str, Any] | None = None
+    template_vars: dict[str, Any] = {}
+    source: str = "yaml"
+    source_path: str | None = None
     is_entry_point: bool = False
     is_session_agent: bool = False
     session_id: str | None = None
@@ -431,8 +473,10 @@ def _hd_voice(short_name: str, persona: str, gender: str | None = None) -> Voice
     """Build a catalog entry for an HD voice from its documented short name."""
     category, voice_type, is_hd = _classify_voice_name(short_name)
     locale = _locale_from_short_name(short_name)
-    label = "HD Omni" if voice_type == "neural-hd-omni" else (
-        "HD Flash" if voice_type == "neural-hd-flash" else "HD"
+    label = (
+        "HD Omni"
+        if voice_type == "neural-hd-omni"
+        else ("HD Flash" if voice_type == "neural-hd-flash" else "HD")
     )
     suffix = "" if locale == "en-US" else f" · {locale}"
     return VoiceInfo(
@@ -526,67 +570,297 @@ AVAILABLE_VOICES = [
     # MAI-Voice-2 (preview) - multilingual, high-fidelity expressive synthesis.
     # https://learn.microsoft.com/azure/ai-services/speech-service/mai-voices
     # English (US)
-    VoiceInfo(name="en-US-Ethan:MAI-Voice-2", display_name="Ethan (MAI-Voice-2)", category="mai", language="en-US"),
-    VoiceInfo(name="en-US-Grant:MAI-Voice-2", display_name="Grant (MAI-Voice-2)", category="mai", language="en-US"),
-    VoiceInfo(name="en-US-Harper:MAI-Voice-2", display_name="Harper (MAI-Voice-2)", category="mai", language="en-US"),
-    VoiceInfo(name="en-US-Iris:MAI-Voice-2", display_name="Iris (MAI-Voice-2)", category="mai", language="en-US"),
-    VoiceInfo(name="en-US-Jasper:MAI-Voice-2", display_name="Jasper (MAI-Voice-2)", category="mai", language="en-US"),
-    VoiceInfo(name="en-US-Olivia:MAI-Voice-2", display_name="Olivia (MAI-Voice-2)", category="mai", language="en-US"),
+    VoiceInfo(
+        name="en-US-Ethan:MAI-Voice-2",
+        display_name="Ethan (MAI-Voice-2)",
+        category="mai",
+        language="en-US",
+    ),
+    VoiceInfo(
+        name="en-US-Grant:MAI-Voice-2",
+        display_name="Grant (MAI-Voice-2)",
+        category="mai",
+        language="en-US",
+    ),
+    VoiceInfo(
+        name="en-US-Harper:MAI-Voice-2",
+        display_name="Harper (MAI-Voice-2)",
+        category="mai",
+        language="en-US",
+    ),
+    VoiceInfo(
+        name="en-US-Iris:MAI-Voice-2",
+        display_name="Iris (MAI-Voice-2)",
+        category="mai",
+        language="en-US",
+    ),
+    VoiceInfo(
+        name="en-US-Jasper:MAI-Voice-2",
+        display_name="Jasper (MAI-Voice-2)",
+        category="mai",
+        language="en-US",
+    ),
+    VoiceInfo(
+        name="en-US-Olivia:MAI-Voice-2",
+        display_name="Olivia (MAI-Voice-2)",
+        category="mai",
+        language="en-US",
+    ),
     # English (Australia)
-    VoiceInfo(name="en-AU-Lisa:MAI-Voice-2", display_name="Lisa · en-AU (MAI-Voice-2)", category="mai", language="en-AU"),
+    VoiceInfo(
+        name="en-AU-Lisa:MAI-Voice-2",
+        display_name="Lisa · en-AU (MAI-Voice-2)",
+        category="mai",
+        language="en-AU",
+    ),
     # German (Germany)
-    VoiceInfo(name="de-DE-Klaus:MAI-Voice-2", display_name="Klaus · de-DE (MAI-Voice-2)", category="mai", language="de-DE"),
-    VoiceInfo(name="de-DE-Mia:MAI-Voice-2", display_name="Mia · de-DE (MAI-Voice-2)", category="mai", language="de-DE"),
+    VoiceInfo(
+        name="de-DE-Klaus:MAI-Voice-2",
+        display_name="Klaus · de-DE (MAI-Voice-2)",
+        category="mai",
+        language="de-DE",
+    ),
+    VoiceInfo(
+        name="de-DE-Mia:MAI-Voice-2",
+        display_name="Mia · de-DE (MAI-Voice-2)",
+        category="mai",
+        language="de-DE",
+    ),
     # Spanish (Spain / Mexico)
-    VoiceInfo(name="es-ES-Marta:MAI-Voice-2", display_name="Marta · es-ES (MAI-Voice-2)", category="mai", language="es-ES"),
-    VoiceInfo(name="es-MX-Alejo:MAI-Voice-2", display_name="Alejo · es-MX (MAI-Voice-2)", category="mai", language="es-MX"),
-    VoiceInfo(name="es-MX-Valeria:MAI-Voice-2", display_name="Valeria · es-MX (MAI-Voice-2)", category="mai", language="es-MX"),
+    VoiceInfo(
+        name="es-ES-Marta:MAI-Voice-2",
+        display_name="Marta · es-ES (MAI-Voice-2)",
+        category="mai",
+        language="es-ES",
+    ),
+    VoiceInfo(
+        name="es-MX-Alejo:MAI-Voice-2",
+        display_name="Alejo · es-MX (MAI-Voice-2)",
+        category="mai",
+        language="es-MX",
+    ),
+    VoiceInfo(
+        name="es-MX-Valeria:MAI-Voice-2",
+        display_name="Valeria · es-MX (MAI-Voice-2)",
+        category="mai",
+        language="es-MX",
+    ),
     # French (France)
-    VoiceInfo(name="fr-FR-Marc:MAI-Voice-2", display_name="Marc · fr-FR (MAI-Voice-2)", category="mai", language="fr-FR"),
-    VoiceInfo(name="fr-FR-Soleil:MAI-Voice-2", display_name="Soleil · fr-FR (MAI-Voice-2)", category="mai", language="fr-FR"),
+    VoiceInfo(
+        name="fr-FR-Marc:MAI-Voice-2",
+        display_name="Marc · fr-FR (MAI-Voice-2)",
+        category="mai",
+        language="fr-FR",
+    ),
+    VoiceInfo(
+        name="fr-FR-Soleil:MAI-Voice-2",
+        display_name="Soleil · fr-FR (MAI-Voice-2)",
+        category="mai",
+        language="fr-FR",
+    ),
     # Hindi (India)
-    VoiceInfo(name="hi-IN-Arjun:MAI-Voice-2", display_name="Arjun · hi-IN (MAI-Voice-2)", category="mai", language="hi-IN"),
-    VoiceInfo(name="hi-IN-Dhruv:MAI-Voice-2", display_name="Dhruv · hi-IN (MAI-Voice-2)", category="mai", language="hi-IN"),
-    VoiceInfo(name="hi-IN-Kavya:MAI-Voice-2", display_name="Kavya · hi-IN (MAI-Voice-2)", category="mai", language="hi-IN"),
-    VoiceInfo(name="hi-IN-Priya:MAI-Voice-2", display_name="Priya · hi-IN (MAI-Voice-2)", category="mai", language="hi-IN"),
+    VoiceInfo(
+        name="hi-IN-Arjun:MAI-Voice-2",
+        display_name="Arjun · hi-IN (MAI-Voice-2)",
+        category="mai",
+        language="hi-IN",
+    ),
+    VoiceInfo(
+        name="hi-IN-Dhruv:MAI-Voice-2",
+        display_name="Dhruv · hi-IN (MAI-Voice-2)",
+        category="mai",
+        language="hi-IN",
+    ),
+    VoiceInfo(
+        name="hi-IN-Kavya:MAI-Voice-2",
+        display_name="Kavya · hi-IN (MAI-Voice-2)",
+        category="mai",
+        language="hi-IN",
+    ),
+    VoiceInfo(
+        name="hi-IN-Priya:MAI-Voice-2",
+        display_name="Priya · hi-IN (MAI-Voice-2)",
+        category="mai",
+        language="hi-IN",
+    ),
     # Hungarian (Hungary)
-    VoiceInfo(name="hu-HU-Bence:MAI-Voice-2", display_name="Bence · hu-HU (MAI-Voice-2)", category="mai", language="hu-HU"),
-    VoiceInfo(name="hu-HU-Levente:MAI-Voice-2", display_name="Levente · hu-HU (MAI-Voice-2)", category="mai", language="hu-HU"),
-    VoiceInfo(name="hu-HU-Lilla:MAI-Voice-2", display_name="Lilla · hu-HU (MAI-Voice-2)", category="mai", language="hu-HU"),
-    VoiceInfo(name="hu-HU-Réka:MAI-Voice-2", display_name="Réka · hu-HU (MAI-Voice-2)", category="mai", language="hu-HU"),
+    VoiceInfo(
+        name="hu-HU-Bence:MAI-Voice-2",
+        display_name="Bence · hu-HU (MAI-Voice-2)",
+        category="mai",
+        language="hu-HU",
+    ),
+    VoiceInfo(
+        name="hu-HU-Levente:MAI-Voice-2",
+        display_name="Levente · hu-HU (MAI-Voice-2)",
+        category="mai",
+        language="hu-HU",
+    ),
+    VoiceInfo(
+        name="hu-HU-Lilla:MAI-Voice-2",
+        display_name="Lilla · hu-HU (MAI-Voice-2)",
+        category="mai",
+        language="hu-HU",
+    ),
+    VoiceInfo(
+        name="hu-HU-Réka:MAI-Voice-2",
+        display_name="Réka · hu-HU (MAI-Voice-2)",
+        category="mai",
+        language="hu-HU",
+    ),
     # Italian (Italy)
-    VoiceInfo(name="it-IT-Luca:MAI-Voice-2", display_name="Luca · it-IT (MAI-Voice-2)", category="mai", language="it-IT"),
-    VoiceInfo(name="it-IT-Rosa:MAI-Voice-2", display_name="Rosa · it-IT (MAI-Voice-2)", category="mai", language="it-IT"),
+    VoiceInfo(
+        name="it-IT-Luca:MAI-Voice-2",
+        display_name="Luca · it-IT (MAI-Voice-2)",
+        category="mai",
+        language="it-IT",
+    ),
+    VoiceInfo(
+        name="it-IT-Rosa:MAI-Voice-2",
+        display_name="Rosa · it-IT (MAI-Voice-2)",
+        category="mai",
+        language="it-IT",
+    ),
     # Korean (Korea)
-    VoiceInfo(name="ko-KR-Hana:MAI-Voice-2", display_name="Hana · ko-KR (MAI-Voice-2)", category="mai", language="ko-KR"),
-    VoiceInfo(name="ko-KR-Junho:MAI-Voice-2", display_name="Junho · ko-KR (MAI-Voice-2)", category="mai", language="ko-KR"),
+    VoiceInfo(
+        name="ko-KR-Hana:MAI-Voice-2",
+        display_name="Hana · ko-KR (MAI-Voice-2)",
+        category="mai",
+        language="ko-KR",
+    ),
+    VoiceInfo(
+        name="ko-KR-Junho:MAI-Voice-2",
+        display_name="Junho · ko-KR (MAI-Voice-2)",
+        category="mai",
+        language="ko-KR",
+    ),
     # Dutch (Netherlands)
-    VoiceInfo(name="nl-NL-Fleur:MAI-Voice-2", display_name="Fleur · nl-NL (MAI-Voice-2)", category="mai", language="nl-NL"),
-    VoiceInfo(name="nl-NL-Sander:MAI-Voice-2", display_name="Sander · nl-NL (MAI-Voice-2)", category="mai", language="nl-NL"),
+    VoiceInfo(
+        name="nl-NL-Fleur:MAI-Voice-2",
+        display_name="Fleur · nl-NL (MAI-Voice-2)",
+        category="mai",
+        language="nl-NL",
+    ),
+    VoiceInfo(
+        name="nl-NL-Sander:MAI-Voice-2",
+        display_name="Sander · nl-NL (MAI-Voice-2)",
+        category="mai",
+        language="nl-NL",
+    ),
     # Portuguese (Brazil / Portugal)
-    VoiceInfo(name="pt-BR-Caio:MAI-Voice-2", display_name="Caio · pt-BR (MAI-Voice-2)", category="mai", language="pt-BR"),
-    VoiceInfo(name="pt-BR-Luana:MAI-Voice-2", display_name="Luana · pt-BR (MAI-Voice-2)", category="mai", language="pt-BR"),
-    VoiceInfo(name="pt-BR-Pedro:MAI-Voice-2", display_name="Pedro · pt-BR (MAI-Voice-2)", category="mai", language="pt-BR"),
-    VoiceInfo(name="pt-BR-Rafael:MAI-Voice-2", display_name="Rafael · pt-BR (MAI-Voice-2)", category="mai", language="pt-BR"),
-    VoiceInfo(name="pt-PT-Rui:MAI-Voice-2", display_name="Rui · pt-PT (MAI-Voice-2)", category="mai", language="pt-PT"),
+    VoiceInfo(
+        name="pt-BR-Caio:MAI-Voice-2",
+        display_name="Caio · pt-BR (MAI-Voice-2)",
+        category="mai",
+        language="pt-BR",
+    ),
+    VoiceInfo(
+        name="pt-BR-Luana:MAI-Voice-2",
+        display_name="Luana · pt-BR (MAI-Voice-2)",
+        category="mai",
+        language="pt-BR",
+    ),
+    VoiceInfo(
+        name="pt-BR-Pedro:MAI-Voice-2",
+        display_name="Pedro · pt-BR (MAI-Voice-2)",
+        category="mai",
+        language="pt-BR",
+    ),
+    VoiceInfo(
+        name="pt-BR-Rafael:MAI-Voice-2",
+        display_name="Rafael · pt-BR (MAI-Voice-2)",
+        category="mai",
+        language="pt-BR",
+    ),
+    VoiceInfo(
+        name="pt-PT-Rui:MAI-Voice-2",
+        display_name="Rui · pt-PT (MAI-Voice-2)",
+        category="mai",
+        language="pt-PT",
+    ),
     # Romanian (Romania)
-    VoiceInfo(name="ro-RO-Andrei:MAI-Voice-2", display_name="Andrei · ro-RO (MAI-Voice-2)", category="mai", language="ro-RO"),
-    VoiceInfo(name="ro-RO-Elena:MAI-Voice-2", display_name="Elena · ro-RO (MAI-Voice-2)", category="mai", language="ro-RO"),
-    VoiceInfo(name="ro-RO-Ioana:MAI-Voice-2", display_name="Ioana · ro-RO (MAI-Voice-2)", category="mai", language="ro-RO"),
-    VoiceInfo(name="ro-RO-Radu:MAI-Voice-2", display_name="Radu · ro-RO (MAI-Voice-2)", category="mai", language="ro-RO"),
+    VoiceInfo(
+        name="ro-RO-Andrei:MAI-Voice-2",
+        display_name="Andrei · ro-RO (MAI-Voice-2)",
+        category="mai",
+        language="ro-RO",
+    ),
+    VoiceInfo(
+        name="ro-RO-Elena:MAI-Voice-2",
+        display_name="Elena · ro-RO (MAI-Voice-2)",
+        category="mai",
+        language="ro-RO",
+    ),
+    VoiceInfo(
+        name="ro-RO-Ioana:MAI-Voice-2",
+        display_name="Ioana · ro-RO (MAI-Voice-2)",
+        category="mai",
+        language="ro-RO",
+    ),
+    VoiceInfo(
+        name="ro-RO-Radu:MAI-Voice-2",
+        display_name="Radu · ro-RO (MAI-Voice-2)",
+        category="mai",
+        language="ro-RO",
+    ),
     # Russian (Russia)
-    VoiceInfo(name="ru-RU-Lev:MAI-Voice-2", display_name="Lev · ru-RU (MAI-Voice-2)", category="mai", language="ru-RU"),
-    VoiceInfo(name="ru-RU-Masha:MAI-Voice-2", display_name="Masha · ru-RU (MAI-Voice-2)", category="mai", language="ru-RU"),
+    VoiceInfo(
+        name="ru-RU-Lev:MAI-Voice-2",
+        display_name="Lev · ru-RU (MAI-Voice-2)",
+        category="mai",
+        language="ru-RU",
+    ),
+    VoiceInfo(
+        name="ru-RU-Masha:MAI-Voice-2",
+        display_name="Masha · ru-RU (MAI-Voice-2)",
+        category="mai",
+        language="ru-RU",
+    ),
     # Thai (Thailand)
-    VoiceInfo(name="th-TH-Krit:MAI-Voice-2", display_name="Krit · th-TH (MAI-Voice-2)", category="mai", language="th-TH"),
-    VoiceInfo(name="th-TH-Nattapong:MAI-Voice-2", display_name="Nattapong · th-TH (MAI-Voice-2)", category="mai", language="th-TH"),
+    VoiceInfo(
+        name="th-TH-Krit:MAI-Voice-2",
+        display_name="Krit · th-TH (MAI-Voice-2)",
+        category="mai",
+        language="th-TH",
+    ),
+    VoiceInfo(
+        name="th-TH-Nattapong:MAI-Voice-2",
+        display_name="Nattapong · th-TH (MAI-Voice-2)",
+        category="mai",
+        language="th-TH",
+    ),
     # Turkish (Turkey)
-    VoiceInfo(name="tr-TR-Aydin:MAI-Voice-2", display_name="Aydın · tr-TR (MAI-Voice-2)", category="mai", language="tr-TR"),
-    VoiceInfo(name="tr-TR-Elif:MAI-Voice-2", display_name="Elif · tr-TR (MAI-Voice-2)", category="mai", language="tr-TR"),
+    VoiceInfo(
+        name="tr-TR-Aydin:MAI-Voice-2",
+        display_name="Aydın · tr-TR (MAI-Voice-2)",
+        category="mai",
+        language="tr-TR",
+    ),
+    VoiceInfo(
+        name="tr-TR-Elif:MAI-Voice-2",
+        display_name="Elif · tr-TR (MAI-Voice-2)",
+        category="mai",
+        language="tr-TR",
+    ),
     # Chinese (Mandarin, Simplified)
-    VoiceInfo(name="zh-CN-Bo:MAI-Voice-2", display_name="Bo · zh-CN (MAI-Voice-2)", category="mai", language="zh-CN"),
-    VoiceInfo(name="zh-CN-Lan:MAI-Voice-2", display_name="Lan · zh-CN (MAI-Voice-2)", category="mai", language="zh-CN"),
-    VoiceInfo(name="zh-CN-Mei:MAI-Voice-2", display_name="Mei · zh-CN (MAI-Voice-2)", category="mai", language="zh-CN"),
+    VoiceInfo(
+        name="zh-CN-Bo:MAI-Voice-2",
+        display_name="Bo · zh-CN (MAI-Voice-2)",
+        category="mai",
+        language="zh-CN",
+    ),
+    VoiceInfo(
+        name="zh-CN-Lan:MAI-Voice-2",
+        display_name="Lan · zh-CN (MAI-Voice-2)",
+        category="mai",
+        language="zh-CN",
+    ),
+    VoiceInfo(
+        name="zh-CN-Mei:MAI-Voice-2",
+        display_name="Mei · zh-CN (MAI-Voice-2)",
+        category="mai",
+        language="zh-CN",
+    ),
 ]
 
 # Keep category / voice_type / is_hd consistent with the short name so a typo in
@@ -804,7 +1078,7 @@ async def list_available_tools(
             is_handoff=defn.is_handoff,
             tags=list(defn.tags),
             parameters=params,
-            source=defn.source.value if hasattr(defn.source, 'value') else str(defn.source),
+            source=defn.source.value if hasattr(defn.source, "value") else str(defn.source),
             mcp_server=defn.mcp_server,
             mcp_transport=defn.mcp_transport,
         )
@@ -963,7 +1237,9 @@ def _categorize_deployment(deployment_id: str) -> tuple[str, str, list[str]]:
         category = "embedding"
     elif "whisper" in did or "transcribe" in did:
         category = "transcription"
-    elif any(x in did for x in ("dall-e", "dalle", "tts", "sora", "image", "stable-diffusion", "flux")):
+    elif any(
+        x in did for x in ("dall-e", "dalle", "tts", "sora", "image", "stable-diffusion", "flux")
+    ):
         category = "other"
     elif "realtime" in did:
         category = "realtime"
@@ -1222,9 +1498,7 @@ def _fetch_real_deployments(
         try:
             from utils.azure_auth import get_credential
 
-            token = get_credential().get_token(
-                "https://cognitiveservices.azure.com/.default"
-            ).token
+            token = get_credential().get_token("https://cognitiveservices.azure.com/.default").token
             headers = {"Authorization": f"Bearer {token}"}
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("Could not acquire token for deployments listing: %s", exc)
@@ -1257,11 +1531,13 @@ def _fetch_real_deployments(
                 continue
             m = it.get("model")
             model_name = m.get("name") if isinstance(m, dict) else (m or dep_id)
-            out.append({
-                "deployment_id": dep_id,
-                "model_name": model_name or dep_id,
-                "created_at": it.get("created_at") or it.get("created"),
-            })
+            out.append(
+                {
+                    "deployment_id": dep_id,
+                    "model_name": model_name or dep_id,
+                    "created_at": it.get("created_at") or it.get("created"),
+                }
+            )
         if out:
             region = (r.headers.get(_REGION_HEADER) or "").strip()
             logger.info(
@@ -1300,7 +1576,8 @@ async def list_available_models(refresh: bool = False, mode: str | None = None) 
     """
     start = time.time()
     resolved_mode = (
-        "voicelive" if (mode or "").strip().lower() in ("voicelive", "voice_live", "realtime")
+        "voicelive"
+        if (mode or "").strip().lower() in ("voicelive", "voice_live", "realtime")
         else "cascade"
     )
     source = _resolve_deployment_source(resolved_mode)
@@ -1333,9 +1610,7 @@ async def list_available_models(refresh: bool = False, mode: str | None = None) 
             # True when VoiceLive was asked for but no dedicated AVL resource is
             # configured, so the primary account was used instead.
             "resource_fallback": source["fell_back"],
-            **_region_payload(
-                region, source="resource" if discovered_region else "config"
-            ),
+            **_region_payload(region, source="resource" if discovered_region else "config"),
         }
         _AVAILABLE_MODELS_CACHE[resolved_mode] = {
             "payload": payload,
@@ -1442,15 +1717,17 @@ async def list_available_models(refresh: bool = False, mode: str | None = None) 
                     default_model = model["deployment_id"]
                     break
 
-            return _cache_and_return({
-                "status": "success",
-                "total": len(models),
-                "models": models,
-                "by_category": by_category,
-                "default_model": default_model,
-                "source": "azure_openai_catalog",
-                "response_time_ms": round((time.time() - start) * 1000, 2),
-            })
+            return _cache_and_return(
+                {
+                    "status": "success",
+                    "total": len(models),
+                    "models": models,
+                    "by_category": by_category,
+                    "default_model": default_model,
+                    "source": "azure_openai_catalog",
+                    "response_time_ms": round((time.time() - start) * 1000, 2),
+                }
+            )
 
         except AttributeError:
             # Fallback: client might not support .models.list()
@@ -1460,34 +1737,38 @@ async def list_available_models(refresh: bool = False, mode: str | None = None) 
             # Get deployment from environment
             deployment_id = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o")
 
-            models = [{
-                "deployment_id": deployment_id,
-                "model_name": deployment_id,
-                "category": "chat",
-                "arch": "native" if "realtime" in deployment_id.lower() else "cascaded",
-                "modes": ["cascade", "voicelive"],
-                "created_at": None,
-                "supports_chat": True,
-                "supports_streaming": True,
-                "endpoint_type": "chat",
-            }]
+            models = [
+                {
+                    "deployment_id": deployment_id,
+                    "model_name": deployment_id,
+                    "category": "chat",
+                    "arch": "native" if "realtime" in deployment_id.lower() else "cascaded",
+                    "modes": ["cascade", "voicelive"],
+                    "created_at": None,
+                    "supports_chat": True,
+                    "supports_streaming": True,
+                    "endpoint_type": "chat",
+                }
+            ]
 
-            return _cache_and_return({
-                "status": "success",
-                "total": len(models),
-                "models": models,
-                "by_category": {"chat": models},
-                "default_model": deployment_id,
-                "source": "environment",
-                "response_time_ms": round((time.time() - start) * 1000, 2),
-            })
+            return _cache_and_return(
+                {
+                    "status": "success",
+                    "total": len(models),
+                    "models": models,
+                    "by_category": {"chat": models},
+                    "default_model": deployment_id,
+                    "source": "environment",
+                    "response_time_ms": round((time.time() - start) * 1000, 2),
+                }
+            )
 
     except Exception as e:
         logger.error(f"Failed to fetch models from Azure: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to fetch models from Azure OpenAI: {str(e)}",
-        )
+        ) from e
 
 
 @router.get(
@@ -1545,14 +1826,21 @@ Assist customers with their inquiries in a friendly, professional manner.
 
 
 def _agentstore_mtime() -> float:
-    """Newest mtime across agent.yaml files — cache-busting key for base templates.
+    """Newest mtime across agent/default/prompt files — cache-busting key.
 
-    A new value invalidates the lru_cache below, so edits to any agent.yaml are
-    reflected on the next request (covers local --reload dev). In Container Apps
-    the files only change on a new image revision, which starts fresh containers.
+    A new value invalidates the lru_cache below, so edits to agent.yaml,
+    _defaults.yaml, or prompt-only files are reflected on the next request
+    (covers local --reload dev). In Container Apps the files only change on a
+    new image revision, which starts fresh containers.
     """
     try:
-        mtimes = [p.stat().st_mtime for p in AGENTS_DIR.glob("*/agent.yaml")]
+        patterns = ("_defaults.yaml", "*/agent.yaml", "*/*.jinja", "*/*.md", "*/*.txt")
+        mtimes = [
+            p.stat().st_mtime
+            for pattern in patterns
+            for p in AGENTS_DIR.glob(pattern)
+            if p.is_file()
+        ]
         return max(mtimes) if mtimes else 0.0
     except Exception:
         # On any FS error, return a unique-ish value so we don't serve stale data
@@ -1581,49 +1869,34 @@ def _load_base_templates_cached(_mtime_key: float) -> list[AgentTemplateInfo]:
             continue
 
         try:
-            with open(agent_file) as f:
-                raw = yaml.safe_load(f) or {}
-
-            name = raw.get("name") or agent_dir.name.replace("_", " ").title()
-            description = raw.get("description", "")
-            greeting = raw.get("greeting", "")
-
-            prompt_full = ""
-            if "prompts" in raw and raw["prompts"].get("path"):
-                prompt_full = load_prompt(agent_dir, raw["prompts"]["path"])
-            elif raw.get("prompt"):
-                prompt_full = load_prompt(agent_dir, raw["prompt"])
-
-            tools = raw.get("tools", [])
-
-            voice = raw.get("voice") or defaults.get("voice", {})
-            model = raw.get("model") or defaults.get("model", {})
-            cascade_model = raw.get("cascade_model") or defaults.get("cascade_model")
-            voicelive_model = raw.get("voicelive_model") or defaults.get("voicelive_model")
-            byom = raw.get("byom") or defaults.get("byom")
-
-            handoff_config = raw.get("handoff", {})
-            is_entry_point = handoff_config.get("is_entry_point", False)
+            agent = load_agent(agent_file, defaults)
+            prompt_full = agent.prompt_template or ""
 
             prompt_preview = prompt_full[:300] + "..." if len(prompt_full) > 300 else prompt_full
 
             templates.append(
                 AgentTemplateInfo(
                     id=agent_dir.name,
-                    name=name,
-                    description=(
-                        description if isinstance(description, str) else str(description)[:200]
-                    ),
-                    greeting=greeting if isinstance(greeting, str) else str(greeting),
+                    name=agent.name,
+                    description=agent.description,
+                    greeting=agent.greeting,
                     prompt_preview=prompt_preview,
                     prompt_full=prompt_full,
-                    tools=tools,
-                    voice=voice,
-                    model=model,
-                    cascade_model=cascade_model,
-                    voicelive_model=voicelive_model,
-                    byom=byom,
-                    is_entry_point=is_entry_point,
+                    tools=agent.tool_names,
+                    mcp_servers=agent.mcp_servers,
+                    voice=agent.voice.to_dict() if agent.voice else None,
+                    model=agent.model.to_dict() if agent.model else None,
+                    cascade_model=agent.cascade_model.to_dict() if agent.cascade_model else None,
+                    voicelive_model=(
+                        agent.voicelive_model.to_dict() if agent.voicelive_model else None
+                    ),
+                    byom=agent.byom.to_dict() if agent.byom else None,
+                    speech=agent.speech.to_dict() if agent.speech else None,
+                    session=agent.session or {},
+                    template_vars=agent.template_vars or {},
+                    source="yaml",
+                    source_path=str(agent_file.relative_to(AGENTS_DIR.parent)),
+                    is_entry_point=agent.handoff.is_entry_point if agent.handoff else False,
                 )
             )
         except Exception as e:
@@ -1660,7 +1933,9 @@ async def list_agent_templates(session_id: str | None = None) -> dict[str, Any]:
     # Container Apps because the files are identical per image revision and a new
     # revision starts fresh containers (empty cache). Copy the result before the
     # caller appends session agents so the cached list isn't mutated.
-    templates: list[AgentTemplateInfo] = list(_load_base_templates_cached(_agentstore_mtime()))
+    templates: list[AgentTemplateInfo] = copy.deepcopy(
+        _load_base_templates_cached(_agentstore_mtime())
+    )
 
     # Include session agents (custom-created or edited agents).
     # When session_id is provided, scope to that session and REPLACE the base YAML
@@ -1677,11 +1952,17 @@ async def list_agent_templates(session_id: str | None = None) -> dict[str, Any]:
             prompt_preview=prompt_preview,
             prompt_full=prompt_full,
             tools=agent.tool_names or [],
+            mcp_servers=agent.mcp_servers or [],
             voice=agent.voice.to_dict() if agent.voice else None,
             model=agent.model.to_dict() if agent.model else None,
             cascade_model=agent.cascade_model.to_dict() if agent.cascade_model else None,
             voicelive_model=agent.voicelive_model.to_dict() if agent.voicelive_model else None,
             byom=agent.byom.to_dict() if agent.byom else None,
+            speech=agent.speech.to_dict() if agent.speech else None,
+            session=agent.session or {},
+            template_vars=agent.template_vars or {},
+            source="session",
+            source_path=None,
             is_entry_point=False,
             is_session_agent=True,
             session_id=sid,
@@ -1747,48 +2028,35 @@ async def get_agent_template(template_id: str) -> dict[str, Any]:
     defaults = load_defaults(AGENTS_DIR)
 
     try:
-        with open(agent_file) as f:
-            raw = yaml.safe_load(f) or {}
-
-        # Extract all fields
-        name = raw.get("name") or template_id.replace("_", " ").title()
-        description = raw.get("description", "")
-        greeting = raw.get("greeting", "")
-        return_greeting = raw.get("return_greeting", "")
-
-        # Load full prompt
-        prompt_full = ""
-        if "prompts" in raw and raw["prompts"].get("path"):
-            prompt_full = load_prompt(agent_dir, raw["prompts"]["path"])
-        elif raw.get("prompt"):
-            prompt_full = load_prompt(agent_dir, raw["prompt"])
-
-        # Get tools, voice, model
-        tools = raw.get("tools", [])
-        voice = raw.get("voice") or defaults.get("voice", {})
-        model = raw.get("model") or defaults.get("model", {})
-        cascade_model = raw.get("cascade_model") or defaults.get("cascade_model", {})
-        voicelive_model = raw.get("voicelive_model") or defaults.get("voicelive_model", {})
-        byom = raw.get("byom") or defaults.get("byom")
-        template_vars = raw.get("template_vars") or defaults.get("template_vars", {})
+        agent = load_agent(agent_file, defaults)
 
         return {
             "status": "success",
             "template": {
                 "id": template_id,
-                "name": name,
-                "description": description if isinstance(description, str) else str(description),
-                "greeting": greeting if isinstance(greeting, str) else str(greeting),
-                "return_greeting": return_greeting,
-                "prompt": prompt_full,
-                "tools": tools,
-                "voice": voice,
-                "model": model,
-                "cascade_model": cascade_model,
-                "voicelive_model": voicelive_model,
-                "byom": byom,
-                "template_vars": template_vars,
-                "handoff": raw.get("handoff", {}),
+                "name": agent.name,
+                "description": agent.description,
+                "greeting": agent.greeting,
+                "return_greeting": agent.return_greeting,
+                "prompt": agent.prompt_template or "",
+                "tools": agent.tool_names,
+                "mcp_servers": agent.mcp_servers,
+                "voice": agent.voice.to_dict() if agent.voice else {},
+                "model": agent.model.to_dict() if agent.model else {},
+                "cascade_model": agent.cascade_model.to_dict() if agent.cascade_model else {},
+                "voicelive_model": (
+                    agent.voicelive_model.to_dict() if agent.voicelive_model else {}
+                ),
+                "byom": agent.byom.to_dict() if agent.byom else None,
+                "speech": agent.speech.to_dict() if agent.speech else {},
+                "session": agent.session or {},
+                "template_vars": agent.template_vars or {},
+                "handoff": {
+                    "trigger": agent.handoff.trigger if agent.handoff else "",
+                    "is_entry_point": (agent.handoff.is_entry_point if agent.handoff else False),
+                },
+                "source": "yaml",
+                "source_path": str(agent_file.relative_to(AGENTS_DIR.parent)),
             },
         }
 
@@ -1797,7 +2065,7 @@ async def get_agent_template(template_id: str) -> dict[str, Any]:
         raise HTTPException(
             status_code=500,
             detail=f"Failed to load agent template: {str(e)}",
-        )
+        ) from e
 
 
 def _model_from_schema(
@@ -1820,6 +2088,8 @@ def _model_from_schema(
         store=schema.store,
         metadata=schema.metadata,
         response_format=schema.response_format,
+        api_version=schema.api_version,
+        model_family=schema.model_family,
     )
 
 
@@ -1920,9 +2190,7 @@ def build_session_agent(
         metadata["modified_at"] = modified_at
 
     # Voice Live BYOM (opt-in). None when not configured → managed VoiceLive.
-    byom_config = (
-        VoiceLiveBYOMConfig.from_dict(config.byom.model_dump()) if config.byom else None
-    )
+    byom_config = VoiceLiveBYOMConfig.from_dict(config.byom.model_dump()) if config.byom else None
 
     # Guardrail: a non-managed Voice Live model (o3-mini, o1, custom/fine-tuned,
     # etc.) with BYOM OFF is the silent-failure misconfiguration — it connects to
@@ -1976,6 +2244,7 @@ def build_session_agent(
         session=session_dict,
         prompt_template=config.prompt,
         tool_names=config.tools,
+        mcp_servers=config.mcp_servers,
         template_vars=config.template_vars or {},
         metadata=metadata,
     )
@@ -1997,7 +2266,9 @@ def _session_agent_response(
             "return_greeting": agent.return_greeting,
             "handoff_trigger": agent.handoff.trigger if agent.handoff else "",
             "prompt_preview": (prompt[:200] + "...") if len(prompt) > 200 else prompt,
+            "prompt_full": prompt,
             "tools": agent.tool_names,
+            "mcp_servers": agent.mcp_servers,
             "cascade_model": agent.cascade_model.to_dict() if agent.cascade_model else {},
             "voicelive_model": agent.voicelive_model.to_dict() if agent.voicelive_model else {},
             "byom": agent.byom.to_dict() if agent.byom else None,
@@ -2022,21 +2293,13 @@ def _resolve_live_session_agent(session_id: str, request: Request) -> UnifiedAge
     instead of being lost on the next reconnect. The clone is never the shared
     registry object, avoiding cross-session leakage.
     """
-    existing = get_session_agent(session_id)
-    if existing is not None:
-        return existing
-
     app_state = request.app.state
     unified_agents: dict[str, UnifiedAgent] = getattr(app_state, "unified_agents", {}) or {}
-    if not unified_agents:
-        return None
 
     # Resolve the active agent name: corememory active_agent → start_agent → first.
     active_name: str | None = None
     try:
-        redis_mgr = getattr(app_state, "redis", None) or getattr(
-            app_state, "redis_manager", None
-        )
+        redis_mgr = getattr(app_state, "redis", None) or getattr(app_state, "redis_manager", None)
         if redis_mgr is not None:
             from src.stateful.state_managment import MemoManager
 
@@ -2046,6 +2309,18 @@ def _resolve_live_session_agent(session_id: str, request: Request) -> UnifiedAge
         active_name = None
     if not active_name:
         active_name = getattr(app_state, "start_agent", None)
+
+    if active_name:
+        existing = get_session_agent(session_id, active_name)
+        if existing is not None:
+            return existing
+
+    existing = get_session_agent(session_id)
+    if existing is not None:
+        return existing
+
+    if not unified_agents:
+        return None
 
     base_agent: UnifiedAgent | None = None
     if active_name:
@@ -2090,18 +2365,31 @@ async def _upsert_session_agent(
             detail=f"Invalid tools: {', '.join(invalid_tools)}. Use GET /tools to see available tools.",
         )
 
-    existing = get_session_agent(session_id)
+    existing = get_session_agent(session_id, config.name) or get_session_agent(session_id)
     now = time.time()
     created_at = existing.metadata.get("created_at", now) if existing else now
 
-    agent = build_session_agent(
-        config, session_id, created_at=created_at, modified_at=now
-    )
+    agent = build_session_agent(config, session_id, created_at=created_at, modified_at=now)
 
-    set_session_agent(session_id, agent)
-    # Await Redis persistence directly so the override survives a process restart
-    # between this write and the next WebSocket connection.
-    await persist_session_agents_to_redis(session_id)
+    set_session_agent(session_id, agent, set_active=True, persist=False)
+    try:
+        # Await Redis persistence directly so the override survives a process
+        # restart between this write and the next WebSocket connection.
+        await persist_session_agents_to_redis(session_id, raise_on_failure=True)
+    except Exception as exc:
+        logger.error(
+            "Agent configured in memory but Redis persistence failed | session=%s name=%s error=%s",
+            session_id,
+            config.name,
+            exc,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Agent '{config.name}' was configured in memory but could not be "
+                "persisted to Redis. It may not survive across requests. Please retry."
+            ),
+        ) from exc
 
     logger.info(
         "session.agent.%s session=%s name=%s tools=%d",
@@ -2172,9 +2460,14 @@ async def get_session_agent_config(
             ),
             "prompt_full": agent.prompt_template,
             "tools": agent.tool_names,
+            "mcp_servers": agent.mcp_servers,
             "model": agent.model.to_dict(),
-            "cascade_model": agent.cascade_model.to_dict() if agent.cascade_model else agent.model.to_dict(),
-            "voicelive_model": agent.voicelive_model.to_dict() if agent.voicelive_model else agent.model.to_dict(),
+            "cascade_model": (
+                agent.cascade_model.to_dict() if agent.cascade_model else agent.model.to_dict()
+            ),
+            "voicelive_model": (
+                agent.voicelive_model.to_dict() if agent.voicelive_model else agent.model.to_dict()
+            ),
             "byom": agent.byom.to_dict() if agent.byom else None,
             "voice": agent.voice.to_dict(),
             "speech": agent.speech.to_dict() if agent.speech else {},
@@ -2273,10 +2566,18 @@ async def apply_live_session_settings(
                     existing.voice.style = payload.voice.style
                 if payload.voice.pitch:
                     existing.voice.pitch = payload.voice.pitch
-            set_session_agent(session_id, existing)
+            set_session_agent(session_id, existing, set_active=True, persist=False)
+            await persist_session_agents_to_redis(session_id, raise_on_failure=True)
             persisted = True
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("Failed to persist live settings for %s: %s", session_id, exc)
+        except Exception as exc:
+            logger.error("Failed to persist live settings for %s: %s", session_id, exc)
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Live settings were applied in memory but could not be persisted "
+                    "to Redis. Please retry before reconnecting."
+                ),
+            ) from exc
 
     if mode in ("voice_live", "voicelive"):
         # Import lazily to avoid a hard dependency when VoiceLive isn't installed.
@@ -2360,7 +2661,17 @@ async def reset_session_agent(
     request: Request,
 ) -> dict[str, Any]:
     """Remove the dynamic agent for a session."""
-    removed = remove_session_agent(session_id)
+    try:
+        removed = await remove_session_agent_async(session_id, raise_on_failure=True)
+    except Exception as exc:
+        logger.error("Failed to persist session agent reset | session=%s error=%s", session_id, exc)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Dynamic agent for session {session_id} was removed in memory but "
+                "could not be cleared from Redis. Please retry."
+            ),
+        ) from exc
 
     if not removed:
         return {
@@ -2459,4 +2770,4 @@ async def reload_agent_templates(request: Request) -> dict[str, Any]:
         raise HTTPException(
             status_code=500,
             detail=f"Failed to reload agent templates: {str(e)}",
-        )
+        ) from e

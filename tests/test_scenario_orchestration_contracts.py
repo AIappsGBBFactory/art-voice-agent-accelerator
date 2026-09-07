@@ -2,7 +2,7 @@
 Scenario Orchestration Contract Tests
 ======================================
 
-These tests ensure key functional contracts are preserved during the 
+These tests ensure key functional contracts are preserved during the
 layer consolidation refactoring (see docs/proposals/scenario-orchestration-simplification.md).
 
 The tests cover:
@@ -16,10 +16,8 @@ These tests should pass BEFORE and AFTER the refactoring to ensure no regression
 
 from __future__ import annotations
 
-import os
-from dataclasses import dataclass
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -230,7 +228,7 @@ class TestUnifiedAgentGreetingRendering:
         context = unified_agent._get_greeting_context({"caller_name": None})
 
         # None value should not be in context
-        assert context.get("caller_name") != None or "caller_name" not in context
+        assert context.get("caller_name") is not None or "caller_name" not in context
 
 
 class TestUnifiedAgentToolRetrieval:
@@ -304,7 +302,7 @@ class TestVoiceLiveAgentAdapterConstruction:
     1. Parse session config for modalities, audio formats
     2. Build VAD configuration from turn_detection settings
     3. Passthrough properties to underlying UnifiedAgent
-    
+
     NOTE: These contracts will need to be preserved when we merge
     VoiceLiveAgentAdapter into UnifiedAgent.
     """
@@ -361,7 +359,7 @@ class TestVoiceLiveAgentAdapterToolBuilding:
     1. Build FunctionTool objects from UnifiedAgent.get_tools()
     2. Cache built tools (only build once)
     3. Return empty list if VoiceLive SDK not available
-    
+
     NOTE: This logic will move into UnifiedAgent.build_voicelive_tools()
     """
 
@@ -407,7 +405,7 @@ class TestHandoffServiceContracts:
     2. select_greeting() respects discrete vs announced type
     3. Handoff map correctly maps tool_name → agent_name
     4. Generic handoffs respect scenario config
-    
+
     These are critical for the handoff state unification.
     """
 
@@ -455,9 +453,7 @@ class TestHandoffServiceContracts:
             assert resolution.greet_on_switch is True
             assert "is_handoff" in resolution.system_vars
 
-    def test_select_greeting_discrete_vs_announced(
-        self, handoff_service, multi_agent_registry
-    ):
+    def test_select_greeting_discrete_vs_announced(self, handoff_service, multi_agent_registry):
         """
         CONTRACT: select_greeting must:
         - Return None for discrete handoffs (greet_on_switch=False)
@@ -561,7 +557,7 @@ class TestScenarioConfigContracts:
 
     def test_get_generic_handoff_config_for_target(self, scenario_config):
         """get_generic_handoff_config should return HandoffConfig for valid target.
-        
+
         When there's an explicit edge, it returns the edge configuration.
         When there's no explicit edge, it uses generic_handoff settings.
         """
@@ -598,7 +594,7 @@ class TestConfigResolutionContracts:
     2. Scenario → filtered agents for that scenario
     3. Agents + scenario → handoff map
     4. Entry agent is correctly identified
-    
+
     This tests the end-to-end config resolution path.
     """
 
@@ -613,9 +609,7 @@ class TestConfigResolutionContracts:
 
         # Only Concierge should be included
         filtered = {
-            name: agent
-            for name, agent in multi_agent_registry.items()
-            if name in scenario.agents
+            name: agent for name, agent in multi_agent_registry.items() if name in scenario.agents
         }
 
         assert len(filtered) == 1
@@ -631,6 +625,85 @@ class TestConfigResolutionContracts:
         assert handoff_map["handoff_concierge"] == "Concierge"
         assert handoff_map["handoff_fraud_agent"] == "FraudAgent"
 
+    def test_agent_loader_merges_mode_specific_defaults(self, tmp_path):
+        """Mode-specific _defaults.yaml blocks are part of the runtime contract."""
+        from apps.artagent.backend.registries.agentstore.loader import (
+            load_agent,
+            load_defaults,
+        )
+
+        (tmp_path / "_defaults.yaml").write_text(
+            """
+model:
+  deployment_id: gpt-4o
+  temperature: 0.5
+  api_version: "2025-01-01-preview"
+cascade_model:
+  deployment_id: gpt-4o-mini
+  max_tokens: 2048
+voicelive_model:
+  deployment_id: gpt-realtime
+  temperature: 0.3
+  model_family: gpt-realtime
+""",
+            encoding="utf-8",
+        )
+        agent_dir = tmp_path / "concierge"
+        agent_dir.mkdir()
+        (agent_dir / "prompt.jinja").write_text("You are the concierge.", encoding="utf-8")
+        (agent_dir / "agent.yaml").write_text(
+            """
+name: Concierge
+description: Test agent
+prompt: prompt.jinja
+voicelive_model:
+  top_p: 0.7
+""",
+            encoding="utf-8",
+        )
+
+        agent = load_agent(agent_dir / "agent.yaml", load_defaults(tmp_path))
+
+        assert agent.model.deployment_id == "gpt-4o"
+        assert agent.model.temperature == 0.5
+        assert agent.cascade_model.deployment_id == "gpt-4o-mini"
+        assert agent.cascade_model.temperature == 0.5
+        assert agent.cascade_model.max_tokens == 2048
+        assert agent.cascade_model.api_version == "2025-01-01-preview"
+        assert agent.voicelive_model.deployment_id == "gpt-realtime"
+        assert agent.voicelive_model.temperature == 0.3
+        assert agent.voicelive_model.top_p == 0.7
+        assert agent.voicelive_model.model_family == "gpt-realtime"
+
+    def test_scenario_agents_do_not_mutate_base_registry(self, monkeypatch, multi_agent_registry):
+        """Scenario defaults must apply to per-session copies, not shared agents."""
+        from apps.artagent.backend.registries.scenariostore import loader as sl
+
+        scenario = sl.ScenarioConfig(
+            name="Support",
+            agents=["concierge"],
+            start_agent="Concierge",
+            agent_defaults=sl.AgentOverride(
+                greeting="Scenario greeting",
+                voice_name="en-US-GuyNeural",
+                template_vars={"scenario_name": "Support"},
+            ),
+            global_template_vars={"company": "Contoso"},
+        )
+        monkeypatch.setattr(sl, "_SCENARIOS", {"Support": scenario})
+
+        resolved = sl.get_scenario_agents("support", multi_agent_registry)
+
+        assert set(resolved.keys()) == {"Concierge"}
+        assert resolved["Concierge"].greeting == "Scenario greeting"
+        assert resolved["Concierge"].voice.name == "en-US-GuyNeural"
+        assert resolved["Concierge"].template_vars["company"] == "Contoso"
+        assert resolved["Concierge"].template_vars["scenario_name"] == "Support"
+
+        assert multi_agent_registry["Concierge"].greeting == "Hello, I'm your concierge!"
+        assert multi_agent_registry["Concierge"].voice.name == "en-US-JennyNeural"
+        assert "scenario_name" not in multi_agent_registry["Concierge"].template_vars
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONTRACT 6: Agent Visit Tracking Contracts (for greeting selection)
@@ -643,7 +716,7 @@ class TestAgentVisitTrackingContracts:
     1. First visit → render_greeting()
     2. Return visit → render_return_greeting()
     3. Visit tracking persists across handoffs
-    
+
     This is critical for the layer consolidation to unify visit tracking.
     """
 
@@ -673,7 +746,7 @@ class TestVoicePayloadContracts:
     1. Azure standard voices get correct payload structure
     2. Voice style, rate, pitch are applied correctly
     3. Fallback to default voice if none specified
-    
+
     NOTE: This logic will move into UnifiedAgent when we merge the adapter.
     """
 
@@ -766,7 +839,7 @@ class TestOrchestrationFlowContracts:
     def test_handoff_changes_active_agent(self, multi_agent_registry):
         """
         Handoff resolution should correctly identify new active agent.
-        
+
         This contract ensures that when a handoff is resolved:
         1. target_agent is correctly identified
         2. system_vars['active_agent'] is updated
@@ -853,14 +926,14 @@ class TestAgentOverrideVoiceContracts:
     """
     CONTRACT: Agent voice overrides from scenario agent_defaults must preserve:
     1. Voice name override is applied to agent.voice.name
-    2. Voice rate override is applied to agent.voice.rate  
+    2. Voice rate override is applied to agent.voice.rate
     3. Overrides work with VoiceConfig dataclass (attribute access, not dict access)
     4. Original agent is not mutated (deep copy)
-    
+
     This contract ensures that when scenarios specify voice overrides via
     agent_defaults, they are correctly applied during agent swap/handoff.
-    
-    BUG REGRESSION TEST: Previously, voice overrides used dict-style access 
+
+    BUG REGRESSION TEST: Previously, voice overrides used dict-style access
     (agent.voice["name"]) instead of attribute access (agent.voice.name),
     causing voice changes to be silently ignored during agent swaps.
     """
@@ -1011,7 +1084,7 @@ class TestAgentOverrideVoiceContracts:
 
     def test_dict_style_access_would_fail_regression_guard(self, base_agent_with_voice):
         """Regression test: ensure dict-style access fails on VoiceConfig.
-        
+
         This test guards against re-introducing the bug where voice overrides
         used dict-style access (agent.voice["name"]) instead of attribute
         access (agent.voice.name).
@@ -1022,7 +1095,7 @@ class TestAgentOverrideVoiceContracts:
 
         # This is the BUGGY pattern that was fixed:
         # agent.voice["name"] = "some-voice"  # This would raise TypeError
-        
+
         with pytest.raises(TypeError):
             agent.voice["name"] = "en-US-AvaNeural"  # type: ignore
 
@@ -1059,9 +1132,7 @@ class TestQuickTunePreservesScenario:
     def banking_config(self):
         from apps.artagent.backend.voice.shared import resolve_orchestrator_config
 
-        return resolve_orchestrator_config(
-            session_id="quick-tune-session", scenario_name="banking"
-        )
+        return resolve_orchestrator_config(session_id="quick-tune-session", scenario_name="banking")
 
     @staticmethod
     def _tuned(agents: dict[str, Any], source: str, *, name: str | None = None):
@@ -1204,9 +1275,7 @@ class TestQuickTunePreservesScenario:
         assert "MyCustomAgent" in banking_config.scenario.agents
         assert "BankingConcierge" in banking_config.scenario.agents
 
-    def test_without_session_agent_scenario_start_agent_is_kept(
-        self, registry, banking_config
-    ):
+    def test_without_session_agent_scenario_start_agent_is_kept(self, registry, banking_config):
         from apps.artagent.backend.voice.shared import build_effective_registry
 
         agents, app_state_map = registry

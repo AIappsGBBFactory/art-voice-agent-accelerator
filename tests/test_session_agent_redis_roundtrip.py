@@ -28,10 +28,10 @@ survive a reload, and nothing else in the suite would catch it.
 from __future__ import annotations
 
 import asyncio
-
-import pytest
+import json
 
 import apps.artagent.backend.src.orchestration.session_agents as sa
+import pytest
 from apps.artagent.backend.registries.agentstore.base import (
     HandoffConfig,
     ModelConfig,
@@ -41,14 +41,15 @@ from apps.artagent.backend.registries.agentstore.base import (
     VoiceLiveBYOMConfig,
 )
 from apps.artagent.backend.src.orchestration.session_agents import (
+    AGENTS_KEY_ACTIVE,
     _deserialize_agent,
     _serialize_agent,
     get_session_agent,
     get_session_agents,
     persist_session_agents_to_redis,
+    remove_session_agent_async,
     set_session_agent,
 )
-
 
 # =============================================================================
 # FAKES / HELPERS
@@ -93,15 +94,17 @@ def make_rich_agent(name: str = "BankBot") -> UnifiedAgent:
             temperature=0.3,
             top_p=0.8,
             max_tokens=1024,
+            api_version="2025-01-01-preview",
+            model_family="gpt-4",
         ),
         voicelive_model=ModelConfig(
             deployment_id="gpt-realtime",
             temperature=0.6,
             max_tokens=2048,
+            api_version="2025-04-01-preview",
+            model_family="gpt-realtime",
         ),
-        byom=VoiceLiveBYOMConfig.from_dict(
-            {"mode": "byom-azure-openai-chat-completion"}
-        ),
+        byom=VoiceLiveBYOMConfig.from_dict({"mode": "byom-azure-openai-chat-completion"}),
         voice=VoiceConfig(
             name="en-US-GuyNeural",
             type="azure-standard",
@@ -128,6 +131,7 @@ def make_rich_agent(name: str = "BankBot") -> UnifiedAgent:
         },
         prompt_template="You are {{brand}} assistant.",
         tool_names=[],
+        mcp_servers=["crm-mcp", "policy-mcp"],
         template_vars={"brand": "Contoso"},
         metadata={"cloned_from": "Concierge"},
     )
@@ -169,13 +173,18 @@ def _assert_rich_config_preserved(agent: UnifiedAgent, *, name: str = "BankBot")
     assert agent.cascade_model.deployment_id == "gpt-4o"
     assert agent.cascade_model.temperature == 0.3
     assert agent.cascade_model.max_tokens == 1024
+    assert agent.cascade_model.api_version == "2025-01-01-preview"
+    assert agent.cascade_model.model_family == "gpt-4"
     assert agent.voicelive_model.deployment_id == "gpt-realtime"
     assert agent.voicelive_model.max_tokens == 2048
+    assert agent.voicelive_model.api_version == "2025-04-01-preview"
+    assert agent.voicelive_model.model_family == "gpt-realtime"
 
     # Voice Live BYOM profile must survive — dropping it reloads the agent as
     # managed Voice Live and breaks Foundry-hosted (BYOM) model selection.
     assert agent.byom is not None
     assert agent.byom.mode == "byom-azure-openai-chat-completion"
+    assert agent.mcp_servers == ["crm-mcp", "policy-mcp"]
 
 
 # =============================================================================
@@ -205,6 +214,7 @@ def _isolate_session_state(session_id):
 
     def _clear():
         sa._session_agents.pop(session_id, None)
+        sa._active_session_agents.pop(session_id, None)
         sa._session_load_times.pop(session_id, None)
 
     _clear()
@@ -215,6 +225,7 @@ def _isolate_session_state(session_id):
 def _simulate_fresh_worker(session_id: str) -> None:
     """Drop the in-memory cache so the next read must come from Redis."""
     sa._session_agents.pop(session_id, None)
+    sa._active_session_agents.pop(session_id, None)
     sa._session_load_times.pop(session_id, None)
 
 
@@ -308,6 +319,49 @@ class TestSessionAgentRedisRoundTrip:
         assert set(loaded.keys()) == {"BankBot", "FraudBot"}
         _assert_rich_config_preserved(loaded["BankBot"], name="BankBot")
         _assert_rich_config_preserved(loaded["FraudBot"], name="FraudBot")
+
+    @pytest.mark.asyncio
+    async def test_active_agent_persists_and_controls_unnamed_lookup(
+        self, session_id, fake_redis
+    ) -> None:
+        set_session_agent(session_id, make_rich_agent("BankBot"), set_active=True)
+        set_session_agent(session_id, make_rich_agent("FraudBot"), set_active=True)
+        await persist_session_agents_to_redis(session_id)
+
+        stored = fake_redis.store[f"session:{session_id}"]
+        corememory = json.loads(stored["corememory"])
+        assert corememory[AGENTS_KEY_ACTIVE] == "FraudBot"
+        assert corememory["active_agent"] == "FraudBot"
+
+        _simulate_fresh_worker(session_id)
+        loaded = get_session_agent(session_id)
+        assert loaded is not None
+        assert loaded.name == "FraudBot"
+
+    def test_multiple_agents_without_active_do_not_use_insertion_order(self, session_id) -> None:
+        set_session_agent(session_id, make_rich_agent("BankBot"), persist=False)
+        set_session_agent(session_id, make_rich_agent("FraudBot"), persist=False)
+        sa._active_session_agents.pop(session_id, None)
+
+        assert get_session_agent(session_id) is None
+
+    @pytest.mark.asyncio
+    async def test_async_remove_is_case_insensitive_and_durable(
+        self, session_id, fake_redis
+    ) -> None:
+        set_session_agent(session_id, make_rich_agent("BankBot"), set_active=True)
+        set_session_agent(session_id, make_rich_agent("FraudBot"), set_active=True)
+        await persist_session_agents_to_redis(session_id)
+
+        removed = await remove_session_agent_async(session_id, "bankbot", raise_on_failure=True)
+
+        assert removed is True
+        _simulate_fresh_worker(session_id)
+        assert get_session_agent(session_id, "BankBot") is None
+        loaded = get_session_agent(session_id, "FraudBot")
+        assert loaded is not None
+        assert loaded.name == "FraudBot"
+        assert fake_redis.write_count >= 2
 
     @pytest.mark.asyncio
     @pytest.mark.usefixtures("fake_redis")

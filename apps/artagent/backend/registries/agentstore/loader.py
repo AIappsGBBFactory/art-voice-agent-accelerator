@@ -38,10 +38,6 @@ AGENTS_DIR = Path(__file__).parent
 AgentConfig = UnifiedAgent
 
 
-# Legacy alias for backward compatibility
-AgentConfig = UnifiedAgent
-
-
 def _deep_merge(base: dict, override: dict) -> dict:
     """Deep merge override into base dict."""
     result = base.copy()
@@ -148,22 +144,26 @@ def load_agent(
     #   - cascade_model: for Cascade/media mode
     # =========================================================================
 
-    # Load default/fallback model config
+    # Load default/fallback and mode-specific model configs. Mode-specific
+    # defaults inherit from the fallback model first, then from their own
+    # _defaults.yaml block, then from the agent override.
     model_raw = _deep_merge(defaults.get("model", {}), raw.get("model", {}))
-
-    # Load mode-specific model configs (if present in YAML)
-    voicelive_model_raw = None
-    cascade_model_raw = None
+    voicelive_model_raw = _deep_merge(
+        model_raw,
+        _deep_merge(defaults.get("voicelive_model", {}), raw.get("voicelive_model", {})),
+    )
+    cascade_model_raw = _deep_merge(
+        model_raw,
+        _deep_merge(defaults.get("cascade_model", {}), raw.get("cascade_model", {})),
+    )
 
     if "voicelive_model" in raw:
-        voicelive_model_raw = _deep_merge(defaults.get("model", {}), raw["voicelive_model"])
         logger.debug(
             f"Loaded voicelive_model for agent {identity['name']}: "
             f"deployment_id={raw['voicelive_model'].get('deployment_id')}"
         )
 
     if "cascade_model" in raw:
-        cascade_model_raw = _deep_merge(defaults.get("model", {}), raw["cascade_model"])
         logger.debug(
             f"Loaded cascade_model for agent {identity['name']}: "
             f"deployment_id={raw['cascade_model'].get('deployment_id')}"
@@ -192,8 +192,8 @@ def load_agent(
         return_greeting=identity["return_greeting"],
         handoff=handoff,
         model=ModelConfig.from_dict(model_raw),
-        voicelive_model=ModelConfig.from_dict(voicelive_model_raw) if voicelive_model_raw else None,
-        cascade_model=ModelConfig.from_dict(cascade_model_raw) if cascade_model_raw else None,
+        voicelive_model=ModelConfig.from_dict(voicelive_model_raw),
+        cascade_model=ModelConfig.from_dict(cascade_model_raw),
         byom=VoiceLiveBYOMConfig.from_dict(raw.get("byom")),
         voice=VoiceConfig.from_dict(voice_raw),
         speech=SpeechConfig.from_dict(speech_raw),

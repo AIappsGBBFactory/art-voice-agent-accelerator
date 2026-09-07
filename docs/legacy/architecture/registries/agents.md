@@ -147,6 +147,11 @@ tools:
   - handoff_investment_advisor
   - escalate_human
 
+# MCP servers associated with this agent (their tools are resolved separately)
+mcp_servers:
+  - crm-mcp
+  - policy-mcp
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Prompt Template
 # ─────────────────────────────────────────────────────────────────────────────
@@ -173,8 +178,14 @@ template_vars:
 | `handoff.is_entry_point` | bool | `false` | Is this the default starting agent? |
 | `model.deployment_id` | string | `gpt-4o` | Azure OpenAI deployment |
 | `model.temperature` | float | `0.7` | Response creativity (0-1) |
+| `cascade_model` | object | Inherits `model` + `_defaults.yaml` | Cascade-specific model configuration |
+| `voicelive_model` | object | Inherits `model` + `_defaults.yaml` | VoiceLive-specific model configuration |
+| `byom` | object | disabled | VoiceLive Bring Your Own Model profile |
 | `voice.name` | string | `en-US-ShimmerTurboMultilingualNeural` | Azure TTS voice |
+| `speech` | object | `_defaults.yaml` | Cascade STT/VAD settings |
+| `session` | object | `_defaults.yaml` | VoiceLive session settings, including nested `turn_detection` |
 | `tools` | list | `[]` | Tool names from registry |
+| `mcp_servers` | list | `[]` | MCP server associations for the agent |
 | `prompts.path` | string | `""` | Path to prompt file |
 | `prompts.content` | string | `""` | Inline prompt (alternative to path) |
 | `template_vars` | dict | `{}` | Custom variables for prompts |
@@ -260,6 +271,13 @@ model:
   deployment_id: gpt-4o
   temperature: 0.7
   max_tokens: 4096
+  api_version: "2025-01-01-preview"
+
+voicelive_model:
+  deployment_id: gpt-realtime
+
+cascade_model:
+  deployment_id: gpt-4o
 
 voice:
   name: en-US-ShimmerTurboMultilingualNeural
@@ -284,6 +302,26 @@ voice:
 # Model inherits from defaults
 # template_vars merge with defaults
 ```
+
+`model` is the shared fallback. `cascade_model` and `voicelive_model` inherit
+from `model`, then merge mode-specific defaults from `_defaults.yaml`, then the
+agent's own mode-specific override. This keeps Cascade and VoiceLive deployment,
+API version, and model-family settings distinct without duplicating the full
+model block in every agent.
+
+## Runtime Builder Round-Trip Contract
+
+Agent Builder session agents are stored as complete editable agent documents.
+The session codec preserves `model`, `cascade_model`, `voicelive_model`, `byom`,
+`voice`, `speech`, nested VoiceLive `session` settings, `prompt`, `tools`,
+`mcp_servers`, `template_vars`, greetings, handoff trigger, and metadata across
+YAML -> builder -> Redis -> cold restore.
+
+When a session has multiple custom agents, unnamed lookups use the explicit
+`active_session_agent` marker. If no marker exists, the lookup only falls back
+when exactly one session agent exists; it does not select the first inserted
+agent. Builder template caches invalidate when `_defaults.yaml`, `agent.yaml`,
+or prompt files (`.jinja`, `.md`, `.txt`) change.
 
 ## Agent Discovery and Loading
 

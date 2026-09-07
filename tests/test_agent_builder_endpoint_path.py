@@ -24,16 +24,16 @@ so they exercise the real server-side processing without standing up the app.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any, Dict
+from typing import Any
 
 import pytest
-
 from apps.artagent.backend.api.v1.endpoints.agent_builder import (
     DynamicAgentConfig,
     LiveSettingsRequest,
     apply_live_session_settings,
     create_dynamic_agent,
     get_session_agent_config,
+    reset_session_agent,
     update_session_agent,
 )
 from apps.artagent.backend.registries.agentstore.base import (
@@ -45,8 +45,8 @@ from apps.artagent.backend.registries.agentstore.base import (
 from apps.artagent.backend.src.orchestration.session_agents import (
     get_session_agent,
     remove_session_agent,
+    set_redis_manager,
 )
-
 
 # =============================================================================
 # HELPERS
@@ -61,7 +61,8 @@ def frontend_payload(
     cascade_deployment: str = "gpt-4o",
     voicelive_deployment: str = "gpt-realtime",
     tools: list[str] | None = None,
-) -> Dict[str, Any]:
+    mcp_servers: list[str] | None = None,
+) -> dict[str, Any]:
     """Mirror the JSON body that AgentBuilder.jsx / App.jsx Quick Tune POSTs."""
     return {
         "name": name,
@@ -70,13 +71,15 @@ def frontend_payload(
         "return_greeting": "Welcome back!",
         "prompt": prompt,
         "tools": tools or [],
+        "mcp_servers": mcp_servers or [],
         "cascade_model": {
             "deployment_id": cascade_deployment,
             "temperature": 0.7,
             "top_p": 0.9,
             "max_tokens": 4096,
             "endpoint_preference": "auto",
-            "api_version": "v1",
+            "api_version": "2025-01-01-preview",
+            "model_family": "gpt-4",
         },
         "voicelive_model": {
             "deployment_id": voicelive_deployment,
@@ -84,6 +87,8 @@ def frontend_payload(
             "top_p": 0.9,
             "max_tokens": 4096,
             "endpoint_preference": "auto",
+            "api_version": "2025-04-01-preview",
+            "model_family": "gpt-realtime",
         },
         "voice": {
             "name": voice_name,
@@ -111,6 +116,25 @@ def stub_request(unified_agents: dict | None = None, start_agent: str | None = N
     return SimpleNamespace(app=SimpleNamespace(state=state))
 
 
+class CountingRedisManager:
+    """Dict-backed Redis fake that counts awaited writes."""
+
+    def __init__(self, *, fail_writes: bool = False) -> None:
+        self.store: dict[str, dict] = {}
+        self.write_count = 0
+        self.fail_writes = fail_writes
+
+    def get_session_data(self, key: str) -> dict:
+        return dict(self.store.get(key, {}))
+
+    async def store_session_data_async(self, key: str, data: dict) -> bool:
+        self.write_count += 1
+        if self.fail_writes:
+            return False
+        self.store[key] = dict(data)
+        return True
+
+
 @pytest.fixture
 def session_id() -> str:
     return "session_path_test"
@@ -119,9 +143,12 @@ def session_id() -> str:
 @pytest.fixture(autouse=True)
 def _clean_session(session_id):
     """Ensure each test starts and ends with no session agent."""
+    set_redis_manager(None)
     remove_session_agent(session_id)
     yield
+    set_redis_manager(None)
     remove_session_agent(session_id)
+    set_redis_manager(None)
 
 
 # =============================================================================
@@ -135,7 +162,11 @@ class TestUpdatePathPersists:
     @pytest.mark.asyncio
     async def test_put_persists_frontend_payload(self, session_id) -> None:
         config = DynamicAgentConfig.model_validate(
-            frontend_payload(name="My Bot", voice_name="en-US-JennyNeural")
+            frontend_payload(
+                name="My Bot",
+                voice_name="en-US-JennyNeural",
+                mcp_servers=["crm-mcp", "policy-mcp"],
+            )
         )
 
         resp = await update_session_agent(session_id, config, stub_request())
@@ -149,7 +180,12 @@ class TestUpdatePathPersists:
         assert stored.prompt_template == "You are a helpful voice assistant."
         assert stored.voice.name == "en-US-JennyNeural"
         assert stored.cascade_model.deployment_id == "gpt-4o"
+        assert stored.cascade_model.api_version == "2025-01-01-preview"
+        assert stored.cascade_model.model_family == "gpt-4"
         assert stored.voicelive_model.deployment_id == "gpt-realtime"
+        assert stored.voicelive_model.api_version == "2025-04-01-preview"
+        assert stored.voicelive_model.model_family == "gpt-realtime"
+        assert stored.mcp_servers == ["crm-mcp", "policy-mcp"]
         assert stored.template_vars == {"brand": "Contoso"}
 
     @pytest.mark.asyncio
@@ -162,7 +198,45 @@ class TestUpdatePathPersists:
         assert got.config["prompt_full"] == "You are a helpful voice assistant."
         assert got.config["voice"]["name"] == "en-US-AvaMultilingualNeural"
         assert got.config["cascade_model"]["deployment_id"] == "gpt-4o"
+        assert got.config["cascade_model"]["api_version"] == "2025-01-01-preview"
+        assert got.config["cascade_model"]["model_family"] == "gpt-4"
         assert got.config["voicelive_model"]["deployment_id"] == "gpt-realtime"
+        assert got.config["voicelive_model"]["api_version"] == "2025-04-01-preview"
+        assert got.config["voicelive_model"]["model_family"] == "gpt-realtime"
+
+    @pytest.mark.asyncio
+    async def test_nested_persisted_session_payload_roundtrips(self, session_id) -> None:
+        payload = frontend_payload(name="Nested Session")
+        payload["session"] = {
+            "modalities": ["TEXT", "AUDIO"],
+            "input_audio_format": "PCM16",
+            "output_audio_format": "PCM16",
+            "turn_detection": {
+                "type": "server_vad",
+                "threshold": 0.61,
+                "silence_duration_ms": 910,
+                "prefix_padding_ms": 310,
+            },
+            "tool_choice": "auto",
+            "input_audio_transcription_settings": {
+                "model": "whisper-1",
+                "language": "en-US",
+            },
+        }
+        config = DynamicAgentConfig.model_validate(payload)
+
+        await update_session_agent(session_id, config, stub_request())
+
+        got = await get_session_agent_config(session_id, stub_request())
+        turn_detection = got.config["session"]["turn_detection"]
+        assert turn_detection["type"] == "server_vad"
+        assert turn_detection["threshold"] == 0.61
+        assert turn_detection["silence_duration_ms"] == 910
+        assert turn_detection["prefix_padding_ms"] == 310
+        assert got.config["session"]["input_audio_transcription_settings"] == {
+            "model": "whisper-1",
+            "language": "en-US",
+        }
 
 
 class TestUpsertSemantics:
@@ -213,6 +287,30 @@ class TestUpsertSemantics:
         finally:
             remove_session_agent(sid_create)
             remove_session_agent(sid_update)
+
+    @pytest.mark.asyncio
+    async def test_upsert_performs_single_awaited_redis_write(self, session_id) -> None:
+        redis = CountingRedisManager()
+        set_redis_manager(redis)
+
+        cfg = DynamicAgentConfig.model_validate(frontend_payload(name="Durable"))
+        await update_session_agent(session_id, cfg, stub_request())
+
+        assert redis.write_count == 1
+
+    @pytest.mark.asyncio
+    async def test_upsert_surfaces_redis_write_failure(self, session_id) -> None:
+        from fastapi import HTTPException
+
+        redis = CountingRedisManager(fail_writes=True)
+        set_redis_manager(redis)
+
+        cfg = DynamicAgentConfig.model_validate(frontend_payload(name="Durable"))
+        with pytest.raises(HTTPException) as exc:
+            await update_session_agent(session_id, cfg, stub_request())
+
+        assert exc.value.status_code == 503
+        assert redis.write_count == 1
 
 
 class TestInvalidToolsRejected:
@@ -317,6 +415,68 @@ class TestLiveSettingsPersist:
         # The shared registry agent must NOT be mutated.
         assert base.voice.name == "en-US-JennyNeural"
 
+    @pytest.mark.asyncio
+    async def test_patches_explicit_active_agent_not_insertion_order(self, session_id) -> None:
+        await update_session_agent(
+            session_id,
+            DynamicAgentConfig.model_validate(
+                frontend_payload(name="Alpha", voice_name="en-US-AvaMultilingualNeural")
+            ),
+            stub_request(),
+        )
+        await update_session_agent(
+            session_id,
+            DynamicAgentConfig.model_validate(
+                frontend_payload(name="Beta", voice_name="en-US-JennyNeural")
+            ),
+            stub_request(),
+        )
+
+        payload = LiveSettingsRequest.model_validate(
+            {"mode": "voicelive", "voice": {"name": "en-US-GuyNeural"}}
+        )
+        result = await apply_live_session_settings(
+            session_id, payload, stub_request(start_agent="Alpha")
+        )
+
+        assert result["applied"] is True
+        assert get_session_agent(session_id, "Alpha").voice.name == "en-US-GuyNeural"
+        assert get_session_agent(session_id, "Beta").voice.name == "en-US-JennyNeural"
+
+    @pytest.mark.asyncio
+    async def test_live_settings_performs_single_awaited_redis_write(self, session_id) -> None:
+        await update_session_agent(
+            session_id,
+            DynamicAgentConfig.model_validate(frontend_payload(name="Tunable")),
+            stub_request(),
+        )
+        redis = CountingRedisManager()
+        set_redis_manager(redis)
+
+        payload = LiveSettingsRequest.model_validate(
+            {"mode": "cascade", "voice": {"name": "en-US-GuyNeural"}}
+        )
+        await apply_live_session_settings(session_id, payload, stub_request())
+
+        assert redis.write_count == 1
+
+    @pytest.mark.asyncio
+    async def test_reset_surfaces_redis_clear_failure(self, session_id) -> None:
+        from fastapi import HTTPException
+
+        await update_session_agent(
+            session_id,
+            DynamicAgentConfig.model_validate(frontend_payload(name="Resettable")),
+            stub_request(),
+        )
+        redis = CountingRedisManager(fail_writes=True)
+        set_redis_manager(redis)
+
+        with pytest.raises(HTTPException) as exc:
+            await reset_session_agent(session_id, stub_request())
+
+        assert exc.value.status_code == 503
+
 
 # =============================================================================
 # QUICK TUNE -> RECONNECT: THE ACTIVE SCENARIO MUST SURVIVE
@@ -351,16 +511,12 @@ class TestQuickTuneReconnectKeepsScenario:
         # 1. Quick Tune applies to the agent the caller is talking to.
         payload = frontend_payload(name="BankingConcierge", voice_name="en-US-GuyNeural")
         config = DynamicAgentConfig.model_validate(payload)
-        await update_session_agent(
-            session_id, config, stub_request(unified_agents=base_agents)
-        )
+        await update_session_agent(session_id, config, stub_request(unified_agents=base_agents))
         session_agent = get_session_agent(session_id)
         assert session_agent is not None
 
         # 2. Reconnect resolves the scenario, then merges the session agent.
-        resolved = resolve_orchestrator_config(
-            session_id=session_id, scenario_name="banking"
-        )
+        resolved = resolve_orchestrator_config(session_id=session_id, scenario_name="banking")
         agents, start_agent, handoff_map = build_effective_registry(
             resolved,
             base_agents=base_agents,

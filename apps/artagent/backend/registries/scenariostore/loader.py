@@ -7,11 +7,13 @@ Loads scenario configurations and applies agent overrides.
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
+from apps.artagent.backend.src.orchestration.naming import find_agent_by_name
 from utils.ml_logging import get_logger
 
 logger = get_logger("agents.scenarios.loader")
@@ -238,9 +240,7 @@ class ScenarioConfig:
                     handoffs.append(HandoffConfig.from_dict(h))
 
         # Parse generic handoff configuration
-        generic_handoff = GenericHandoffConfig.from_dict(
-            data.get("generic_handoff")
-        )
+        generic_handoff = GenericHandoffConfig.from_dict(data.get("generic_handoff"))
 
         return cls(
             name=name,
@@ -434,7 +434,9 @@ class ScenarioConfig:
                 condition = f"When the customer's needs are better served by {h.to_agent}."
 
             # Always reference the generic handoff_to_agent tool
-            lines.append(f"- **{h.to_agent}** - call `handoff_to_agent(target_agent=\"{h.to_agent}\", reason=\"...\")`")
+            lines.append(
+                f'- **{h.to_agent}** - call `handoff_to_agent(target_agent="{h.to_agent}", reason="...")`'
+            )
             # Indent the condition text
             for line in condition.split("\n"):
                 if line.strip():
@@ -501,7 +503,13 @@ def load_scenario(name: str) -> ScenarioConfig | None:
         ScenarioConfig or None if not found
     """
     _discover_scenarios()
-    return _SCENARIOS.get(name)
+    scenario = _SCENARIOS.get(name)
+    if scenario:
+        return scenario
+    for scenario_name, scenario in _SCENARIOS.items():
+        if scenario_name.lower() == name.lower():
+            return scenario
+    return None
 
 
 def list_scenarios() -> list[str]:
@@ -538,7 +546,13 @@ def get_scenario_agents(
     # Filter agents if scenario specifies a subset
     if scenario.agents:
         requested = set(scenario.agents)
-        agents = {k: v for k, v in base_agents.items() if k in requested}
+        agents = {}
+        missing = set(requested)
+        for requested_name in requested:
+            actual_key, agent = find_agent_by_name(base_agents, requested_name)
+            if actual_key is not None:
+                agents[actual_key] = copy.deepcopy(agent)
+                missing.discard(requested_name)
 
         # Warn if requested agents are missing and fall back to base registry
         if not agents:
@@ -547,9 +561,8 @@ def get_scenario_agents(
                 scenario_name,
                 extra={"requested_agents": sorted(requested)},
             )
-            agents = dict(base_agents)
+            agents = copy.deepcopy(base_agents)
         else:
-            missing = requested - set(agents.keys())
             if missing:
                 logger.warning(
                     "Scenario '%s' missing agents not found in registry: %s",
@@ -557,7 +570,7 @@ def get_scenario_agents(
                     sorted(missing),
                 )
     else:
-        agents = dict(base_agents)
+        agents = copy.deepcopy(base_agents)
 
     # Apply global defaults (no per-agent overrides)
     for agent in agents.values():
