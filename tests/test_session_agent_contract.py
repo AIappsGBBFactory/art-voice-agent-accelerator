@@ -95,3 +95,38 @@ def test_reset_one_or_all_preserves_unrelated_session(session):
     assert registry.remove_session_agent(session_id, persist=False)
     assert registry.get_session_agents(session_id) == {}
     assert registry.get_session_agent("other").name == "Other"
+
+
+@pytest.mark.parametrize("mode", ["cascade", "voicelive"])
+def test_builder_roundtrip_preserves_explicit_null_mode_override(mode):
+    from apps.artagent.backend.api.v1.endpoints.agent_builder import (
+        DynamicAgentConfig,
+        build_session_agent,
+    )
+
+    original = agent_from_payload(
+        {
+            "name": "Agent",
+            "prompt_template": "Help the customer.",
+            "model": {"deployment_id": "gpt-4o"},
+            f"{mode}_model": None,
+        }
+    )
+    parsed = DynamicAgentConfig.model_validate(agent_api_payload(original))
+    restored = build_session_agent(parsed, "roundtrip", created_at=1)
+    assert getattr(restored, f"{mode}_model") is None
+    assert restored.get_model_for_mode(mode).deployment_id == "gpt-4o"
+
+
+def test_builder_omitted_mode_overrides_still_receive_creation_presets():
+    from apps.artagent.backend.api.v1.endpoints.agent_builder import (
+        DynamicAgentConfig,
+        build_session_agent,
+    )
+
+    config = DynamicAgentConfig(
+        name="Agent", prompt="Help the customer.", model={"deployment_id": "gpt-4o"}
+    )
+    created = build_session_agent(config, "creation", created_at=1)
+    assert created.cascade_model.deployment_id == "gpt-4o"
+    assert created.voicelive_model.deployment_id == "gpt-realtime"

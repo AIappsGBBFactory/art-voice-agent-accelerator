@@ -2030,9 +2030,11 @@ def build_session_agent(
     Mode-specific models are resolved with this priority:
     explicit ``cascade_model`` / ``voicelive_model`` > legacy ``model`` > defaults.
     """
-    # Cascade model (STT→LLM→TTS): never a realtime deployment.
-    if config.cascade_model:
-        cascade_model = _model_from_schema(config.cascade_model)
+    # Presets apply only on creation omission; explicit null selects the generic model.
+    if "cascade_model" in config.model_fields_set:
+        cascade_model = (
+            _model_from_schema(config.cascade_model) if config.cascade_model is not None else None
+        )
     elif config.model:
         base_id = config.model.deployment_id
         cascade_model = _model_from_schema(
@@ -2044,9 +2046,12 @@ def build_session_agent(
             deployment_id="gpt-4o", temperature=0.7, top_p=0.9, max_tokens=4096
         )
 
-    # VoiceLive model (realtime API): always a realtime deployment.
-    if config.voicelive_model:
-        voicelive_model = _model_from_schema(config.voicelive_model)
+    if "voicelive_model" in config.model_fields_set:
+        voicelive_model = (
+            _model_from_schema(config.voicelive_model)
+            if config.voicelive_model is not None
+            else None
+        )
     elif config.model:
         base_id = config.model.deployment_id
         voicelive_model = _model_from_schema(
@@ -2057,6 +2062,14 @@ def build_session_agent(
         voicelive_model = ModelConfig(
             deployment_id="gpt-realtime", temperature=0.7, top_p=0.9, max_tokens=4096
         )
+
+    generic_model = (
+        _model_from_schema(config.model)
+        if config.model
+        else cascade_model
+        or ModelConfig(deployment_id="gpt-4o", temperature=0.7, top_p=0.9, max_tokens=4096)
+    )
+    effective_voicelive_model = voicelive_model or generic_model
 
     handoff_trigger = config.handoff_trigger.strip() if config.handoff_trigger else ""
     if not handoff_trigger:
@@ -2094,14 +2107,16 @@ def build_session_agent(
     # (idle timeout + client reconnect storm). Surface it at save time instead of
     # only discovering it live in App Insights. We warn rather than raise because
     # the managed catalog grows over time (mirrors the connect-time check).
-    if byom_config is None and not is_managed_voicelive_model(voicelive_model.deployment_id):
+    if byom_config is None and not is_managed_voicelive_model(
+        effective_voicelive_model.deployment_id
+    ):
         logger.warning(
             "[AgentBuilder] non_managed_voicelive_without_byom | agent=%s "
             "voicelive_model=%s session=%s — saved without a BYOM profile; managed "
             "Voice Live cannot serve this model so the agent will not respond. Enable "
             "a BYOM profile or pick a managed Voice Live model.",
             config.name,
-            voicelive_model.deployment_id,
+            effective_voicelive_model.deployment_id,
             session_id,
         )
 
@@ -2112,14 +2127,14 @@ def build_session_agent(
     # agent turns out to be mute on every turn. Warn (rather than raise) to match
     # the guard above; the connect path drops the incompatible profile.
     byom_conflict = byom_profile_model_conflict(
-        byom_config.mode if byom_config else None, voicelive_model.deployment_id
+        byom_config.mode if byom_config else None, effective_voicelive_model.deployment_id
     )
     if byom_conflict:
         logger.warning(
             "[AgentBuilder] byom_profile_model_conflict | agent=%s voicelive_model=%s "
             "byom=%s session=%s — %s",
             config.name,
-            voicelive_model.deployment_id,
+            effective_voicelive_model.deployment_id,
             byom_config.mode if byom_config else None,
             session_id,
             byom_conflict,
@@ -2129,13 +2144,9 @@ def build_session_agent(
         {
             **config.model_dump(),
             "handoff": definition_payload(config.handoff or HandoffConfig(trigger=handoff_trigger)),
-            "model": (
-                _model_from_schema(config.model).to_dict()
-                if config.model
-                else cascade_model.to_dict()
-            ),
-            "cascade_model": cascade_model.to_dict(),
-            "voicelive_model": voicelive_model.to_dict(),
+            "model": definition_payload(generic_model),
+            "cascade_model": definition_payload(cascade_model),
+            "voicelive_model": definition_payload(voicelive_model),
             "byom": definition_payload(byom_config),
             "voice": (config.voice or VoiceConfigSchema()).model_dump(),
             "speech": (
