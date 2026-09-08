@@ -24,9 +24,13 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
+from apps.artagent.backend.registries.agentstore.base import (
+    byom_profile_model_conflict,
+)
 from apps.artagent.backend.registries.agentstore.loader import (
     discover_agents,
 )
@@ -233,14 +237,18 @@ class GenesysVoiceLiveHandler:
         self._outbound_audio_response_id: str | None = None
         self._inbound_audio_decoder = ULaw8kToPCM16_24kStreamDecoder()
 
-        # Accumulate small audio chunks before sending (200ms = 1600 bytes at 8kHz µ-law)
-        self._audio_accum = bytearray()
-        self._audio_accum_response_id: str | None = None
+        # Response-scoped outbound audio buffers drained by the pacer/writer pair.
+        self._response_audio_buffers: dict[str, bytearray] = {}
+        self._response_audio_order: deque[str] = deque()
+        self._buffered_response_ids: set[str] = set()
         self._AUDIO_CHUNK_SIZE = 2000  # 250ms at 8kHz µ-law mono (1 byte/sample)
         self._AUDIO_PACE_MS = 250  # Send one chunk every 250ms (matching reference)
         self._MAX_OUTBOUND_AUDIO_BYTES = self._AUDIO_CHUNK_SIZE * 80  # 20s at 8 kHz µ-law
         self._pending_audio_bytes = 0
         self._pacer_task: asyncio.Task | None = None
+        self._terminal_disconnect_enqueued = False
+        self._terminal_disconnect_sent = False
+        self._terminal_shutdown_task: asyncio.Task | None = None
 
     # ─────────────────────────────────────────────────────────────────────────
     # Lifecycle
@@ -250,6 +258,8 @@ class GenesysVoiceLiveHandler:
         """Start the outbound writer. VoiceLive connection is deferred to session open."""
         self._running = True
         self._shutdown.clear()
+        self._terminal_disconnect_enqueued = False
+        self._terminal_disconnect_sent = False
         self._writer_task = asyncio.create_task(self._outbound_writer(), name="genesys-writer")
         logger.info("[Genesys] Handler started | session=%s", self.session_id)
 
@@ -291,6 +301,20 @@ class GenesysVoiceLiveHandler:
         self._current_response_id = None
         self._active_response_ids.clear()
         self._cancelled_response_ids.clear()
+        current_task = asyncio.current_task()
+        if (
+            self._terminal_shutdown_task
+            and self._terminal_shutdown_task is not current_task
+            and not self._terminal_shutdown_task.done()
+        ):
+            self._terminal_shutdown_task.cancel()
+            try:
+                await self._terminal_shutdown_task
+            except asyncio.CancelledError:
+                pass
+        self._terminal_shutdown_task = None
+        self._terminal_disconnect_enqueued = False
+        self._terminal_disconnect_sent = False
         logger.info("[Genesys] Handler stopped | session=%s", self.session_id)
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -475,6 +499,20 @@ class GenesysVoiceLiveHandler:
                 self._settings.azure_voicelive_model,
                 self.session_id,
             )
+        if byom_query:
+            conflict = byom_profile_model_conflict(byom_query.get("profile"), connection_model)
+            if conflict:
+                logger.warning(
+                    "[Genesys] byom_profile_model_conflict | agent=%s profile=%s model=%s "
+                    "session=%s — %s Falling back to managed Voice Live for this connection.",
+                    effective_start_agent,
+                    byom_query.get("profile"),
+                    connection_model,
+                    self.session_id,
+                    conflict,
+                )
+                byom_query = None
+
         if byom_query:
             logger.info(
                 "[Genesys] Using BYOM profile | agent=%s model=%s profile=%s%s session=%s",
@@ -673,38 +711,15 @@ class GenesysVoiceLiveHandler:
                 await self._handle_conversion_failure(
                     direction="outbound",
                     exc=exc,
+                    response_id=response_id,
                 )
 
         elif etype == ServerEventType.RESPONSE_AUDIO_DONE:
-            response_id = self._extract_response_id(event)
-            if response_id is None:
-                logger.warning(
-                    "[Genesys] Audio done without response id; leaving response-local state untouched | session=%s",
-                    self.session_id,
-                )
-            else:
-                await self._flush_outbound_encoder(response_id)
-                self._cancelled_response_ids.discard(response_id)
-                if self._current_response_id == response_id:
-                    self._current_response_id = None
-                self._active_response_ids.discard(response_id)
-                await self._flush_audio_buffer(response_id=response_id)
+            await self._handle_response_done_event(event, label="audio done")
             logger.debug("[Genesys] Audio done | session=%s", self.session_id)
 
         elif etype == ServerEventType.RESPONSE_DONE:
-            response_id = self._extract_response_id(event)
-            if response_id is None:
-                logger.warning(
-                    "[Genesys] Response done without response id; leaving response-local state untouched | session=%s",
-                    self.session_id,
-                )
-            else:
-                await self._flush_outbound_encoder(response_id)
-                self._cancelled_response_ids.discard(response_id)
-                if self._current_response_id == response_id:
-                    self._current_response_id = None
-                self._active_response_ids.discard(response_id)
-                await self._flush_audio_buffer(response_id=response_id)
+            await self._handle_response_done_event(event, label="response done")
             self._is_playing = False
             logger.debug("[Genesys] Response done | session=%s", self.session_id)
 
@@ -774,17 +789,15 @@ class GenesysVoiceLiveHandler:
                 self.session_id,
             )
             return
-        if self._audio_accum_response_id not in (None, response_id):
-            await self._flush_audio_buffer(response_id=self._audio_accum_response_id)
-        if self._audio_accum_response_id is None:
-            self._audio_accum_response_id = response_id
-        self._audio_accum.extend(data)
-        self._pending_audio_bytes += len(data)
-        # Start pacer if not running
-        if self._pacer_task is None or self._pacer_task.done():
-            self._pacer_task = asyncio.create_task(
-                self._audio_pacer(), name="genesys-audio-pacer"
-            )
+        async with self._queue_lock:
+            buffer = self._response_audio_buffers.get(response_id)
+            if buffer is None:
+                buffer = bytearray()
+                self._response_audio_buffers[response_id] = buffer
+            buffer.extend(data)
+            self._pending_audio_bytes += len(data)
+            self._remember_buffered_response_locked(response_id)
+        self._ensure_pacer_running()
 
     async def _audio_pacer(self) -> None:
         """Send buffered audio at real-time rate (~200ms chunks every 200ms).
@@ -798,7 +811,7 @@ class GenesysVoiceLiveHandler:
                 # Wait first, then send — this lets audio accumulate
                 await asyncio.sleep(self._AUDIO_PACE_MS / 1000.0)
 
-                item = await self._dequeue_accumulated_chunk()
+                item = await self._dequeue_next_audio_chunk()
                 if item is None:
                     return
                 async with self._queue_lock:
@@ -807,16 +820,15 @@ class GenesysVoiceLiveHandler:
             pass
 
     async def _flush_audio_buffer(self, *, response_id: str | None) -> None:
-        """Flush any remaining accumulated audio (e.g., at end of response)."""
-        await self._stop_pacer()
+        """Move buffered audio for a response to the writer queue without pacing."""
+        if response_id is None:
+            return
         while True:
-            item = await self._dequeue_accumulated_chunk(response_id=response_id)
+            item = await self._dequeue_response_chunk(response_id)
             if item is None:
                 break
             async with self._queue_lock:
                 self._outbound_queue.put_nowait(item)
-            if self._audio_accum:
-                await asyncio.sleep(self._AUDIO_PACE_MS / 1000.0)
 
     async def _outbound_writer(self) -> None:
         """Single writer task that sends all outbound frames to Genesys.
@@ -845,6 +857,8 @@ class GenesysVoiceLiveHandler:
                             msg_type, self.session_id,
                         )
                         await self.websocket.send_text(json.dumps(item))
+                        if msg_type == "disconnect":
+                            self._terminal_disconnect_sent = True
                     elif isinstance(item, _OutboundAudioFrame):
                         if item.response_id in self._cancelled_response_ids:
                             self._pending_audio_bytes = max(
@@ -903,20 +917,38 @@ class GenesysVoiceLiveHandler:
         if tail:
             await self._enqueue_binary(tail, response_id=response_id)
 
-    async def _handle_conversion_failure(self, *, direction: str, exc: Exception) -> None:
+    async def _handle_conversion_failure(
+        self,
+        *,
+        direction: str,
+        exc: Exception,
+        response_id: str | None = None,
+    ) -> None:
         logger.exception(
             "[Genesys] %s audio conversion failed | session=%s",
             direction,
             self.session_id,
             exc_info=exc,
         )
-        await self._enqueue_message(
-            self._protocol.create_disconnect(
-                DISCONNECT_ERROR,
-                f"Genesys {direction} audio conversion failed: {exc}",
-            ),
-            drop_audio=True,
-        )
+        if response_id:
+            self._cancelled_response_ids.add(response_id)
+            self._active_response_ids.discard(response_id)
+            if self._current_response_id == response_id:
+                self._current_response_id = None
+        await self._clear_buffered_audio(response_ids={response_id} if response_id else None)
+        self._reset_outbound_encoder(response_id=response_id)
+
+        if not self._terminal_disconnect_enqueued:
+            self._terminal_disconnect_enqueued = True
+            self._terminal_disconnect_sent = False
+            await self._enqueue_message(
+                self._protocol.create_disconnect(
+                    DISCONNECT_ERROR,
+                    f"Genesys {direction} audio conversion failed: {exc}",
+                ),
+                drop_audio=True,
+            )
+        self._schedule_terminal_shutdown()
 
     async def _invalidate_active_audio(self) -> None:
         invalidated = set(self._active_response_ids)
@@ -988,19 +1020,29 @@ class GenesysVoiceLiveHandler:
     async def _clear_buffered_audio(self, response_ids: set[str] | None = None) -> None:
         async with self._queue_lock:
             self._drop_queued_audio_locked(response_ids=response_ids)
-            if response_ids is None or (
-                self._audio_accum_response_id is not None
-                and self._audio_accum_response_id in response_ids
-            ):
-                self._pending_audio_bytes = max(0, self._pending_audio_bytes - len(self._audio_accum))
-                self._audio_accum.clear()
-                self._audio_accum_response_id = None
+            if response_ids is None:
+                for response_id, buffer in self._response_audio_buffers.items():
+                    self._pending_audio_bytes = max(0, self._pending_audio_bytes - len(buffer))
+                    self._buffered_response_ids.discard(response_id)
+                self._response_audio_buffers.clear()
+                self._response_audio_order.clear()
+                self._buffered_response_ids.clear()
+            else:
+                self._response_audio_order = deque(
+                    response_id
+                    for response_id in self._response_audio_order
+                    if response_id not in response_ids
+                )
+                self._buffered_response_ids.difference_update(response_ids)
+                for response_id in response_ids:
+                    buffer = self._response_audio_buffers.pop(response_id, None)
+                    if buffer is not None:
+                        self._pending_audio_bytes = max(0, self._pending_audio_bytes - len(buffer))
             if response_ids is None or (
                 self._outbound_audio_response_id is not None
                 and self._outbound_audio_response_id in response_ids
             ):
-                self._outbound_audio_encoder = PCM16_24kToULaw8kStreamEncoder()
-                self._outbound_audio_response_id = None
+                self._reset_outbound_encoder(response_id=None)
 
     def _drop_queued_audio_locked(self, *, response_ids: set[str] | None) -> None:
         kept: list[_OutboundAudioFrame | dict[str, Any] | None] = []
@@ -1018,24 +1060,114 @@ class GenesysVoiceLiveHandler:
         for item in kept:
             self._outbound_queue.put_nowait(item)
 
-    async def _dequeue_accumulated_chunk(
-        self, *, response_id: str | None = None
-    ) -> _OutboundAudioFrame | None:
+    async def _dequeue_next_audio_chunk(self) -> _OutboundAudioFrame | None:
         async with self._queue_lock:
-            if not self._audio_accum:
-                self._audio_accum_response_id = None
+            while self._response_audio_order:
+                response_id = self._response_audio_order[0]
+                if response_id in self._cancelled_response_ids:
+                    self._discard_response_audio_locked(response_id)
+                    continue
+                buffer = self._response_audio_buffers.get(response_id)
+                if not buffer:
+                    self._forget_buffered_response_locked(response_id)
+                    self._response_audio_buffers.pop(response_id, None)
+                    continue
+                chunk = bytes(buffer[: self._AUDIO_CHUNK_SIZE])
+                del buffer[: self._AUDIO_CHUNK_SIZE]
+                if not buffer:
+                    self._response_audio_buffers.pop(response_id, None)
+                    self._forget_buffered_response_locked(response_id)
+                return _OutboundAudioFrame(response_id=response_id, payload=chunk)
+        return None
+
+    async def _dequeue_response_chunk(self, response_id: str) -> _OutboundAudioFrame | None:
+        async with self._queue_lock:
+            if response_id in self._cancelled_response_ids:
+                self._discard_response_audio_locked(response_id)
                 return None
-            if response_id and self._audio_accum_response_id != response_id:
+            buffer = self._response_audio_buffers.get(response_id)
+            if not buffer:
+                self._forget_buffered_response_locked(response_id)
+                self._response_audio_buffers.pop(response_id, None)
                 return None
-            active_response_id = self._audio_accum_response_id
-            if not active_response_id or active_response_id in self._cancelled_response_ids:
-                self._pending_audio_bytes = max(0, self._pending_audio_bytes - len(self._audio_accum))
-                self._audio_accum.clear()
-                self._audio_accum_response_id = None
-                return None
-            chunk_size = min(self._AUDIO_CHUNK_SIZE, len(self._audio_accum))
-            chunk = bytes(self._audio_accum[:chunk_size])
-            del self._audio_accum[:chunk_size]
-            if not self._audio_accum:
-                self._audio_accum_response_id = None
-            return _OutboundAudioFrame(response_id=active_response_id, payload=chunk)
+            chunk = bytes(buffer[: self._AUDIO_CHUNK_SIZE])
+            del buffer[: self._AUDIO_CHUNK_SIZE]
+            if not buffer:
+                self._response_audio_buffers.pop(response_id, None)
+                self._forget_buffered_response_locked(response_id)
+            return _OutboundAudioFrame(response_id=response_id, payload=chunk)
+
+    async def _handle_response_done_event(self, event: Any, *, label: str) -> None:
+        response_id = self._extract_response_id(event)
+        if response_id is None:
+            logger.warning(
+                "[Genesys] %s without response id; leaving response-local state untouched | session=%s",
+                label.capitalize(),
+                self.session_id,
+            )
+            return
+        try:
+            await self._flush_outbound_encoder(response_id)
+        except Exception as exc:
+            await self._handle_conversion_failure(
+                direction="outbound",
+                exc=exc,
+                response_id=response_id,
+            )
+            return
+        self._cancelled_response_ids.discard(response_id)
+        if self._current_response_id == response_id:
+            self._current_response_id = None
+        self._active_response_ids.discard(response_id)
+        self._ensure_pacer_running()
+
+    def _remember_buffered_response_locked(self, response_id: str) -> None:
+        if response_id in self._buffered_response_ids:
+            return
+        self._buffered_response_ids.add(response_id)
+        self._response_audio_order.append(response_id)
+
+    def _forget_buffered_response_locked(self, response_id: str) -> None:
+        self._buffered_response_ids.discard(response_id)
+        try:
+            self._response_audio_order.remove(response_id)
+        except ValueError:
+            pass
+
+    def _discard_response_audio_locked(self, response_id: str) -> None:
+        buffer = self._response_audio_buffers.pop(response_id, None)
+        if buffer is not None:
+            self._pending_audio_bytes = max(0, self._pending_audio_bytes - len(buffer))
+        self._forget_buffered_response_locked(response_id)
+
+    def _ensure_pacer_running(self) -> None:
+        if self._pacer_task is None or self._pacer_task.done():
+            self._pacer_task = asyncio.create_task(
+                self._audio_pacer(), name="genesys-audio-pacer"
+            )
+
+    def _reset_outbound_encoder(self, *, response_id: str | None) -> None:
+        if response_id is not None and self._outbound_audio_response_id != response_id:
+            return
+        self._outbound_audio_encoder = PCM16_24kToULaw8kStreamEncoder()
+        self._outbound_audio_response_id = None
+
+    def _schedule_terminal_shutdown(self) -> None:
+        if self._terminal_shutdown_task and not self._terminal_shutdown_task.done():
+            return
+        self._terminal_shutdown_task = asyncio.create_task(
+            self._shutdown_after_terminal_message(),
+            name="genesys-terminal-shutdown",
+        )
+
+    async def _shutdown_after_terminal_message(self) -> None:
+        deadline = time.monotonic() + 1.0
+        while (
+            self._writer_task
+            and not self._writer_task.done()
+            and self._websocket_open
+            and not self._terminal_disconnect_sent
+            and time.monotonic() < deadline
+        ):
+            await asyncio.sleep(0.01)
+        await self.stop()

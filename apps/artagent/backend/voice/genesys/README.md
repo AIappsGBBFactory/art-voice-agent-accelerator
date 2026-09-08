@@ -13,6 +13,9 @@ It does **not** introduce a third engine or a generic voice framework layer.
   - accumulated audio not yet chunked,
   - queued audio not yet written to the socket,
   - late provider deltas from an interrupted response.
+- Let response terminal events finalize encoder residuals promptly; paced audio
+  draining stays with the owned pacer/writer so the VoiceLive reader can react
+  to a following `speech_started` interruption immediately.
 
 ## Lifecycle guarantees
 
@@ -22,6 +25,9 @@ It does **not** introduce a third engine or a generic voice framework layer.
   partial-connection rollback.
 - Audio deltas without a provider response id are dropped deliberately instead
   of being attributed to whichever response happened to be current.
+- BYOM query parameters follow the common VoiceLive compatibility guard: a
+  profile/model API mismatch is logged and dropped for that connection rather
+  than opening a transcribing-but-silent call.
 
 ## Codec rules
 
