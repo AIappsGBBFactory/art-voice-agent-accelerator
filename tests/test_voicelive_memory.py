@@ -1140,8 +1140,9 @@ class TestHotPathOptimization:
 
         orchestrator.cleanup()
 
-    def test_schedule_background_sync_is_non_blocking(self):
-        """Verify _schedule_background_sync doesn't block."""
+    @pytest.mark.asyncio
+    async def test_schedule_background_sync_is_non_blocking(self):
+        """Sync runs once on the next loop iteration, never inline."""
         from apps.artagent.backend.voice.voicelive.orchestrator import LiveOrchestrator
 
         conn = FakeVoiceLiveConnection()
@@ -1156,10 +1157,14 @@ class TestHotPathOptimization:
             memo_manager=memo_manager,
         )
 
-        # Should not raise and should return immediately
-        orchestrator._schedule_background_sync()
-
-        orchestrator.cleanup()
+        try:
+            with patch.object(orchestrator, "_sync_to_memo_manager") as sync:
+                orchestrator._schedule_background_sync()
+                sync.assert_not_called()
+                await asyncio.sleep(0)
+                sync.assert_called_once_with()
+        finally:
+            orchestrator.cleanup()
 
     @pytest.mark.asyncio
     async def test_handle_response_done_is_non_blocking(self):

@@ -47,6 +47,12 @@ The offline workflow regressions run their actual shell steps with stubbed
 AZURE_APPCONFIG_ENDPOINT='' pytest tests/test_live_eval_workflow.py
 ```
 
+The blocking unit gate also covers async OpenAI invocation, Azure-host identity
+detection, and deferred VoiceLive memory sync. Four legacy ACS authentication
+expectations remain in `.github/quarantined-tests.txt`: implementing a different
+credential priority or SMS managed identity needs an explicit behavior decision,
+not a test-only assertion change.
+
 ## 🚀 Quick Start
 
 ### Deploy Everything
