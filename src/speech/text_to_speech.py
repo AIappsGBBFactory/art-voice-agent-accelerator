@@ -10,8 +10,10 @@ import asyncio
 import html
 import os
 import re
+import threading
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 
 import azure.cognitiveservices.speech as speechsdk
 from dotenv import load_dotenv
@@ -634,6 +636,8 @@ class SpeechSynthesizer:
         # DON'T initialize speaker synthesizer during __init__ to avoid audio library issues
         # Only create it when actually needed for speaker playback
         self._speaker = None
+        self._active_synthesizers: set = set()
+        self._active_synth_lock = threading.Lock()
 
         # Create base speech config for other operations
         self.cfg = None
@@ -1317,13 +1321,48 @@ class SpeechSynthesizer:
                 self._session_span = None
 
     def stop_speaking(self) -> None:
-        """Stop current playback (if any)."""
-        if self._speaker:
+        """Request stop on this instance's speaker and active PCM producers."""
+        with self._active_synth_lock:
+            synthesizers = set(self._active_synthesizers)
+            if self._speaker is not None:
+                synthesizers.add(self._speaker)
+        for synthesizer in synthesizers:
             try:
                 logger.info("[🛑] Stopping speech synthesis...")
-                self._speaker.stop_speaking_async()
+                synthesizer.stop_speaking_async()
             except Exception as e:
                 logger.warning(f"Could not stop speech synthesis: {e}")
+
+    @property
+    def has_active_synthesis(self) -> bool:
+        """Whether a PCM producer still lacks a successful stop acknowledgement."""
+        with self._active_synth_lock:
+            return bool(self._active_synthesizers)
+
+    @contextmanager
+    def _pcm_operation(self, synthesizer, ssml, *, streaming, cancel_event):
+        """Register/start atomically so stop cannot miss a newly started producer."""
+        registered = False
+        try:
+            with self._active_synth_lock:
+                cancelled = cancel_event is not None and cancel_event.is_set()
+                if not cancelled:
+                    self._active_synthesizers.add(synthesizer)
+                    registered = True
+                    start = (
+                        synthesizer.start_speaking_ssml_async
+                        if streaming
+                        else synthesizer.speak_ssml_async
+                    )
+                    operation = start(ssml)
+            yield None if cancelled else operation.get()
+        finally:
+            if registered:
+                # Runs on the synthesis worker, including generator.close().
+                # Retain ownership if the provider cannot acknowledge stop.
+                synthesizer.stop_speaking_async().get()
+                with self._active_synth_lock:
+                    self._active_synthesizers.discard(synthesizer)
 
     def synthesize_speech(
         self, text: str, voice: str = None, style: str = None, rate: str = None
@@ -1825,6 +1864,7 @@ class SpeechSynthesizer:
         sample_rate: int = 16000,
         style: str | None = None,
         rate: str | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> bool:
         """
         Warm the TTS connection by synthesizing minimal audio.
@@ -1857,6 +1897,7 @@ class SpeechSynthesizer:
                 style=style,
                 rate=rate,
                 read_chunk_bytes=320,
+                cancel_event=cancel_event,
             ):
                 warmed_bytes += len(chunk)
 
@@ -1884,6 +1925,8 @@ class SpeechSynthesizer:
         sample_rate: int = 16000,
         style: str = None,
         rate: str = None,
+        *,
+        cancel_event: threading.Event | None = None,
     ) -> bytes:
         """
         Synthesize text to PCM bytes with consistent voice parameter support.
@@ -1954,7 +1997,11 @@ class SpeechSynthesizer:
                 speech_config=speech_config, audio_config=None
             )
 
-            result = synthesizer.speak_ssml_async(ssml).get()
+            with self._pcm_operation(
+                synthesizer, ssml, streaming=False, cancel_event=cancel_event
+            ) as result:
+                if result is None or (cancel_event is not None and cancel_event.is_set()):
+                    return b""
             last_result = result
 
             # Check for 401 authentication error and retry with refresh if needed
@@ -2033,6 +2080,8 @@ class SpeechSynthesizer:
         style: str = None,
         rate: str = None,
         read_chunk_bytes: int = 3200,
+        *,
+        cancel_event: threading.Event | None = None,
     ):
         """
         Stream-synthesize ``text`` to raw PCM, yielding byte chunks as Azure
@@ -2106,24 +2155,24 @@ class SpeechSynthesizer:
 
             # start_speaking_* returns as soon as synthesis BEGINS (not when it
             # completes), unlocking incremental reads from the audio stream.
-            result = synthesizer.start_speaking_ssml_async(ssml).get()
-            audio_stream = speechsdk.AudioDataStream(result)
-
             produced = False
-            while True:
-                # Allocate a FRESH buffer per read. Reusing one immutable
-                # ``bytes`` object across ``read_data`` calls inside a generator
-                # makes the SDK's ctypes writes (c_char_p, argtypes=None) fail to
-                # land back in the object we read from across ``yield`` suspension
-                # boundaries — every chunk comes back as silence. A fresh buffer
-                # per call yields byte-for-byte the same audio as the blocking
-                # path. Do NOT hoist this out of the loop.
-                buffer = bytes(read_chunk_bytes)
-                filled = audio_stream.read_data(buffer)
-                if filled == 0:
-                    break
-                produced = True
-                yield bytes(buffer[:filled])
+            with self._pcm_operation(
+                synthesizer, ssml, streaming=True, cancel_event=cancel_event
+            ) as result:
+                if result is None:
+                    return
+                audio_stream = speechsdk.AudioDataStream(result)
+                while cancel_event is None or not cancel_event.is_set():
+                    # Fresh buffers are required for the SDK ctypes writes; a
+                    # reused immutable bytes buffer can produce silent frames.
+                    buffer = bytes(read_chunk_bytes)
+                    filled = audio_stream.read_data(buffer)
+                    if filled == 0:
+                        break
+                    produced = True
+                    yield bytes(buffer[:filled])
+                if cancel_event is not None and cancel_event.is_set():
+                    return
 
             # read_data returns 0 on completion OR cancellation. Inspect status.
             if audio_stream.status == speechsdk.StreamStatus.Canceled:
