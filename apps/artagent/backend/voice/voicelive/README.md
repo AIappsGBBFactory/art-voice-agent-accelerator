@@ -87,15 +87,42 @@ context-update task) is spawned through `_track_owned`, which records the task i
   it from `stop()` **before** closing the connection, so a task mid-way through
   `conn.response.create()` is torn down first and cannot race the socket close.
 
-## Partial-start-safe stop (F5)
+## Partial-start-safe stop (F5) & the persistence barrier
 
 `start()` adopts/opens the connection, registers the orchestrator, and spawns the
 event task **before** it sets `_running = True`. `stop()` therefore keys teardown
 off **resource presence**, not `_running`, so a failure anywhere in the startup
 window still unwinds the connection, the orchestrator registry entry, and any
 unclaimed warm (`_prepared_connection`) socket. A `_stopping` re-entry guard makes
-a second/concurrent `stop()` a no-op. Redis persistence is gated on
-`was_running` (a partial startup has no meaningful state to checkpoint).
+a second/concurrent `stop()` a no-op.
+
+`stop()` follows the storage **close contract** — quiesce producers, then snapshot:
+
+1. `unregister_voicelive_orchestrator` (stop scenario-update callbacks)
+2. DTMF cleanup
+3. cancel + join the event reader (`_event_task`)
+4. `orchestrator.cancel_and_join_tasks()` (owned tool tasks / finalizers)
+5. **final strict snapshot** — `_sync_to_memo_manager()` then
+   `persist_to_redis_async()`, gated on `was_running`
+6. close connection / prepared connection, `orchestrator.cleanup()`
+
+The snapshot is captured **after** producers are quiesced: persisting earlier
+races an in-flight tool finalizer still writing corememory
+(`client_id` / `session_profile`), so the snapshot could miss the write.
+
+### Storage integration hook (dependent, coordinator-owned)
+
+The persist block in `stop()` is the single integration point for the
+session-persistence slice:
+
+- **Hydration** enters VoiceLive pre-built as `websocket.state.cm` (populated by
+  the endpoint/media handler, out of this workstream's scope). The orchestrator
+  consumes it once in `__init__` via `_sync_from_memo_manager()`.
+- **Final flush**: `persist_to_redis_async()` is the ordered **strict barrier**;
+  a `await memo_manager.flush_pending_persist(raise_on_failure=False)` slots into
+  a `finally` immediately after it — before the connection / Redis / loop
+  release. It is intentionally **not** wired yet (kept independent of the storage
+  branch; no `getattr` shims).
 
 ## Tests
 

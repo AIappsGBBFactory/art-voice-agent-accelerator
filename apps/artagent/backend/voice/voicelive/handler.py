@@ -1628,9 +1628,48 @@ class VoiceLiveSDKHandler:
             # half-torn-down orchestrator. Idempotent (pop with default).
             unregister_voicelive_orchestrator(self.session_id)
 
-            # Persist session state to Redis before stopping. Only for a session
-            # that genuinely started: a partial startup has no meaningful state
-            # to checkpoint and its stores may be half-wired.
+            # Cleanup DTMFProcessor (safe on an idle processor).
+            try:
+                await self._dtmf_processor.cleanup()
+            except Exception:
+                logger.debug("DTMF cleanup failed during stop", exc_info=True)
+
+            if self._event_task:
+                self._event_task.cancel()
+                try:
+                    await self._event_task
+                except asyncio.CancelledError:
+                    pass
+                finally:
+                    self._event_task = None
+
+            # Cancel and join the orchestrator's owned tasks (business-tool tasks,
+            # batch finalizers, throttled context updates) BEFORE closing the
+            # connection, so a task mid-way through conn.response.create() is torn
+            # down first and cannot race the socket close.
+            if self._orchestrator and hasattr(self._orchestrator, "cancel_and_join_tasks"):
+                try:
+                    await self._orchestrator.cancel_and_join_tasks()
+                except Exception:
+                    logger.debug("Failed to cancel orchestrator tasks", exc_info=True)
+
+            # ── Final persistence barrier (storage close contract) ───────────
+            # Capture the final strict snapshot ONLY after every producer above is
+            # quiesced: scenario callbacks unregistered, the SDK event reader
+            # cancelled, owned tool tasks/finalizers cancel-joined, and DTMF
+            # stopped. Persisting earlier (as this used to) races an in-flight
+            # tool finalizer still writing corememory (client_id / session_profile),
+            # so the snapshot could miss the write. Gated on `was_running`: a
+            # partial startup has no meaningful state to checkpoint and its stores
+            # may be half-wired.
+            #
+            # STORAGE INTEGRATION HOOK (dependent, coordinator-owned): when the
+            # session-persistence slice is wired in, `persist_to_redis_async`
+            # below is the ordered strict barrier, and a
+            # `await memo_manager.flush_pending_persist(raise_on_failure=False)`
+            # belongs in a `finally` here — after the strict snapshot, before the
+            # connection / Redis / loop release below. Left unwired now to keep
+            # this workstream independent of that branch (no getattr shims).
             if was_running:
                 try:
                     memo_manager = (
@@ -1656,31 +1695,6 @@ class VoiceLiveSDKHandler:
                         persist_error,
                         self.session_id,
                     )
-
-            # Cleanup DTMFProcessor (safe on an idle processor).
-            try:
-                await self._dtmf_processor.cleanup()
-            except Exception:
-                logger.debug("DTMF cleanup failed during stop", exc_info=True)
-
-            if self._event_task:
-                self._event_task.cancel()
-                try:
-                    await self._event_task
-                except asyncio.CancelledError:
-                    pass
-                finally:
-                    self._event_task = None
-
-            # Cancel and join the orchestrator's owned tasks (business-tool tasks,
-            # batch finalizers, throttled context updates) BEFORE closing the
-            # connection, so a task mid-way through conn.response.create() is torn
-            # down first and cannot race the socket close.
-            if self._orchestrator and hasattr(self._orchestrator, "cancel_and_join_tasks"):
-                try:
-                    await self._orchestrator.cancel_and_join_tasks()
-                except Exception:
-                    logger.debug("Failed to cancel orchestrator tasks", exc_info=True)
 
             if self._connection_cm:
                 try:

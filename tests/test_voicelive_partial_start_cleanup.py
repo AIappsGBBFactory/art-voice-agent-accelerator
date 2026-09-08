@@ -154,3 +154,54 @@ async def test_stop_does_not_leak_registry_entries_across_sessions():
     await handler_b.stop()
     assert get_voicelive_orchestrator("sess-reg-b") is None
     assert get_orchestrator_registry_size() == baseline
+
+
+@pytest.mark.asyncio
+async def test_stop_persists_final_snapshot_after_producers_quiesced():
+    """The strict persist snapshot runs only after producers are cancel-joined.
+
+    Storage close contract: stop producers → capture the final strict snapshot →
+    (later) flush pending persistence. Persisting while an owned tool finalizer is
+    still writing corememory would race the snapshot, so persist must follow
+    cancel_and_join_tasks and the event-reader cancel.
+    """
+    handler, ws = _make_handler("sess-persist-order")
+    handler._running = True
+    cm = _fake_connection_cm()
+    handler._connection_cm = cm
+    handler._connection = object()
+
+    order: list[str] = []
+
+    memo_manager = MagicMock()
+    memo_manager.persist_to_redis_async = AsyncMock(
+        side_effect=lambda *a, **k: order.append("persist")
+    )
+    ws.state.cm = memo_manager
+    ws.app.state.redis = MagicMock()
+
+    orch = MagicMock()
+    orch.cleanup = MagicMock()
+    orch._sync_to_memo_manager = MagicMock(side_effect=lambda: order.append("sync"))
+    orch.cancel_and_join_tasks = AsyncMock(side_effect=lambda *a, **k: order.append("cancel_tasks"))
+    handler._orchestrator = orch
+
+    async def _idle() -> None:
+        order.append("reader_running")
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            order.append("reader_cancelled")
+            raise
+
+    handler._event_task = asyncio.create_task(_idle())
+    await asyncio.sleep(0)
+
+    await handler.stop()
+
+    # Producers are stopped before the strict snapshot is captured.
+    assert order.index("cancel_tasks") < order.index("persist")
+    assert order.index("reader_cancelled") < order.index("persist")
+    # Orchestrator state is synced into the memo immediately before the barrier.
+    assert order.index("sync") < order.index("persist")
+    memo_manager.persist_to_redis_async.assert_awaited_once()
