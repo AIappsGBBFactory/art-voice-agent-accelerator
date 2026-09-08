@@ -977,7 +977,7 @@ class VoiceHandler:
 
         if self._stt_thread:
             try:
-                await asyncio.to_thread(self._stt_thread.stop)
+                await self._stt_thread.stop_async()
             except Exception as e:
                 logger.error("[%s] STT thread stop error: %s", self._session_short, e)
                 cleanup_errors.append(e)

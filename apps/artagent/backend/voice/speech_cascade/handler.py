@@ -442,6 +442,10 @@ class SpeechSDKThread:
         self.recognizer_started = False
         self.stop_event = threading.Event()
         self._stopped = False
+        self._stop_lock = threading.Lock()
+        self._stop_complete = False
+        self._stop_error: Exception | None = None
+        self._stop_task: asyncio.Task | None = None
         # Wall-clock time of the first partial of the current utterance (user
         # started speaking). Reset after each final. Drives the STT span.
         self._utterance_start_ts: float | None = None
@@ -610,19 +614,54 @@ class SpeechSDKThread:
 
     def stop(self) -> None:
         """Stop SDK recognition; propagate failure so its lease is not reused."""
-        if self._stopped:
-            return
         self._stopped = True
         self.thread_running = False
         self.recognizer_started = False
         self.stop_event.set()
+        with self._stop_lock:
+            if self._stop_error is not None:
+                raise self._stop_error
+            if self._stop_complete:
+                return
+            try:
+                if self.recognizer:
+                    self.recognizer.stop()
+            except Exception as exc:
+                self._stop_error = exc
+                logger.error("[%s] Error stopping recognizer: %s", self._conn_short, exc)
+                raise
+            self._stop_complete = True
+            logger.info("[%s] Speech SDK recognition stopped", self._conn_short)
+
+    async def stop_async(self, *, timeout_sec: float = 10.0) -> None:
+        """Await native stop in owned worker work, withholding the lease on timeout.
+
+        Keep the task alive if the caller is cancelled or its deadline expires:
+        cancelling an executor Future cannot terminate a native SDK operation.
+        Repeat callers await the same operation, including any recorded failure.
+        """
+        if self._stop_task is None:
+            self._stop_task = asyncio.create_task(
+                asyncio.to_thread(self.stop), name=f"cascade-stt-stop-{self._conn_short}"
+            )
+            self._stop_task.add_done_callback(self._observe_stop_result)
         try:
-            if self.recognizer:
-                self.recognizer.stop()
-        except Exception as e:
-            logger.error(f"[{self._conn_short}] Error stopping recognizer: {e}")
+            await asyncio.wait_for(asyncio.shield(self._stop_task), timeout=timeout_sec)
+        except TimeoutError:
+            logger.error(
+                "[%s] Speech stop acknowledgement timed out after %.1fs; lease withheld",
+                self._conn_short,
+                timeout_sec,
+            )
             raise
-        logger.info(f"[{self._conn_short}] Speech SDK recognition stopped")
+
+    def _observe_stop_result(self, task: asyncio.Task) -> None:
+        if not task.cancelled() and task.exception() is not None:
+            logger.error(
+                "[%s] Native speech stop failed; lease remains withheld: %s",
+                self._conn_short,
+                task.exception(),
+            )
 
 
 class RouteTurnThread:
@@ -1501,7 +1540,7 @@ class SpeechCascadeHandler:
                     cleanup_errors.append(f"route_turn_thread: {e}")
 
                 try:
-                    await asyncio.to_thread(self.speech_sdk_thread.stop)
+                    await self.speech_sdk_thread.stop_async()
                 except Exception as e:
                     cleanup_errors.append(f"speech_sdk_thread: {e}")
 

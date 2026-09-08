@@ -454,7 +454,7 @@ class TestMediaHandlerLifecycle:
             def start_recognizer(self):
                 order.append("stt_start")
 
-            def stop(self):
+            async def stop_async(self):
                 order.append("stt_stop")
 
         ws = MockWebSocket()

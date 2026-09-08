@@ -70,6 +70,15 @@ pool release does not prevent attempting the other. Failures during construction
 configuration, STT acquisition, or partial startup roll back acquired resources;
 rollback always uses `release_for_session(session_id, resource)`.
 
+STT shutdown calls the production recognizer's blocking `stop()`, which waits for
+`stop_continuous_recognition_async().get()` before reporting success. The async
+owner runs this once in retained worker work with a 10-second acknowledgement
+deadline. Timeout or caller cancellation does not cancel that native work.
+Repeated wrapper callers await the same operation; native failures propagate and
+late failures are observed. Callback suppression alone is not stop acknowledgement.
+If shutdown fails, `VoiceHandler.stop()` retains its failed result and withholds
+the speech leases, even if native work completes later.
+
 TTS waits at most 30 seconds for another streaming chunk and 10 seconds for
 producer stop acknowledgement. If a provider cannot quiesce, cleanup raises and
 does not return a still-active client to the pool. Fix the provider/service failure
