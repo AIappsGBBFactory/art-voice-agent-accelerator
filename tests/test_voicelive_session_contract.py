@@ -193,8 +193,12 @@ async def test_live_push_sends_new_voice_name():
 
     assert pushed is True
     assert conn.last_update.voice.name == "en-US-EmmaMultilingualNeural"
-    # And it persists on the agent so the next full session update keeps it.
-    assert agent.voice.name == "en-US-EmmaMultilingualNeural"
+    # The owned definition, not the borrowed catalog, carries subsequent updates.
+    owned = orch.agents[orch.active]
+    assert owned.voice.name == "en-US-EmmaMultilingualNeural"
+    assert agent.voice.name == "en-US-AvaMultilingualNeural"
+    await voicelive_session.apply_voicelive_session(owned, conn)
+    assert conn.last_update.voice.name == "en-US-EmmaMultilingualNeural"
 
 
 @pytest.mark.asyncio
@@ -215,8 +219,14 @@ async def test_live_push_applies_style_and_pitch():
     assert sent.style == "cheerful"
     assert sent.pitch == "+6%"
     assert sent.rate == "-2%"
-    assert agent.voice.style == "cheerful"
-    assert agent.voice.pitch == "+6%"
+    owned = orch.agents[orch.active]
+    assert owned.voice.style == "cheerful"
+    assert owned.voice.pitch == "+6%"
+    assert agent.voice.style == "chat"
+    assert agent.voice.pitch == "+0%"
+    await voicelive_session.apply_voicelive_session(owned, conn)
+    assert conn.last_update.voice.style == "cheerful"
+    assert conn.last_update.voice.pitch == "+6%"
 
 
 @pytest.mark.asyncio

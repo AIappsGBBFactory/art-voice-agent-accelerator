@@ -83,7 +83,7 @@ from apps.artagent.backend.registries.toolstore.registry import (
     _TOOL_DEFINITIONS,
     initialize_tools,
 )
-from apps.artagent.backend.src.orchestration.naming import agent_key, find_agent_by_name
+from apps.artagent.backend.src.orchestration.naming import agent_key
 from apps.artagent.backend.src.orchestration.session_agents import (
     get_session_agent,
     list_session_agents,
@@ -2027,8 +2027,8 @@ def build_session_agent(
     ``PUT /session/{id}`` so the two endpoints can never diverge. Tool
     validation is the caller's responsibility (it raises HTTP errors).
 
-    Mode-specific models are resolved with this priority:
-    explicit ``cascade_model`` / ``voicelive_model`` > legacy ``model`` > defaults.
+    Supplied mode overrides bypass creation presets. Explicit null retains the
+    generic ``model`` fallback; omitted mode fields receive editor presets.
     """
     # Presets apply only on creation omission; explicit null selects the generic model.
     if "cascade_model" in config.model_fields_set:
