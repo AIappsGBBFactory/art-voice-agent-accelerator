@@ -30,7 +30,6 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import numpy as np
 import pytest
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # Issue 1: stop_stt_timer_for_barge_in method tests
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -358,16 +357,18 @@ class TestQueueEvictionThreadSafety:
         assert hasattr(bridge, "_queue_lock")
         assert isinstance(bridge._queue_lock, type(threading.Lock()))
 
-    def test_queue_speech_result_basic(self):
+    @pytest.mark.asyncio
+    async def test_queue_speech_result_basic(self):
         """queue_speech_result should enqueue events correctly."""
         from apps.artagent.backend.voice.speech_cascade.handler import (
-            ThreadBridge,
             SpeechEvent,
             SpeechEventType,
+            ThreadBridge,
         )
 
         bridge = ThreadBridge()
         queue = asyncio.Queue(maxsize=10)
+        bridge.set_main_loop(asyncio.get_running_loop())
 
         event = SpeechEvent(
             event_type=SpeechEventType.FINAL,
@@ -379,16 +380,18 @@ class TestQueueEvictionThreadSafety:
 
         assert queue.qsize() == 1
 
-    def test_queue_partial_dropped_when_full(self):
+    @pytest.mark.asyncio
+    async def test_queue_partial_dropped_when_full(self):
         """PARTIAL events should be dropped when queue is full."""
         from apps.artagent.backend.voice.speech_cascade.handler import (
-            ThreadBridge,
             SpeechEvent,
             SpeechEventType,
+            ThreadBridge,
         )
 
         bridge = ThreadBridge()
         queue = asyncio.Queue(maxsize=1)
+        bridge.set_main_loop(asyncio.get_running_loop())
 
         # Fill queue
         filler = SpeechEvent(
@@ -409,16 +412,18 @@ class TestQueueEvictionThreadSafety:
         # Queue should still have only the original event
         assert queue.qsize() == 1
 
-    def test_queue_eviction_prioritizes_important_events(self):
+    @pytest.mark.asyncio
+    async def test_queue_eviction_prioritizes_important_events(self):
         """Important events should evict PARTIAL events when queue is full."""
         from apps.artagent.backend.voice.speech_cascade.handler import (
-            ThreadBridge,
             SpeechEvent,
             SpeechEventType,
+            ThreadBridge,
         )
 
         bridge = ThreadBridge()
         queue = asyncio.Queue(maxsize=1)
+        bridge.set_main_loop(asyncio.get_running_loop())
 
         # Fill queue with PARTIAL
         partial = SpeechEvent(
@@ -441,16 +446,18 @@ class TestQueueEvictionThreadSafety:
         queued_event = queue.get_nowait()
         assert queued_event.event_type == SpeechEventType.FINAL
 
-    def test_concurrent_queue_access(self):
+    @pytest.mark.asyncio
+    async def test_concurrent_queue_access(self):
         """Multiple threads should safely queue events without corruption."""
         from apps.artagent.backend.voice.speech_cascade.handler import (
-            ThreadBridge,
             SpeechEvent,
             SpeechEventType,
+            ThreadBridge,
         )
 
         bridge = ThreadBridge()
         queue = asyncio.Queue(maxsize=100)
+        bridge.set_main_loop(asyncio.get_running_loop())
         errors = []
 
         def queue_events(thread_id: int):
@@ -474,11 +481,13 @@ class TestQueueEvictionThreadSafety:
 
         # Wait for completion
         for t in threads:
-            t.join()
+            await asyncio.to_thread(t.join)
+        await asyncio.sleep(0)
 
         # No errors should have occurred
         assert len(errors) == 0
         assert queue.qsize() > 0
+        assert queue.qsize() <= 100
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

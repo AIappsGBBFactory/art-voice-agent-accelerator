@@ -49,7 +49,7 @@ import os
 import re
 import time
 from collections.abc import Awaitable, Callable
-from contextlib import contextmanager
+from contextlib import AsyncExitStack, contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -62,12 +62,12 @@ from apps.artagent.backend.voice.shared.config_resolver import (
     resolve_from_app_state,
     resolve_orchestrator_config,
 )
-from apps.artagent.backend.voice.shared.handoff_service import HandoffService
 from apps.artagent.backend.voice.shared.errors import (
     VoiceErrorInfo,
     classify_voice_error,
     emit_voice_error,
 )
+from apps.artagent.backend.voice.shared.handoff_service import HandoffService
 from apps.artagent.backend.voice.shared.metrics import OrchestratorMetrics
 from apps.artagent.backend.voice.shared.session_state import (
     SessionStateKeys,
@@ -271,12 +271,15 @@ class CascadeOrchestratorAdapter:
     config: CascadeConfig = field(default_factory=CascadeConfig)
     agents: dict[str, UnifiedAgent] = field(default_factory=dict)
     handoff_map: dict[str, str] = field(default_factory=dict)
+    async_client: Any | None = field(default=None, repr=False)
 
     # Runtime state
     _active_agent: str = field(default="", init=False)
     _visited_agents: set = field(default_factory=set, init=False)
     _cancel_event: asyncio.Event = field(default_factory=asyncio.Event, init=False)
     _last_user_message: str | None = field(default=None, init=False)
+    _turn_lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
+    _turn_task: asyncio.Task | None = field(default=None, init=False, repr=False)
 
     # Scenario switch flag — prevents sync_from_memo_manager from overwriting
     # _active_agent with stale MemoManager data after an explicit scenario switch
@@ -1001,6 +1004,50 @@ class CascadeOrchestratorAdapter:
         on_tool_start: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
         on_tool_end: Callable[[str, Any], Awaitable[None]] | None = None,
     ) -> OrchestratorResult:
+        """Run a serialized turn with an explicitly owned async HTTP client.
+
+        Websocket sessions borrow the application's AoaiClientManager. Standalone
+        callers may inject async_client or use a client scoped to this whole turn
+        (including tool recursion and handoffs), closed before returning.
+        """
+        async with self._turn_lock, AsyncExitStack() as resources:
+            previous_client = self.async_client
+            try:
+                if self.async_client is None:
+                    websocket = context.websocket if context else None
+                    app = getattr(websocket, "app", None)
+                    manager = getattr(getattr(app, "state", None), "aoai_client_manager", None)
+                    if manager is not None:
+                        self.async_client = await manager.get_async_client()
+                    else:
+                        from src.aoai.client import create_async_azure_openai_client
+
+                        self.async_client = await resources.enter_async_context(
+                            create_async_azure_openai_client()
+                        )
+                self._turn_task = asyncio.current_task()
+                return await self._process_turn(
+                    context,
+                    user_text=user_text,
+                    memo_manager=memo_manager,
+                    on_tts_chunk=on_tts_chunk,
+                    on_tool_start=on_tool_start,
+                    on_tool_end=on_tool_end,
+                )
+            finally:
+                self._turn_task = None
+                self.async_client = previous_client
+
+    async def _process_turn(
+        self,
+        context: OrchestratorContext | None = None,
+        *,
+        user_text: str | None = None,
+        memo_manager: MemoManager | None = None,
+        on_tts_chunk: Callable[[str], Awaitable[None]] | None = None,
+        on_tool_start: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
+        on_tool_end: Callable[[str, Any], Awaitable[None]] | None = None,
+    ) -> OrchestratorResult:
         """
         Process a conversation turn - UNIFIED ENTRY POINT.
 
@@ -1439,11 +1486,7 @@ class CascadeOrchestratorAdapter:
 
                 except asyncio.CancelledError:
                     span.set_status(Status(StatusCode.ERROR, "Cancelled"))
-                    return OrchestratorResult(
-                        response_text="",
-                        agent_name=self._active_agent,
-                        interrupted=True,
-                    )
+                    raise
                 except Exception as e:
                     span.set_status(Status(StatusCode.ERROR, str(e)))
                     logger.exception("Turn processing failed: %s", e)
@@ -1585,8 +1628,8 @@ class CascadeOrchestratorAdapter:
         """
         Process messages through LLM with streaming TTS and tool-call loop.
 
-        Uses STREAMING with async queue for low-latency TTS dispatch:
-        - OpenAI stream runs in thread, puts chunks to asyncio.Queue
+        Uses STREAMING with a bounded async queue for low-latency TTS dispatch:
+        - An owned async producer awaits HTTP deltas and queue backpressure
         - Main coroutine consumes queue and dispatches to TTS immediately
         - Tool calls are aggregated during streaming
         - After stream completes, tools are executed and we recurse
@@ -1633,28 +1676,9 @@ class CascadeOrchestratorAdapter:
         # after partial output doesn't tack an apology onto a half-spoken answer.
         spoke_any = False
 
-        # Use AzureOpenAIManager for dual-endpoint support (chat vs responses)
-        # This enables proper routing based on model_config.endpoint_preference
-        try:
-            from src.aoai.manager import AzureOpenAIManager
-            from src.aoai.client import get_client as get_aoai_client
-
-            # Get the raw client for streaming (manager doesn't support streaming yet)
-            client = get_aoai_client()
-            if client is None:
-                logger.error("AOAI client is None - not initialized")
-                return ("I'm having trouble connecting to the AI service.", [])
-
-            # Also get manager instance for future non-streaming support
-            # Initialize manager with session context for tracing
-            manager = AzureOpenAIManager(
-                call_connection_id=self.config.call_connection_id,
-                session_id=self.config.session_id,
-                enable_tracing=True,
-            )
-        except ImportError as e:
-            logger.error("Failed to import AOAI client/manager: %s", e)
-            return ("I'm having trouble connecting to the AI service.", [])
+        client = self.async_client
+        if client is None:
+            raise RuntimeError("Cascade requires process_turn() or an injected async_client")
 
         response_text = ""
         tool_calls: list[dict[str, Any]] = []
@@ -1730,10 +1754,10 @@ class CascadeOrchestratorAdapter:
                     len(tools) if tools else 0,
                 )
 
-                # Use asyncio.Queue for thread-safe async communication
+                # Bounded backpressure between the async model and TTS tasks.
                 # Items are (sanitized_text, raw_display_text) tuples.
                 # Special markers: None = stream end, "__HANDOFF_DETECTED__" = discard prior text
-                tts_queue: asyncio.Queue[tuple[str, str] | str | None] = asyncio.Queue()
+                tts_queue: asyncio.Queue[tuple[str, str] | str | None] = asyncio.Queue(maxsize=8)
                 tool_buffers: dict[str, dict[str, Any]] = {}
                 collected_text: list[str] = []
                 stream_error: list[Exception] = []
@@ -1742,7 +1766,6 @@ class CascadeOrchestratorAdapter:
                 # set when the first content/tool delta arrives. Read on the async
                 # side after the stream completes to derive llm.ttft_ms.
                 ttft_tracker: dict[str, float] = {}
-                loop = asyncio.get_running_loop()
                 tool_call_detected = False  # Track if tool calls are streaming
                 handoff_tool_detected = False  # Track if specifically a handoff tool
 
@@ -1753,31 +1776,23 @@ class CascadeOrchestratorAdapter:
                 # Primary breaks: sentence endings
                 primary_terms = ".!?"
 
-                def _put_chunk(sanitized: str, raw: str | None = None) -> None:
-                    """Thread-safe put to async queue as (sanitized, raw) tuple."""
+                async def _put_chunk(sanitized: str, raw: str | None = None) -> None:
+                    """Backpressure text production while TTS is behind."""
                     # Don't send text to TTS if tool calls are being made
                     # The LLM sometimes outputs explanatory text alongside tool calls
                     if tool_call_detected:
                         return
                     if sanitized and sanitized.strip():
-                        loop.call_soon_threadsafe(
-                            tts_queue.put_nowait, (sanitized, raw or sanitized)
-                        )
+                        await tts_queue.put((sanitized, raw or sanitized))
 
-                def _signal_handoff_detected() -> None:
+                async def _signal_handoff_detected() -> None:
                     """Signal consumer to discard any queued text (for discrete handoffs)."""
-                    loop.call_soon_threadsafe(tts_queue.put_nowait, "__HANDOFF_DETECTED__")
+                    await tts_queue.put("__HANDOFF_DETECTED__")
 
-                # Capture current OpenTelemetry context to propagate into thread
-                from opentelemetry import context as otel_context
-
-                current_context = otel_context.get_current()
-
-                def _streaming_completion():
-                    """Run in thread - consumes OpenAI stream."""
+                async def _streaming_completion():
+                    """Consume deltas in the task's inherited telemetry context."""
                     nonlocal sentence_buffer, raw_sentence_buffer, tool_call_detected, handoff_tool_detected
-                    # Attach the parent span context in the thread
-                    token = otel_context.attach(current_context)
+                    stream = None
                     try:
                         # Use pre-prepared streaming parameters
                         api_params = streaming_params
@@ -1820,9 +1835,11 @@ class CascadeOrchestratorAdapter:
                         ) as openai_span:
                             # Always use chat completions API for streaming
                             ttft_tracker["request_start"] = time.perf_counter()
-                            stream = client.chat.completions.create(**api_params)
+                            stream = await client.chat.completions.create(**api_params)
 
-                            for chunk in stream:
+                            async for chunk in stream:
+                                if self._cancel_event.is_set():
+                                    raise asyncio.CancelledError
                                 chunk_count += 1
 
                                 # Capture usage data from final chunk (stream_options.include_usage)
@@ -1912,7 +1929,7 @@ class CascadeOrchestratorAdapter:
                                                         "Handoff tool detected: %s - signaling to discard queued TTS",
                                                         fn_name,
                                                     )
-                                                    _signal_handoff_detected()
+                                                    await _signal_handoff_detected()
                                             fn_args = getattr(fn, "arguments", None)
                                             if fn_args:
                                                 buf["arguments"] += fn_args
@@ -1941,86 +1958,60 @@ class CascadeOrchestratorAdapter:
                                         raw_split = max(1, round(len(raw_sentence_buffer) * ratio))
                                         raw_dispatch = raw_sentence_buffer[:raw_split]
                                         raw_sentence_buffer = raw_sentence_buffer[raw_split:]
-                                        _put_chunk(dispatch, raw_dispatch)
+                                        await _put_chunk(dispatch, raw_dispatch)
 
                             logger.debug("OpenAI stream completed | chunks=%d", chunk_count)
                             # Flush remaining buffer (only if no tool calls)
                             if sentence_buffer.strip():
-                                _put_chunk(sentence_buffer, raw_sentence_buffer)
+                                await _put_chunk(sentence_buffer, raw_sentence_buffer)
                     except Exception as e:
                         logger.error("OpenAI stream error: %s", e)
                         stream_error.append(e)
                     finally:
-                        # Detach the context
-                        otel_context.detach(token)
-                        # Signal end
-                        loop.call_soon_threadsafe(tts_queue.put_nowait, None)
+                        if stream is not None:
+                            await stream.close()
+                    await tts_queue.put(None)
 
-                # Start stream in thread
-                stream_future = asyncio.get_running_loop().run_in_executor(
-                    None, _streaming_completion
-                )
-
-                # Consume queue with timeout - don't hang forever
-                llm_timeout = 90.0  # seconds
-                queue_timeout = 5.0  # per-chunk timeout
-                start_time = time.perf_counter()
-                suppress_tts_output = False  # Set to True when handoff detected
-
-                while True:
-                    elapsed = time.perf_counter() - start_time
-                    if elapsed > llm_timeout:
-                        logger.error("LLM response timeout after %.1fs", elapsed)
-                        break
-
-                    try:
-                        chunk = await asyncio.wait_for(tts_queue.get(), timeout=queue_timeout)
-                    except TimeoutError:
-                        # Check if stream is still running
-                        if stream_future.done():
-                            # Stream finished but didn't signal - break out
-                            logger.warning("Stream finished without signaling queue end")
-                            break
-                        # Otherwise keep waiting
-                        continue
-
-                    if chunk is None:
-                        break
-
-                    # Handle handoff detection signal - suppress all TTS output for seamless handoff
-                    if chunk == "__HANDOFF_DETECTED__":
-                        suppress_tts_output = True
-                        logger.debug(
-                            "Handoff detected - suppressing all TTS output for seamless transfer"
-                        )
-                        continue
-
-                    # Unpack (sanitized, raw) tuple from queue
-                    if isinstance(chunk, tuple):
-                        tts_text, display_text = chunk
-                    else:
-                        tts_text, display_text = chunk, chunk
-
-                    # Skip TTS if handoff is pending (for discrete/seamless handoffs)
-                    if suppress_tts_output:
-                        logger.debug(
-                            "Suppressing TTS chunk due to pending handoff: %s...",
-                            tts_text[:30] if len(tts_text) > 30 else tts_text,
-                        )
-                        continue
-
-                    if on_tts_chunk:
+                async def _consume_stream() -> None:
+                    nonlocal spoke_any
+                    suppress_tts_output = False
+                    while True:
                         try:
+                            chunk = await asyncio.wait_for(tts_queue.get(), timeout=5.0)
+                        except TimeoutError:
+                            if stream_future.done():
+                                await stream_future
+                                break
+                            continue
+                        if chunk is None:
+                            break
+                        if self._cancel_event.is_set():
+                            raise asyncio.CancelledError
+                        if chunk == "__HANDOFF_DETECTED__":
+                            suppress_tts_output = True
+                            continue
+                        tts_text, display_text = (
+                            chunk if isinstance(chunk, tuple) else (chunk, chunk)
+                        )
+                        # Inspect the producer flag as well: queued text can
+                        # precede the handoff marker when synthesis is slow.
+                        if suppress_tts_output or handoff_tool_detected:
+                            continue
+                        if on_tts_chunk:
                             await on_tts_chunk(tts_text, display_text=display_text)
                             spoke_any = True
-                        except Exception as e:
-                            logger.debug("TTS callback error: %s", e)
 
-                # Wait for stream to finish with timeout
+                stream_future = asyncio.create_task(
+                    _streaming_completion(), name="cascade-llm-stream"
+                )
                 try:
-                    await asyncio.wait_for(stream_future, timeout=10.0)
-                except TimeoutError:
-                    logger.error("Stream thread did not complete in time")
+                    async with asyncio.timeout(90.0):
+                        await _consume_stream()
+                        await stream_future
+                finally:
+                    if not stream_future.done():
+                        stream_future.cancel()
+                    await asyncio.gather(stream_future, return_exceptions=True)
 
                 if stream_error:
                     raise stream_error[0]
@@ -2565,6 +2556,10 @@ class CascadeOrchestratorAdapter:
     async def cancel_current(self) -> None:
         """Signal cancellation for barge-in."""
         self._cancel_event.set()
+        task = self._turn_task
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
     # ─────────────────────────────────────────────────────────────────
     # Handoff Management

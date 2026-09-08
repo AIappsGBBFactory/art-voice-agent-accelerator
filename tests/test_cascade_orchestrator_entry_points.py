@@ -73,6 +73,7 @@ def cascade_adapter(mock_agent):
         config=config,
         agents={"TestAgent": mock_agent},
         handoff_map={},
+        async_client=MagicMock(),
     )
 
     return adapter
@@ -369,7 +370,10 @@ class TestIntegrationSmokeTest:
         )
 
         adapter = CascadeOrchestratorAdapter(
-            config=config, agents={"TestAgent": mock_agent}, handoff_map={}
+            config=config,
+            agents={"TestAgent": mock_agent},
+            handoff_map={},
+            async_client=MagicMock(),
         )
 
         # Mock LLM call

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
@@ -23,6 +24,167 @@ import pytest
 
 if TYPE_CHECKING:
     from apps.artagent.backend.voice.shared.base import OrchestratorContext
+
+
+class AsyncStream:
+    """Strict async SDK stream: sync iteration is deliberately unsupported."""
+
+    def __init__(self, chunks):
+        self.chunks = iter(chunks)
+        self.closed = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return next(self.chunks)
+        except StopIteration:
+            raise StopAsyncIteration
+
+    async def close(self):
+        self.closed = True
+
+
+def text_chunk(text):
+    return SimpleNamespace(
+        usage=None, choices=[SimpleNamespace(delta=SimpleNamespace(content=text, tool_calls=None))]
+    )
+
+
+class TestAsyncProducerOwnership:
+    @pytest.mark.asyncio
+    async def test_process_turn_borrows_application_client_across_turns(self, cascade_adapter):
+        from apps.artagent.backend.voice.shared.base import OrchestratorContext
+        from src.aoai.client_manager import AoaiClientManager
+
+        create = AsyncMock(side_effect=lambda **kwargs: AsyncStream([text_chunk("A response.")]))
+        client = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create)),
+            close=AsyncMock(),
+        )
+        manager = AoaiClientManager(async_factory=lambda: client)
+        context = OrchestratorContext(
+            session_id="test-session",
+            user_text="hello",
+            websocket=SimpleNamespace(
+                app=SimpleNamespace(state=SimpleNamespace(aoai_client_manager=manager))
+            ),
+        )
+        first = await cascade_adapter.process_turn(context)
+        second = await cascade_adapter.process_turn(context)
+        assert first.response_text == second.response_text == "A response."
+        assert create.await_count == 2
+        client.close.assert_not_awaited()
+        assert cascade_adapter.async_client is None
+        await manager.aclose()
+        client.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_process_turn_closes_standalone_client(self, cascade_adapter, monkeypatch):
+        from apps.artagent.backend.voice.shared.base import OrchestratorContext
+        from src.aoai import client as client_module
+
+        class Client:
+            def __init__(self):
+                self.closed = False
+                self.chat = SimpleNamespace(
+                    completions=SimpleNamespace(
+                        create=AsyncMock(
+                            return_value=AsyncStream([text_chunk("Offline response.")])
+                        )
+                    )
+                )
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                self.closed = True
+
+        client = Client()
+        monkeypatch.setattr(
+            client_module, "create_async_azure_openai_client", lambda: client, raising=False
+        )
+        result = await cascade_adapter.process_turn(
+            OrchestratorContext(session_id="standalone", user_text="hi")
+        )
+        assert result.response_text == "Offline response."
+        assert client.closed
+        assert cascade_adapter.async_client is None
+
+    @pytest.mark.asyncio
+    async def test_cancel_closes_stream_blocked_waiting_for_provider(self, cascade_adapter):
+        entered = asyncio.Event()
+
+        class BlockedStream(AsyncStream):
+            async def __anext__(self):
+                entered.set()
+                await asyncio.Event().wait()
+
+        stream = BlockedStream([])
+        cascade_adapter.async_client = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=AsyncMock(return_value=stream)))
+        )
+        turn = asyncio.create_task(cascade_adapter._process_llm([], []))
+        await asyncio.wait_for(entered.wait(), 1)
+        turn.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(turn, 1)
+        assert stream.closed
+        assert not any(task.get_name() == "cascade-llm-stream" for task in asyncio.all_tasks())
+
+    @pytest.mark.asyncio
+    async def test_bounded_backpressure_cancel_joins_producer(self, cascade_adapter):
+        consumed = 0
+        entered_tts = asyncio.Event()
+
+        class CountingStream(AsyncStream):
+            async def __anext__(self):
+                nonlocal consumed
+                consumed += 1
+                return await super().__anext__()
+
+        stream = CountingStream([text_chunk("Another sentence. ") for _ in range(100)])
+
+        async def slow_tts(text, *, display_text):
+            entered_tts.set()
+            await asyncio.Event().wait()
+
+        cascade_adapter.async_client = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=AsyncMock(return_value=stream)))
+        )
+        turn = asyncio.create_task(cascade_adapter._process_llm([], [], slow_tts))
+        await asyncio.wait_for(entered_tts.wait(), 1)
+        await asyncio.sleep(0.01)
+        # One dispatched sentence + eight buffered + the put blocked on capacity.
+        assert consumed <= 10
+        turn.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(turn, 1)
+        assert stream.closed
+
+    @pytest.mark.asyncio
+    async def test_cancel_during_client_request_is_awaited(self, cascade_adapter):
+        entered = asyncio.Event()
+        stopped = asyncio.Event()
+
+        async def create(**kwargs):
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                stopped.set()
+
+        cascade_adapter.async_client = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=create))
+        )
+        turn = asyncio.create_task(cascade_adapter._process_llm([], []))
+        await asyncio.wait_for(entered.wait(), 1)
+        turn.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(turn, 1)
+        assert stopped.is_set()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -130,11 +292,9 @@ class TestProcessLLMBaseline:
         mock_chunk.choices[0].delta.content = "Hello! How can I help you?"
         mock_chunk.choices[0].delta.tool_calls = None
 
-        with patch("src.aoai.client.get_client") as mock_get_client:
-            mock_client = MagicMock()
-            mock_stream = iter([mock_chunk])
-            mock_client.chat.completions.create = MagicMock(return_value=mock_stream)
-            mock_get_client.return_value = mock_client
+        with patch.object(cascade_adapter, "async_client") as mock_client:
+            mock_stream = AsyncStream([mock_chunk])
+            mock_client.chat.completions.create = AsyncMock(return_value=mock_stream)
 
             response_text, tool_calls = await cascade_adapter._process_llm(
                 messages=messages, tools=tools
@@ -143,6 +303,7 @@ class TestProcessLLMBaseline:
             # Verify response
             assert response_text == "Hello! How can I help you?"
             assert tool_calls == []
+            assert mock_stream.closed
 
     @pytest.mark.asyncio
     async def test_streaming_with_tts_callback(self, cascade_adapter):
@@ -172,11 +333,9 @@ class TestProcessLLMBaseline:
 
         tts_callback = AsyncMock()
 
-        with patch("src.aoai.client.get_client") as mock_get_client:
-            mock_client = MagicMock()
-            mock_stream = iter(mock_chunks)
-            mock_client.chat.completions.create = MagicMock(return_value=mock_stream)
-            mock_get_client.return_value = mock_client
+        with patch.object(cascade_adapter, "async_client") as mock_client:
+            mock_stream = AsyncStream(mock_chunks)
+            mock_client.chat.completions.create = AsyncMock(return_value=mock_stream)
 
             response_text, tool_calls = await cascade_adapter._process_llm(
                 messages=messages, tools=tools, on_tts_chunk=tts_callback
@@ -228,20 +387,18 @@ class TestProcessLLMBaseline:
         followup_chunk.choices[0].delta.content = "The weather is sunny!"
         followup_chunk.choices[0].delta.tool_calls = None
 
-        with patch("src.aoai.client.get_client") as mock_get_client:
-            mock_client = MagicMock()
+        with patch.object(cascade_adapter, "async_client") as mock_client:
 
             # First call returns tool call, second call returns followup
             call_count = [0]
             def create_stream(**kwargs):
                 call_count[0] += 1
                 if call_count[0] == 1:
-                    return iter([tool_call_chunk])
+                    return AsyncStream([tool_call_chunk])
                 else:
-                    return iter([followup_chunk])
+                    return AsyncStream([followup_chunk])
 
-            mock_client.chat.completions.create = MagicMock(side_effect=create_stream)
-            mock_get_client.return_value = mock_client
+            mock_client.chat.completions.create = AsyncMock(side_effect=create_stream)
 
             response_text, tool_calls = await cascade_adapter._process_llm(
                 messages=messages, tools=tools
@@ -288,11 +445,9 @@ class TestProcessLLMBaseline:
 
         tool_call_chunk.choices[0].delta.tool_calls = [mock_tc]
 
-        with patch("src.aoai.client.get_client") as mock_get_client:
-            mock_client = MagicMock()
-            mock_stream = iter([tool_call_chunk])
-            mock_client.chat.completions.create = MagicMock(return_value=mock_stream)
-            mock_get_client.return_value = mock_client
+        with patch.object(cascade_adapter, "async_client") as mock_client:
+            mock_stream = AsyncStream([tool_call_chunk])
+            mock_client.chat.completions.create = AsyncMock(return_value=mock_stream)
 
             response_text, tool_calls = await cascade_adapter._process_llm(
                 messages=messages, tools=tools
@@ -302,16 +457,17 @@ class TestProcessLLMBaseline:
             assert len(tool_calls) == 1
             assert tool_calls[0]["name"] == "handoff_support"
 
-    @pytest.mark.skip(reason="Error handling paths are complex with threading - tested manually")
     @pytest.mark.asyncio
     async def test_error_handling_returns_user_friendly_message(self, cascade_adapter):
-        """
-        BASELINE: _process_llm should return user-friendly error on exceptions.
-
-        NOTE: Skipped because error handling in threaded streaming is complex to mock.
-        Error handling is verified manually and through integration tests.
-        """
-        pass
+        """Provider errors are classified and spoken, not silently lost."""
+        with patch.object(cascade_adapter, "async_client") as client:
+            client.chat.completions.create = AsyncMock(side_effect=TimeoutError("provider timeout"))
+            response, tools = await cascade_adapter._process_llm(
+                [{"role": "user", "content": "hi"}], []
+            )
+        assert response
+        assert tools == []
+        assert cascade_adapter._last_error_info is not None
 
     @pytest.mark.asyncio
     async def test_max_iterations_prevents_infinite_loop(self, cascade_adapter, mock_agent):
@@ -341,13 +497,11 @@ class TestProcessLLMBaseline:
 
         tool_call_chunk.choices[0].delta.tool_calls = [mock_tc]
 
-        with patch("src.aoai.client.get_client") as mock_get_client:
-            mock_client = MagicMock()
+        with patch.object(cascade_adapter, "async_client") as mock_client:
             # Always return tool call (would loop forever without max_iterations)
-            mock_client.chat.completions.create = MagicMock(
-                return_value=iter([tool_call_chunk])
+            mock_client.chat.completions.create = AsyncMock(
+                side_effect=lambda **kwargs: AsyncStream([tool_call_chunk])
             )
-            mock_get_client.return_value = mock_client
 
             # Call with low max_iterations
             response_text, tool_calls = await cascade_adapter._process_llm(
@@ -454,19 +608,17 @@ class TestLLMProcessingIntegration:
         tool_start_callback = AsyncMock()
         tool_end_callback = AsyncMock()
 
-        with patch("src.aoai.client.get_client") as mock_get_client:
-            mock_client = MagicMock()
+        with patch.object(cascade_adapter, "async_client") as mock_client:
 
             call_count = [0]
             def create_stream(**kwargs):
                 call_count[0] += 1
                 if call_count[0] == 1:
-                    return iter([tool_chunk])
+                    return AsyncStream([tool_chunk])
                 else:
-                    return iter([final_chunk])
+                    return AsyncStream([final_chunk])
 
-            mock_client.chat.completions.create = MagicMock(side_effect=create_stream)
-            mock_get_client.return_value = mock_client
+            mock_client.chat.completions.create = AsyncMock(side_effect=create_stream)
 
             response_text, tool_calls = await cascade_adapter._process_llm(
                 messages=messages,

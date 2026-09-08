@@ -27,17 +27,15 @@ from __future__ import annotations
 
 import asyncio
 import time
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
-
 from apps.artagent.backend.voice.speech_cascade.handler import (
     SpeechEvent,
     SpeechEventType,
     SpeechSDKThread,
     ThreadBridge,
 )
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Fakes
@@ -87,7 +85,7 @@ def _make_thread(
         connection_id="conn-speech-channel",
         recognizer=recognizer,
         thread_bridge=bridge,
-        barge_in_handler=Mock(name="barge_in_handler"),
+        barge_in_handler=AsyncMock(name="barge_in_handler"),
         speech_queue=queue if queue is not None else asyncio.Queue(maxsize=32),
         on_partial_transcript=on_partial_transcript,
     )
@@ -253,9 +251,11 @@ class TestSpeechSDKCallbacks:
 
         assert thread._utterance_start_ts is not None
 
-    def test_final_arms_turn_guard_and_queues_event(self):
+    @pytest.mark.asyncio
+    async def test_final_arms_turn_guard_and_queues_event(self):
         queue: asyncio.Queue = asyncio.Queue(maxsize=8)
         thread, recognizer, bridge = _make_thread(queue=queue)
+        bridge.set_main_loop(asyncio.get_running_loop())
 
         # Establish an utterance start via a partial first.
         recognizer.on_partial("hello", "en-US", None)
@@ -283,9 +283,11 @@ class TestSpeechSDKCallbacks:
         assert bridge.turn_guard_active is False
         assert thread._utterance_start_ts is None
 
-    def test_error_callback_queues_error_event(self):
+    @pytest.mark.asyncio
+    async def test_error_callback_queues_error_event(self):
         queue: asyncio.Queue = asyncio.Queue(maxsize=8)
         _thread, recognizer, _bridge = _make_thread(queue=queue)
+        _bridge.set_main_loop(asyncio.get_running_loop())
 
         recognizer.on_cancel("recognizer cancelled")
 
