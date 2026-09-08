@@ -64,6 +64,7 @@ class HandoffResult:
     handoff_type: str = "announced"  # "discrete" or "announced"
     greeting: str | None = None
     error: str | None = None
+    system_vars: dict[str, Any] = field(default_factory=dict)
 
 
 if TYPE_CHECKING:
@@ -1070,24 +1071,8 @@ class CascadeOrchestratorAdapter:
                                 handoff_target,
                             )
 
-                            # Update context metadata for new agent
-                            updated_metadata = dict(context.metadata) if context.metadata else {}
-                            updated_metadata["agent_name"] = handoff_target
-                            updated_metadata["previous_agent"] = (
-                                context.metadata.get("agent_name") if context.metadata else None
-                            )
-                            # Ensure handoff_context is always a dict
-                            raw_context = parsed_args.get("context") or parsed_args.get("reason")
-                            if isinstance(raw_context, dict):
-                                updated_metadata["handoff_context"] = raw_context
-                            elif raw_context:
-                                # Convert string reason to dict format
-                                updated_metadata["handoff_context"] = {
-                                    "reason": raw_context,
-                                    "details": raw_context,
-                                }
-                            else:
-                                updated_metadata["handoff_context"] = {}
+                            updated_metadata = handoff_result.system_vars
+                            handoff_user_text = updated_metadata.get("user_last_utterance", "")
 
                             # Get the new agent's existing history (if returning to this agent)
                             # Plus add user's current message for context about why handoff happened
@@ -1101,11 +1086,11 @@ class CascadeOrchestratorAdapter:
                                     pass
 
                             # If this is first visit to agent, add context about user's request
-                            if not new_agent_history and context.user_text:
+                            if not new_agent_history and handoff_user_text:
                                 new_agent_history.append(
                                     {
                                         "role": "user",
-                                        "content": context.user_text,
+                                        "content": handoff_user_text,
                                     }
                                 )
 
@@ -1115,7 +1100,7 @@ class CascadeOrchestratorAdapter:
                                 websocket=context.websocket,
                                 call_connection_id=context.call_connection_id,
                                 user_text=(
-                                    "" if new_agent_history else context.user_text
+                                    "" if new_agent_history else handoff_user_text
                                 ),  # Avoid duplicate if added above
                                 conversation_history=new_agent_history,
                                 metadata=updated_metadata,
@@ -1156,7 +1141,7 @@ class CascadeOrchestratorAdapter:
 
                                 # Record handoff turn using consolidated helper
                                 user_for_handoff = (
-                                    context.user_text if not new_agent_history else None
+                                    handoff_user_text if not new_agent_history else None
                                 )
                                 self._record_turn(
                                     handoff_target, user_for_handoff, new_response_text
@@ -1204,7 +1189,7 @@ class CascadeOrchestratorAdapter:
 
                                     # Record the greeting as agent response
                                     self._record_turn(
-                                        handoff_target, context.user_text, handoff_greeting
+                                        handoff_target, handoff_user_text, handoff_greeting
                                     )
 
                                     if self._current_memo_manager:
@@ -1328,8 +1313,14 @@ class CascadeOrchestratorAdapter:
         """
         messages = []
 
-        # System prompt from agent
-        system_content = agent.render_prompt(context.metadata)
+        # A resolved handoff owns the target's prompt scope, including later turns.
+        # MemoManager remains transport/runtime state, never a template variable.
+        prompt_vars = (
+            self._session_vars if self._session_vars.get("is_handoff") else context.metadata
+        )
+        system_content = agent.render_prompt(
+            {key: value for key, value in (prompt_vars or {}).items() if key != "memo_manager"}
+        )
 
         # Inject handoff instructions from scenario configuration
         # Use cached orchestrator config (supports both file-based and session-scoped)
@@ -2314,6 +2305,7 @@ class CascadeOrchestratorAdapter:
             # Update state
             self._visited_agents.add(target_agent)
             self._active_agent = target_agent
+            self._session_vars = resolution.system_vars
 
             # Reset metrics for new agent (captures summary of previous)
             self._metrics.reset_for_agent_switch(target_agent)
@@ -2350,6 +2342,7 @@ class CascadeOrchestratorAdapter:
                 target_agent=target_agent,
                 handoff_type=resolution.handoff_type,
                 greeting=greeting,
+                system_vars=resolution.system_vars,
             )
 
     # ─────────────────────────────────────────────────────────────────
@@ -2397,13 +2390,19 @@ class CascadeOrchestratorAdapter:
             )
             sync_state_to_memo(cm, active_agent=self._active_agent)
             self._scenario_switch_pending = False
+            self._session_vars = {}
         elif state.active_agent:
             # Normal path: MemoManager is authoritative
             self._active_agent = state.active_agent
 
         if state.visited_agents:
             self._visited_agents = state.visited_agents
-        if state.system_vars:
+        if (
+            self._session_vars.get("is_handoff")
+            and self._session_vars.get("active_agent") != self._active_agent
+        ):
+            self._session_vars = {}
+        if state.system_vars and not self._session_vars.get("is_handoff"):
             self._session_vars.update(state.system_vars)
 
         # Restore cascade-specific state (turn count via metrics)

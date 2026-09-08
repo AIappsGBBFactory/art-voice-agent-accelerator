@@ -1,6 +1,7 @@
 """Native loops share tool effects, but retain their own continuation contracts."""
 
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -247,3 +248,78 @@ async def test_live_scenario_update_is_owned_and_joined_before_close(monkeypatch
     release.set()
     await asyncio.wait_for(closing, 1)
     assert not orch._owned_tasks
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("share_context", [False, True])
+async def test_cascade_target_prompt_and_later_turn_use_resolved_handoff_context(share_context):
+    from apps.artagent.backend.registries.scenariostore.loader import HandoffConfig, ScenarioConfig
+    from apps.artagent.backend.voice.shared.handoff_service import HandoffService
+
+    memo = MemoManager(session_id="handoff-policy")
+    memo.set_corememory("session_profile", {"client_id": "source-private-profile"})
+    agents = {
+        "Source": UnifiedAgent(name="Source"),
+        "Target": UnifiedAgent(
+            name="Target",
+            prompt_template=(
+                "{{ session_profile | default('absent') }};"
+                "{{ handoff_context | default({}) }};"
+                "{{ case_id | default('missing') }};"
+                "{{ memo_manager | default('no-transport') }}"
+            ),
+        ),
+    }
+    adapter = CascadeOrchestratorAdapter(
+        config=CascadeConfig(start_agent="Source", session_id=memo.session_id),
+        agents=agents,
+        async_client=SimpleNamespace(),
+    )
+    adapter._handoff_service = HandoffService(
+        agents=agents,
+        scenario=ScenarioConfig(
+            name="policy",
+            handoffs=[
+                HandoffConfig(
+                    from_agent="Source",
+                    to_agent="Target",
+                    tool="handoff_case",
+                    share_context=share_context,
+                    context_vars={"case_id": "scenario-case"},
+                )
+            ],
+        ),
+    )
+    adapter._process_llm = AsyncMock(
+        side_effect=[
+            (
+                "",
+                [
+                    {
+                        "name": "handoff_case",
+                        "arguments": json.dumps({"context": {"raw": "raw-secret"}}),
+                    }
+                ],
+            ),
+            ("Target response is complete.", []),
+            ("The next turn is complete.", []),
+        ]
+    )
+    result = await adapter.process_turn(user_text="source-private-utterance", memo_manager=memo)
+    assert result.agent_name == "Target"
+    target_messages = adapter._process_llm.call_args_list[1].kwargs["messages"]
+    target_prompt = target_messages[0]["content"]
+    assert "scenario-case" in target_prompt
+    assert "raw-secret" not in target_prompt
+    assert "no-transport" in target_prompt
+    assert ("source-private-profile" in target_prompt) is share_context
+    assert any("source-private-utterance" in m["content"] for m in target_messages) is share_context
+    assert adapter._session_vars["case_id"] == "scenario-case"
+    assert (
+        memo.get_value_from_corememory("session_profile")["client_id"] == "source-private-profile"
+    )
+
+    await adapter.process_turn(user_text="Continue this case", memo_manager=memo)
+    next_prompt = adapter._process_llm.call_args.kwargs["messages"][0]["content"]
+    assert "scenario-case" in next_prompt
+    assert ("source-private-profile" in next_prompt) is share_context
