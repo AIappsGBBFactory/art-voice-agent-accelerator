@@ -113,7 +113,7 @@ def test_live_evals_prefer_dispatched_coordinates_over_stale_environment_variabl
 def test_readiness_polls_registered_health_route_and_preserves_failure_gate(base_url, status):
     workflow = _workflow("live-evals-staging.yml")
     readiness = _step(workflow, "prepare", "Wait for Backend Revision")
-    health_path = next(route.path for route in v1_router.routes if route.endpoint is health_check)
+    health_path = str(v1_router.url_path_for(health_check.__name__))
     result = _run_script(
         readiness,
         """
