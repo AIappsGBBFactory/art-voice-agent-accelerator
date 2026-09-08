@@ -235,7 +235,10 @@ def register_aoai_step(manager: LifecycleManager, app: FastAPI) -> None:
         app.state.aoai_client_manager = aoai_manager
         app.state.aoai_client = await aoai_manager.get_client()
 
-    manager.add_step("aoai", start)
+    async def stop() -> None:
+        await app.state.aoai_client_manager.aclose()
+
+    manager.add_step("aoai", start, stop)
 
 
 # ============================================================================

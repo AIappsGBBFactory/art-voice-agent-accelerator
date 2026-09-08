@@ -7,6 +7,7 @@ import-time with proper JWT token handling for APIM policy evaluation.
 """
 
 import argparse
+import asyncio
 import json
 import os
 import sys
@@ -17,12 +18,44 @@ from azure.identity import (
     get_bearer_token_provider,
 )
 from dotenv import load_dotenv
-from openai import AzureOpenAI
+from openai import AsyncAzureOpenAI, AzureOpenAI
 from utils.azure_auth import _is_azure_hosted, get_credential
 from utils.ml_logging import logging
 
 logger = logging.getLogger(__name__)
 load_dotenv()
+
+
+def create_async_azure_openai_client(
+    *,
+    azure_endpoint: str | None = None,
+    azure_api_key: str | None = None,
+    api_version: str = "2025-01-01-preview",
+) -> AsyncAzureOpenAI:
+    """Create an owner-managed async client using the existing auth policy.
+
+    The caller must await ``close()``. The shared Azure credential remains owned
+    by azure_auth; only its blocking token acquisition is bridged to a worker.
+    """
+    endpoint = azure_endpoint or os.getenv("AZURE_OPENAI_ENDPOINT", "")
+    if not endpoint:
+        raise ValueError("AZURE_OPENAI_ENDPOINT must be provided via argument or environment.")
+    api_key = azure_api_key or os.getenv("AZURE_OPENAI_KEY")
+    if api_key:
+        return AsyncAzureOpenAI(azure_endpoint=endpoint, api_key=api_key, api_version=api_version)
+
+    token_provider = get_bearer_token_provider(
+        get_credential(), "https://cognitiveservices.azure.com/.default"
+    )
+
+    async def async_token_provider() -> str:
+        return await asyncio.to_thread(token_provider)
+
+    return AsyncAzureOpenAI(
+        azure_endpoint=endpoint,
+        azure_ad_token_provider=async_token_provider,
+        api_version=api_version,
+    )
 
 
 def create_azure_openai_client(
@@ -339,6 +372,7 @@ __all__ = [
     "client",
     "get_client",
     "create_azure_openai_client",
+    "create_async_azure_openai_client",
     "_init_client",
     "warm_openai_connection",
     "test_responses_endpoint",
