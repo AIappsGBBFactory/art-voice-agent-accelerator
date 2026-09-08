@@ -41,6 +41,8 @@ session_config:
         to be connected to or speak with the decline specialist. Do not transfer
         automatically just because the customer mentions a declined card or a
         decline code — wait for an explicit handoff request.
+        This condition applies to the target transfer regardless of tool:
+        do not use handoff_to_agent to bypass it.
 
     # Context NOT SHARED (fraud agent should not see prior merchant detail)
     - from: DeclineSpecialist
@@ -51,6 +53,7 @@ session_config:
       handoff_condition: |
         Transfer to FraudAgent ONLY when the customer explicitly requests to
         speak with the fraud team. Do not transfer automatically.
+        This condition also applies when using handoff_to_agent.
 
   generic_handoff:
     enabled: true
@@ -113,7 +116,7 @@ turns:
 
   # DeclineSpecialist should reference the code from shared context
   - turn_id: turn_3_decline_shared_context
-    user_input: "Before we continue, what details do you already have?"
+    user_input: "What decline code did I mention before the transfer?"
     expectations:
       tools_called: []
       tools_optional:

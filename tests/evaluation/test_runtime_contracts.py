@@ -198,6 +198,24 @@ def test_banking_no_context_edge_starts_at_the_active_specialist():
     assert edge.share_context is False
 
 
+def test_banking_fixture_requires_the_same_condition_for_both_routing_forms():
+    from apps.artagent.backend.registries.scenariostore.loader import ScenarioConfig
+
+    path = Path(__file__).parent / "scenarios/session_based/banking_context_sharing.yaml"
+    data = yaml.safe_load(path.read_text())
+    config = ScenarioConfig.from_dict("banking_eval", data["session_config"])
+    assert config.generic_handoff.enabled
+    for edge in config.handoffs:
+        assert "handoff_to_agent" in edge.handoff_condition
+        rendered = config.build_handoff_instructions(edge.from_agent)
+        assert " ".join(edge.handoff_condition.split()) in " ".join(rendered.split())
+    recall = next(
+        turn for turn in data["turns"] if turn["turn_id"] == "turn_3_decline_shared_context"
+    )
+    assert "05" not in recall["user_input"]
+    assert recall["expectations"]["response_constraints"]["must_include"] == ["05"]
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("handoff", [False, True])
 async def test_recorded_usage_is_incremental_across_turns_and_agent_resets(tmp_path, handoff):

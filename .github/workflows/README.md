@@ -63,6 +63,10 @@ failures. Native counters and returned results are unchanged. Cost estimates
 still use the final agent's model configuration for each turn; they are not a
 per-model billing ledger for mixed-model handoffs. The email scenario explicitly
 asks for the exact destination address while retaining its recipient assertions.
+The banking test fixture explicitly applies its request-only conditions to both
+declared routing forms and asks for the recalled decline code without supplying
+the answer. This clarifies that fixture's policy; it does not change production
+generic-routing permissions or remove the no-handoff/context assertions.
 
 The WebSocket driver waits for the native browser readiness event and greeting
 quiescence, then observes replies concurrently with paced input. Its EOS anchor
