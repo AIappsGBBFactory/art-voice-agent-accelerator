@@ -3,7 +3,7 @@
 `src/stateful/state_managment.py` owns a session's in-process persistence queue.
 It does not introduce a shared singleton, another storage system, or a distributed
 lock. This contract applies equally to Cascade, VoiceLive, and their existing
-channels; callers must adopt the lifecycle explicitly.
+channels. Handler integration is described below.
 
 ## Restore without blocking startup
 
@@ -128,16 +128,26 @@ atomic-update contract; a process-global singleton is not a substitute.
 
 ## Consumer integration
 
-Replace synchronous hydration in async startup with `await from_redis_async`.
-Route direct/background state writes for a live call through the same instance.
-Keep checked direct persistence at durability-critical tool and call boundaries.
-Replace cancellation-based teardown with stopped producers, a final checked
-snapshot, and a checked flush. Do not change tool/MCP effects or unregister MCP
-resources as a side effect of flushing; that lifecycle remains with the caller.
+Cascade `VoiceHandler`, browser/media VoiceLive hydration and Genesys startup
+now await hydration. ACS retains its existing call-key lookup and canonical
+`memo.session_id` assignment; this is not a key migration. Builder, scenario,
+event and demo-profile async writers resolve the same live memo through the
+existing application/engine registries. Offline sessions hydrate asynchronously;
+real read failures are not converted into empty local sessions.
 
-These API changes do not independently migrate engine handlers, routes, or
-configuration stores. Their owners must integrate the lifecycle and handle
-strict errors explicitly.
+All three native handlers share retained/shielded close ownership and
+`voice/shared/close.py`: stop startup/producers, strictly snapshot, and strictly
+flush in `finally`. Cancelled/concurrent callers cannot abandon cleanup or return
+early as though it finished. Unacknowledged native work prevents a stable-snapshot
+claim and lease reuse; submitted persistence is still drained and independent
+safe cleanup is attempted. Native state-projection failure also drains submitted
+writes. Persistence failure after quiescence does not leak safe speech leases.
+
+Async definition mutation/removal entry points prime existing definition views
+before editing. Sync compatibility APIs remain, but in-event-loop sync reads use
+the primed view rather than synchronous Redis hydration. These views and the
+existing application registry do not supply distributed conflict resolution.
+See [the extension guide](voice-extension-guide.md) for ownership and limits.
 
 The existing registry and unified-orchestrator background callers pass Redis
 explicitly. `CallEventHandlers.handle_dtmf_tone_received` and its private
@@ -160,7 +170,9 @@ from a foreign thread while the MemoManager is in active use on another loop.
 ```bash
 python -m pytest tests/test_memo_optimization.py tests/test_memo_persistence.py \
     tests/test_redis_manager.py tests/test_session_agent_redis_roundtrip.py \
-    tests/test_session_agent_manager.py tests/test_acs_events_handlers.py \
+    tests/test_session_agent_contract.py tests/test_voice_close_contract.py \
+    tests/test_voice_endpoint_close.py \
+    tests/test_acs_events_handlers.py \
     tests/test_dtmf_validation.py tests/test_dtmf_validation_failure_cancellation.py \
     -q -o addopts=-ra
 ```

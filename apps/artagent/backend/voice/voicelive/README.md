@@ -1,146 +1,63 @@
-# VoiceLive Orchestrator — Event & Response Lifecycle
+# VoiceLive event and response lifecycle
 
-Developer reference for the VoiceLive engine's event intake and tool/response
-lifecycle. Scope: `apps/artagent/backend/voice/voicelive/`.
+`VoiceLiveSDKHandler` owns connection/start/stop and the single SDK event reader.
+`LiveOrchestrator` owns native event dispatch, response batches, handoffs and
+context refresh. `session.py` owns SDK projections and session/greeting sends;
+neutral `UnifiedAgent` definitions contain no SDK session operations.
 
-## Files
+## Reader and tool ordering
 
-| File | Responsibility |
-|------|----------------|
-| `handler.py` | `VoiceLiveSDKHandler` — connection lifecycle, the single SDK event reader (`_event_loop`), start/stop, barge-in forwarding, background tasks. |
-| `orchestrator.py` | `LiveOrchestrator` — event routing (`handle_event`), tool dispatch/execution, response continuation, agent handoff/transfer, session-context refresh. |
-| `dtmf_processor.py` | DTMF digit collection. |
-| `metrics.py` / `tool_helpers.py` / `settings.py` | Telemetry, tool emit helpers, engine settings. |
+The reader forwards audio before awaiting `handle_event`. Business tools are
+offloaded through `_track_owned`; handoff and transfer run inline. MFA/DTMF
+semantics also remain engine-owned. An inline control waits for preceding
+business tools in its response before changing agents or transferring.
+**Limitation:** that control barrier and the control tool itself can stall the
+single reader. The runtime does not claim every event path is nonblocking.
 
-## The single-reader constraint
+Both engines call `shared/tool_policy.py` for inputs, normalized results and
+synchronous identity/profile/slot effects. The shared `HandoffService` resolves
+scenario routes and context permissions. Cancelling spoken continuation does
+not undo completed business effects.
 
-VoiceLive delivers **every** server event on one stream:
+## One production batch contract
 
-```python
-async for event in self._connection:      # handler._event_loop
-    self._forward_event_to_acs(event)      # audio out first
-    await self._orchestrator.handle_event(event)
+`_tool_batches` is keyed by provider response ID. `response.done` detaches only
+that response's batch and schedules an owned finalizer; it does not wait for
+business tools on the reader. A cancelled old response invalidates its batch,
+not a newer response or its transcript tracking.
+
+Each finalizer waits for its tool barrier, sends outputs/context, then creates
+at most one continuation. Epoch checks across each awaited send prevent a
+barge-in, new response, reconfiguration, handoff or transfer from resurrecting
+stale speech. Completed effects stay in the current memo. The `None` response-ID
+key supports direct callers without provider IDs using this same mechanism;
+there is no alternate `_pending_tool_outputs` runtime for tests.
+
+## Start, close and memory
+
+`start()` retains its startup task; cancellation/error unwinds partial resources.
+`stop()` retains and shields cleanup for all callers, even before `_running`
+becomes true. It unregisters live callbacks, joins startup, DTMF, reader,
+background, tool, finalizer and greeting work, then projects final native state.
+
+The common [close contract](../README.md#caller-facing-close-contract) requires a
+strict final snapshot and a strict pending flush. Projection failure still
+drains submitted persistence. Native failure skips the stable-snapshot claim
+but does not skip safe connection/prepared-socket cleanup. References to
+unacknowledged producers remain retained; repeated stop reports the same failure.
+
+Browser and ACS/media startup await MemoManager hydration and prime definitions.
+The existing application/orchestrator registries expose the same current memo
+to live builder, scenario, event and profile mutations. No second memo catalog
+or distributed persistence lock is introduced.
+
+## Focused tests
+
+```sh
+pytest tests/test_voicelive* tests/test_voice_tool_policy_contract.py \
+  tests/test_voice_close_contract.py tests/test_handoff_orchestrator_states.py
 ```
 
-Because intake is serial, anything `handle_event` awaits inline delays intake of
-the *next* event — including speech-start, audio, and interrupt. `handle_event`
-must therefore return quickly.
-
-## Business-tool offload (F12)
-
-A function call is routed by `_dispatch_tool_call`:
-
-- **Handoff / transfer tools run inline.** They are control operations whose
-  ordering relative to the session/response mutations they trigger
-  (`response.cancel`, `_switch_to`, `apply_voicelive_session`) must be
-  preserved. **Known limitation:** a slow handoff/transfer tool still stalls
-  intake for its duration. This is documented, not silently worked around;
-  isolating it requires a coordinated response-ordering contract with the shared
-  handoff owner and is out of this workstream's scope.
-- **Business tools are offloaded** to an owned task. All business tools of one
-  response share a single `_ToolBatch`; each task appends its
-  `(call_id, output_json)` to `batch.outputs`. Intake continues immediately.
-
-### One continuation per response
-
-`_handle_response_done` never awaits tools on the reader. It:
-
-1. marks the batch `response_done`,
-2. bumps the response epoch if the service reported the response `CANCELLED`,
-3. schedules exactly **one** owned finalizer (`_finalize_tool_batch`),
-4. detaches the batch and returns.
-
-The finalizer awaits the tool barrier **off-reader**, then emits a single
-`response.create()` via `_flush_tool_outputs_and_continue` (context update first,
-continuation second).
-
-The legacy inline `_pending_tool_outputs` flush is retained for direct-call unit
-tests; production always takes the batch path.
-
-## Response epoch — rejecting stale continuations
-
-`_response_epoch` counts response *generations*. A batch captures the epoch at
-creation. The epoch is bumped whenever the in-flight response is invalidated:
-
-| Site | Reason |
-|------|--------|
-| `_handle_speech_started` | barge-in — a new user utterance supersedes the pending turn |
-| `_handle_session_updated` (cancel branch) | a genuine reconfigure cancelled the response |
-| transfer branch (`response.cancel`) | call is being transferred |
-| handoff branch (`response.cancel`) | the new agent owns the turn now |
-| `_handle_response_done` (status `CANCELLED`) | the model turn was torn down |
-
-If the live epoch has advanced by the time the finalizer runs, the **spoken
-continuation is dropped** rather than restarting speech. The tools' **durable
-effects** (memo writes, `notify_tool_end` acknowledgements) already ran inside
-the tasks and are intentionally preserved — only the stale spoken turn is
-discarded.
-
-## Task ownership & teardown
-
-Off-reader work (business-tool tasks, batch finalizers, the throttled
-context-update task) is spawned through `_track_owned`, which records the task in
-`self._owned_tasks`.
-
-- `cleanup()` (sync) cancels owned tasks as a safety net and clears the active batch.
-- `cancel_and_join_tasks()` (async) cancels **and joins** them. The handler calls
-  it from `stop()` **before** closing the connection, so a task mid-way through
-  `conn.response.create()` is torn down first and cannot race the socket close.
-
-## Partial-start-safe stop (F5) & the persistence barrier
-
-`start()` adopts/opens the connection, registers the orchestrator, and spawns the
-event task **before** it sets `_running = True`. `stop()` therefore keys teardown
-off **resource presence**, not `_running`, so a failure anywhere in the startup
-window still unwinds the connection, the orchestrator registry entry, and any
-unclaimed warm (`_prepared_connection`) socket. A `_stopping` re-entry guard makes
-a second/concurrent `stop()` a no-op.
-
-`stop()` follows the storage **close contract** — quiesce producers, then snapshot:
-
-1. `unregister_voicelive_orchestrator` (stop scenario-update callbacks)
-2. DTMF cleanup
-3. cancel + join the event reader (`_event_task`)
-4. `orchestrator.cancel_and_join_tasks()` (owned tool tasks / finalizers)
-5. **final strict snapshot** — `_sync_to_memo_manager()` then
-   `persist_to_redis_async()`, gated on `was_running`
-6. close connection / prepared connection, `orchestrator.cleanup()`
-
-The snapshot is captured **after** producers are quiesced: persisting earlier
-races an in-flight tool finalizer still writing corememory
-(`client_id` / `session_profile`), so the snapshot could miss the write.
-
-### Storage integration hook (dependent, coordinator-owned)
-
-The persist block in `stop()` is the single integration point for the
-session-persistence slice:
-
-- **Hydration** enters VoiceLive pre-built as `websocket.state.cm` (populated by
-  the endpoint/media handler, out of this workstream's scope). The orchestrator
-  consumes it once in `__init__` via `_sync_from_memo_manager()`.
-- **Final flush**: `persist_to_redis_async()` is the ordered **strict barrier**;
-  a `await memo_manager.flush_pending_persist(raise_on_failure=False)` slots into
-  a `finally` immediately after it — before the connection / Redis / loop
-  release. It is intentionally **not** wired yet (kept independent of the storage
-  branch; no `getattr` shims).
-
-## Tests
-
-```bash
-pytest tests/test_voicelive_tool_offload.py \
-       tests/test_voicelive_partial_start_cleanup.py \
-       tests/test_voicelive_barge_in.py \
-       tests/test_voicelive_warmup.py \
-       tests/test_voicelive_memory.py \
-       tests/test_handoff_orchestrator_states.py \
-       tests/test_tool_helpers_emit.py \
-       tests/test_voicelive_session_update_dedup.py \
-       tests/test_voicelive_session_updated_echo.py \
-       tests/test_voicelive_greeting_race.py
-```
-
-- `test_voicelive_tool_offload.py` — off-reader batching, one continuation per
-  multi-tool batch, stale/cancelled-continuation drop with preserved durable
-  effect, teardown cancels in-flight tool tasks.
-- `test_voicelive_partial_start_cleanup.py` — `stop()` unwinds every
-  partial-acquisition state, is idempotent, and still tears down a running session.
+Coverage includes native batching and controls, interruptions across awaits,
+response/session-update deduplication, tuned agents, staged greetings,
+concurrent/self-initiated/partial close and strict persistence failure.

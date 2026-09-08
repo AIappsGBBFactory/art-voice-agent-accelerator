@@ -96,5 +96,17 @@ or later calls receive the same result, including failure, without repeating
 metrics, analytics, or other cleanup stages. A retry does not retry failed stages
 or return withheld speech leases.
 
-MemoManager hydration and ordered persistence remain the storage workstream's
-contract. This component introduces no alternative session-state model.
+Hydration awaits `MemoManager.from_redis_async` using the existing call-key lookup,
+then keeps the canonical session ID on that memo. The existing application session
+registry exposes it to live configuration/profile/event writers. After producers
+stop, `shared/close.finish_persistence` awaits a strict snapshot and always a
+strict pending flush. A native stop failure skips the stable snapshot, but still
+drains submitted persistence. A persistence failure after quiescence does not
+prevent safe lease release. See the [shared close contract](../README.md) and
+[human extension guide](../../../../../docs/voice-extension-guide.md).
+
+Tool inputs/effects and exposed handoff schemas delegate to
+`shared/tool_policy.py`; scenario routing delegates to `HandoffService`. Mixed
+business/handoff batches commit business effects before routing. Tool history
+is recorded before awaited completion notifications, so interrupted speech
+does not leave a committed effect without its corresponding tool result.

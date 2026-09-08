@@ -333,6 +333,10 @@ flowchart LR
       <h2 id="session-runtime">Session Runtime</h2>
       <p>How the runtime keeps many concurrent calls isolated, how session memory moves through MemoManager / Redis / Cosmos, and what hooks fire on every turn. Everything below is grounded in the current implementation — the names map 1:1 to functions and events in <code>apps/artagent/backend/voice/</code>.</p>
 
+      <h3 id="shared-contracts">Shared contracts, native execution</h3>
+      <p>Browser and ACS support Cascade and VoiceLive; Genesys remains VoiceLive-only. Both engines use <code>voice/shared/tool_policy.py</code> for tool inputs and committed identity/profile/slot effects, and <code>HandoffService</code> for authoritative scenario routing. <code>registries/definitions.py</code> derives definition projection, validation and builder schema fields from the existing dataclasses. VoiceLive SDK operations live in <code>voice/voicelive/session.py</code>, not neutral agent definitions.</p>
+      <p>Each native handler retains a shielded close task. Concurrent callers observe its completion or failure; cancellation does not abandon cleanup. Producers stop before a strict final snapshot and strict pending flush. Unacknowledged native work is quarantined without claiming a stable snapshot or recycling speech leases, while safe independent cleanup still runs. The unused SessionAgentManager, aggregate SpeechCascadeHandler and alternate test-only VoiceLive output path are retired. See the <a href="voice-extension-guide.md">human extension guide</a> and <a href="memo-persistence.md">storage contract</a>.</p>
+
       <h3>Concurrent session handling and speech-channel isolation</h3>
       <p>Each call is isolated by <code>session_id</code> + <code>call_connection_id</code>, with per-session handlers, per-session turn state, and per-session outbound envelopes. This prevents cross-talk when many conversations run concurrently on the same container.</p>
 
@@ -351,7 +355,7 @@ flowchart LR
       </table>
 
       <h3>Session memory lifecycle (what persists, when)</h3>
-      <p>The hot path stays in <code>MemoManager</code>. Redis is the cross-container source of truth. Cosmos is cold archive only — never read on the hot path. Reads happen once on session start; writes happen on tool/turn boundaries and on cleanup.</p>
+      <p>The hot path stays in the current <code>MemoManager</code>. Startup and offline definition loading hydrate asynchronously; live API/event mutations reuse the existing application/engine registry's memo. Redis stores snapshots and Cosmos is cold archive. Ordering is per memo on its owning event loop, not distributed CAS: independent workers/writers can still overwrite whole-state snapshots.</p>
 
       <div class="az-diagram" data-diagram="memory-lifecycle">
         <figcaption class="az-diagram-caption">Five phases of session memory — read on start, in-memory turn updates, opportunistic Redis writes at tool boundaries, async flush on stop, and Cosmos archival after the call ends.</figcaption>
@@ -361,7 +365,7 @@ flowchart LR
         <li>Session starts: orchestrator reads prior state (active agent, visited agents, profile, handoff context) from MemoManager/Redis.</li>
         <li>Each turn: orchestrator updates active agent and session vars, then writes back to MemoManager as turn state evolves.</li>
         <li>Turn/tool boundaries: effective turn IDs are advanced for post-tool segments to keep message history coherent.</li>
-        <li>Session stop/cleanup: handler flushes MemoManager to Redis asynchronously; cold archival to Cosmos remains post-call oriented.</li>
+        <li>Session stop/cleanup: quiesced producers precede an awaited strict snapshot and a strict pending flush in <code>finally</code>. Native stop failure skips the stable snapshot, not draining submitted writes or attempting safe cleanup. Cold archival remains post-call oriented.</li>
       </ol>
 
       <h3 id="per-turn-memory">Per-turn memory flow and long-session strategies</h3>
