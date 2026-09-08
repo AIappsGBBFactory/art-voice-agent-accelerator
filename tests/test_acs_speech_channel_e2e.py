@@ -5,10 +5,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from fastapi.websockets import WebSocketState
-
 from apps.artagent.backend.api.v1.endpoints import media
 from apps.artagent.backend.voice import TransportType
+from apps.artagent.backend.voice.voicelive import handler as voicelive_handler
+from fastapi.websockets import WebSocketState
 from src.enums.stream_modes import StreamMode
 
 
@@ -101,7 +101,7 @@ async def test_create_media_handler_uses_speech_channel_for_acs_media(
 
     monkeypatch.setattr(media.VoiceHandler, "create", fake_create)
     monkeypatch.setattr(
-        media,
+        voicelive_handler,
         "consume_voicelive_call_warmup",
         fail_if_voicelive_warmup_is_used,
     )
@@ -181,7 +181,7 @@ async def test_acs_media_stream_speech_channel_end_to_end(
     monkeypatch.setattr(media, "send_agent_inventory", fake_send_agent_inventory)
     monkeypatch.setattr(media.VoiceHandler, "create", fake_create)
     monkeypatch.setattr(
-        media,
+        voicelive_handler,
         "consume_voicelive_call_warmup",
         fail_if_voicelive_warmup_is_used,
     )
