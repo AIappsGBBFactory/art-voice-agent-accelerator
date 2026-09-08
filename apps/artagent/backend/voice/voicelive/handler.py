@@ -14,16 +14,18 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import numpy as np
+from apps.artagent.backend.registries.agentstore.base import (
+    byom_profile_model_conflict,
+    is_managed_voicelive_model,
+)
 
 # Import agents loader for dynamic handoff_map building
 from apps.artagent.backend.registries.agentstore.loader import (
     build_agent_summaries,
     discover_agents,
 )
-from apps.artagent.backend.registries.agentstore.base import (
-    byom_profile_model_conflict,
-    is_managed_voicelive_model,
-)
+from apps.artagent.backend.src.orchestration.session_agents import get_session_agent
+from apps.artagent.backend.src.services.session_loader import load_user_profile_by_email
 from apps.artagent.backend.src.utils.tracing import (
     create_service_dependency_attrs,
     create_service_handler_attrs,
@@ -50,6 +52,7 @@ from apps.artagent.backend.voice.shared import (
     resolve_from_app_state,
     resolve_orchestrator_config,
 )
+from apps.artagent.backend.voice.shared.close import cancel_and_join, finish_persistence
 from apps.artagent.backend.voice.shared.errors import (
     VoiceErrorInfo,
     classify_voice_error,
@@ -969,12 +972,11 @@ class VoiceLiveSDKHandler:
         self._startup_error: VoiceErrorInfo | None = None
         self._event_task: asyncio.Task | None = None
         self._running = False
-        # Re-entry guard for stop(). `start()` acquires the connection, registers
-        # the orchestrator, and spawns tasks *before* it flips `_running`, so a
-        # failure in that window still needs a full unwind. stop() therefore keys
-        # its teardown off resource presence rather than `_running`, and this flag
-        # makes a second (or concurrent) stop() a no-op.
+        # Resource presence drives partial-start cleanup; the retained task below
+        # gives every stop caller the same completion, rather than a boolean no-op.
         self._stopping = False
+        self._shutdown_task: asyncio.Task | None = None
+        self._startup_task: asyncio.Task | None = None
         self._shutdown = asyncio.Event()
         self._acs_sample_rate = 16000
         self._active_response_ids: set[str] = set()
@@ -1023,16 +1025,6 @@ class VoiceLiveSDKHandler:
 
         task.add_done_callback(_cleanup_task)
         return task
-
-    def _cancel_all_background_tasks(self) -> int:
-        """Cancel all pending background tasks. Returns count of cancelled tasks."""
-        cancelled = 0
-        for task in list(self._pending_background_tasks):
-            if not task.done():
-                task.cancel()
-                cancelled += 1
-        self._pending_background_tasks.clear()
-        return cancelled
 
     def _get_metadata(self, key: str, default: Any = None) -> Any:
         """Read per-connection metadata from the websocket.state (or default)."""
@@ -1091,6 +1083,18 @@ class VoiceLiveSDKHandler:
             self._mark_audio_playback(False, reset_cancel=False)
 
     async def start(self) -> None:
+        """Start once; stop owns any startup still suspended in a provider await."""
+        if self._shutdown_task is not None:
+            raise RuntimeError("Cannot restart a closed VoiceLive handler")
+        if self._startup_task is None:
+            self._startup_task = asyncio.create_task(self._start(), name="voicelive-start")
+        try:
+            await asyncio.shield(self._startup_task)
+        except BaseException:
+            await self.stop()
+            raise
+
+    async def _start(self) -> None:
         """Establish VoiceLive connection and start event processing."""
         if self._running:
             return
@@ -1594,168 +1598,90 @@ class VoiceLiveSDKHandler:
                     session_id=self.session_id,
                     call_id=self.call_connection_id,
                 )
-                await self.stop()
                 raise
 
     async def stop(self) -> None:
-        """Stop event processing and release VoiceLive resources.
+        """Await retained cleanup; all callers observe its same completion/result."""
+        if self._shutdown_task is None:
+            self._shutdown_task = asyncio.create_task(
+                self._close_resources(), name=f"voicelive-close-{self.session_id}"
+            )
+        await asyncio.shield(self._shutdown_task)
 
-        Idempotent and safe after a *partial* startup. ``start()`` adopts/opens a
-        connection, registers the orchestrator, and spawns tasks all before it
-        sets ``_running = True``; a failure anywhere in that window must still
-        unwind whatever was actually acquired. Every step below is therefore
-        guarded by resource presence rather than by ``_running``, and the
-        ``_stopping`` re-entry guard makes a second call a no-op.
-        """
-        if self._stopping:
-            return
+    async def _close_resources(self) -> None:
         self._stopping = True
-        was_running = self._running
         self._running = False
         self._shutdown.set()
-
-        with tracer.start_as_current_span(
-            "voicelive_handler.stop",
-            kind=trace.SpanKind.INTERNAL,
-            attributes=create_service_handler_attrs(
-                service_name="VoiceLiveSDKHandler.stop",
-                call_connection_id=self.call_connection_id,
-                session_id=self.session_id,
-            ),
-        ) as stop_span:
-            # Unregister first so a scenario-update callback can never target a
-            # half-torn-down orchestrator. Idempotent (pop with default).
-            unregister_voicelive_orchestrator(self.session_id)
-
-            # Cleanup DTMFProcessor (safe on an idle processor).
-            try:
-                await self._dtmf_processor.cleanup()
-            except Exception:
-                logger.debug("DTMF cleanup failed during stop", exc_info=True)
-
+        if self._orchestrator is not None:
+            unregister_voicelive_orchestrator(self.session_id, expected=self._orchestrator)
+        errors: list[Exception] = []
+        try:
+            await cancel_and_join([self._startup_task] if self._startup_task else [])
+        except Exception as exc:
+            errors.append(exc)
+        try:
+            await self._dtmf_processor.cleanup()
+        except Exception as exc:
+            errors.append(exc)
+        try:
+            tasks = set(self._pending_background_tasks)
             if self._event_task:
-                self._event_task.cancel()
-                try:
-                    await self._event_task
-                except asyncio.CancelledError:
-                    pass
-                finally:
-                    self._event_task = None
-
-            # Cancel and join the orchestrator's owned tasks (business-tool tasks,
-            # batch finalizers, throttled context updates) BEFORE closing the
-            # connection, so a task mid-way through conn.response.create() is torn
-            # down first and cannot race the socket close.
-            if self._orchestrator and hasattr(self._orchestrator, "cancel_and_join_tasks"):
-                try:
-                    await self._orchestrator.cancel_and_join_tasks()
-                except Exception:
-                    logger.debug("Failed to cancel orchestrator tasks", exc_info=True)
-
-            # ── Final persistence barrier (storage close contract) ───────────
-            # Capture the final strict snapshot ONLY after every producer above is
-            # quiesced: scenario callbacks unregistered, the SDK event reader
-            # cancelled, owned tool tasks/finalizers cancel-joined, and DTMF
-            # stopped. Persisting earlier (as this used to) races an in-flight
-            # tool finalizer still writing corememory (client_id / session_profile),
-            # so the snapshot could miss the write. Gated on `was_running`: a
-            # partial startup has no meaningful state to checkpoint and its stores
-            # may be half-wired.
-            #
-            # STORAGE INTEGRATION HOOK (dependent, coordinator-owned): when the
-            # session-persistence slice is wired in, `persist_to_redis_async`
-            # below is the ordered strict barrier, and a
-            # `await memo_manager.flush_pending_persist(raise_on_failure=False)`
-            # belongs in a `finally` here — after the strict snapshot, before the
-            # connection / Redis / loop release below. Left unwired now to keep
-            # this workstream independent of that branch (no getattr shims).
-            if was_running:
-                try:
-                    memo_manager = (
-                        getattr(self.websocket.state, "cm", None) if self.websocket else None
-                    )
-                    redis_mgr = (
-                        getattr(self.websocket.app.state, "redis", None) if self.websocket else None
-                    )
-                    if memo_manager and redis_mgr:
-                        # Sync orchestrator state to memo_manager first
-                        if self._orchestrator and hasattr(
-                            self._orchestrator, "_sync_to_memo_manager"
-                        ):
-                            self._orchestrator._sync_to_memo_manager()
-                        await memo_manager.persist_to_redis_async(redis_mgr)
-                        logger.info(
-                            "📦 Session state persisted to Redis | session=%s",
-                            self.session_id,
-                        )
-                except Exception as persist_error:
-                    logger.warning(
-                        "Failed to persist session state: %s | session=%s",
-                        persist_error,
-                        self.session_id,
-                    )
-
-            if self._connection_cm:
-                try:
-                    with tracer.start_as_current_span(
-                        "voicelive.connection.close",
-                        kind=trace.SpanKind.SERVER,
-                        attributes=create_service_dependency_attrs(
-                            source_service="voicelive_handler",
-                            target_service="azure_voicelive",
-                            call_connection_id=self.call_connection_id,
-                            session_id=self.session_id,
-                        ),
-                    ):
-                        await self._connection_cm.__aexit__(None, None, None)
-                except Exception:
-                    logger.exception("Error closing VoiceLive connection")
-                finally:
-                    self._connection_cm = None
-                    self._connection = None
-
-            # An unclaimed warm connection: start() never adopted it (e.g. it
-            # failed before the warm-vs-target model check, or the handler was
-            # stopped before starting). Close it so the warm socket is not leaked.
-            if self._prepared_connection:
-                try:
-                    await self._prepared_connection.close()
-                except Exception:
-                    logger.debug("Failed to close prepared connection", exc_info=True)
-                finally:
-                    self._prepared_connection = None
-
-            # Cleanup orchestrator resources (greeting tasks, references)
+                tasks.add(self._event_task)
+            await cancel_and_join(tasks)
+        except Exception as exc:
+            errors.append(exc)
+        try:
             if self._orchestrator:
-                try:
-                    self._orchestrator.cleanup()
-                except Exception:
-                    logger.debug("Failed to cleanup orchestrator", exc_info=True)
-                finally:
-                    self._orchestrator = None
+                await self._orchestrator.cancel_and_join_tasks()
+        except Exception as exc:
+            errors.append(exc)
+        quiesced = not errors
+        memo = getattr(self.websocket.state, "cm", None) if self.websocket else None
+        redis = getattr(self.websocket.app.state, "redis", None) if self.websocket else None
+        try:
+            if quiesced and self._orchestrator:
+                self._orchestrator._sync_to_memo_manager()
+        except Exception as exc:
+            errors.append(exc)
+        try:
+            await finish_persistence(memo, redis, quiesced=quiesced and not errors)
+        except Exception as exc:
+            errors.append(exc)
+        # Sockets are closed even if a producer failed; never erase references
+        # to unacknowledged tasks or native resources and pretend they stopped.
+        if self._connection_cm:
+            try:
+                await self._connection_cm.__aexit__(None, None, None)
+            except Exception as exc:
+                errors.append(exc)
+            else:
+                self._connection_cm = None
+                self._connection = None
+        if self._prepared_connection:
+            try:
+                await self._prepared_connection.close()
+            except Exception as exc:
+                errors.append(exc)
+            else:
+                self._prepared_connection = None
+        from apps.artagent.backend.src.orchestration.session_memory import (
+            release_session_memory,
+        )
 
-            # Cancel all pending background tasks to prevent memory leaks
-            cancelled_count = self._cancel_all_background_tasks()
-            if cancelled_count > 0:
-                logger.debug(
-                    "Cancelled %d background tasks on stop | session=%s",
-                    cancelled_count,
-                    self.session_id,
-                )
-
-            # Credential is now module-level cached — do NOT close it per session.
-            # Just clear the local reference.
+        try:
+            await release_session_memory(self.session_id, memo, self.websocket)
+        except Exception as exc:
+            errors.append(exc)
+        if quiesced:
+            if self._orchestrator:
+                self._orchestrator.cleanup()
+                self._orchestrator = None
+            self._event_task = None
+            self._pending_background_tasks.clear()
             self._credential = None
-
-            # Clear messenger reference to break circular refs
             self._messenger = None
-
-            stop_span.set_status(trace.StatusCode.OK)
-            logger.info(
-                "VoiceLive SDK handler stopped | session=%s call=%s",
-                self.session_id,
-                self.call_connection_id,
-            )
+        if errors:
+            raise ExceptionGroup("VoiceLive close failed", errors)
 
     async def handle_audio_data(self, message_data: str) -> None:
         """Forward ACS media payloads to VoiceLive."""

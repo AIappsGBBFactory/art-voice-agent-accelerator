@@ -8,15 +8,13 @@ from datetime import UTC, datetime, timedelta
 from random import Random
 from typing import Any, Literal
 
+# Import MOCK_CLAIMS for test scenario support
+from apps.artagent.backend.registries.toolstore.insurance.constants import MOCK_CLAIMS
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
 from pymongo.errors import NetworkTimeout, PyMongoError
-from src.cosmosdb.manager import CosmosDBMongoCoreManager
 from src.cosmosdb.config import get_database_name, get_users_collection_name
-from src.stateful.state_managment import MemoManager
-
-# Import MOCK_CLAIMS for test scenario support
-from apps.artagent.backend.registries.toolstore.insurance.constants import MOCK_CLAIMS
+from src.cosmosdb.manager import CosmosDBMongoCoreManager
 
 __all__ = ["router"]
 
@@ -132,6 +130,7 @@ class DemoTransaction(BaseModel):
 # ═══════════════════════════════════════════════════════════════════════════════
 # INSURANCE SCENARIO MODELS
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class DemoInsurancePolicy(BaseModel):
     """Insurance policy for demo users."""
@@ -752,6 +751,7 @@ EXCHANGE_RATES: dict[str, float] = {
 # INSURANCE PROFILE AND DATA BUILDERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 def _build_insurance_profile(
     payload: DemoUserRequest,
     rng: Random,
@@ -949,7 +949,7 @@ TEST_SCENARIO_TO_CLAIM: dict[str, str] = {
 def _mock_claim_to_demo_claim(mock_claim: dict[str, Any], policy_number: str) -> DemoInsuranceClaim:
     """
     Convert a MOCK_CLAIMS entry to a DemoInsuranceClaim object.
-    
+
     This ensures test scenarios from MOCK_CLAIMS are properly formatted for the demo API.
     """
     subro_data = mock_claim.get("subro_demand", {})
@@ -963,12 +963,12 @@ def _mock_claim_to_demo_claim(mock_claim: dict[str, Any], policy_number: str) ->
             assigned_date=subro_data.get("assigned_date"),
             status=subro_data.get("status"),
         )
-    
+
     # Map coverage_status to DemoInsuranceClaim format
     coverage_status = mock_claim.get("coverage_status", "confirmed")
     if coverage_status not in ("confirmed", "pending", "denied", "cvq"):
         coverage_status = "confirmed"
-    
+
     return DemoInsuranceClaim(
         claim_number=mock_claim.get("claim_number", "CLM-UNKNOWN"),
         policy_number=policy_number,
@@ -1006,10 +1006,10 @@ def _build_claims(
 ) -> list[DemoInsuranceClaim]:
     """
     Generate insurance claims for demo user.
-    
+
     If test_scenario is specified (and not 'random'), uses MOCK_CLAIMS for consistent
     edge case testing. Otherwise generates random claims.
-    
+
     Args:
         client_id: Demo user client ID
         full_name: Demo user full name
@@ -1019,13 +1019,13 @@ def _build_claims(
         is_cc_rep: Whether caller is a claimant carrier rep
         cc_company_name: CC company name if cc_rep
         test_scenario: Optional test scenario name (maps to MOCK_CLAIMS)
-    
+
     Returns:
         List of DemoInsuranceClaim objects
     """
     claims = []
     policy_number = policies[0].policy_number if policies else f"POL-{rng.randint(100000, 999999)}"
-    
+
     # ─────────────────────────────────────────────────────────────────────────
     # TEST SCENARIO MODE: Use MOCK_CLAIMS for consistent edge case testing
     # ─────────────────────────────────────────────────────────────────────────
@@ -1044,12 +1044,12 @@ def _build_claims(
             logging.getLogger(__name__).warning(
                 "⚠️ Unknown test_scenario: %s, falling back to random generation", test_scenario
             )
-    
+
     # ─────────────────────────────────────────────────────────────────────────
     # RANDOM GENERATION MODE: Generate realistic random claims with full edge case coverage
     # ─────────────────────────────────────────────────────────────────────────
     num_claims = rng.randint(1, 3)
-    
+
     # Extended scenarios for better random coverage
     extended_claim_scenarios = (
         # Standard scenarios
@@ -1062,7 +1062,7 @@ def _build_claims(
         {"type": "collision", "description": "Multi-vehicle accident - liability disputed", "typical_amount": (15000, 85000)},
         {"type": "collision", "description": "Hit and run - coverage investigation", "typical_amount": (8000, 25000)},
     )
-    
+
     # Coverage status distribution for better edge case coverage
     coverage_statuses = [
         ("confirmed", None, 60),      # 60% confirmed
@@ -1070,7 +1070,7 @@ def _build_claims(
         ("denied", "policy_lapsed", 10),   # 10% denied
         ("cvq", "named_driver_dispute", 15),  # 15% CVQ
     ]
-    
+
     # Subro demand status distribution
     subro_statuses = [
         ("pending", 20),       # Pending assignment
@@ -1079,7 +1079,7 @@ def _build_claims(
         ("denied_liability", 15),  # Denied - liability
         ("denied_no_coverage", 10),  # Denied - no coverage
     ]
-    
+
     for i in range(num_claims):
         scenario = rng.choice(extended_claim_scenarios)
         
@@ -1230,7 +1230,7 @@ def _build_claims(
             feature_owners=feature_owners,
             payments=payments if payments else None,
         ))
-    
+
     return claims
 
 
@@ -1242,14 +1242,14 @@ def _build_transactions(
     card_last4: str = "4242",
 ) -> list[DemoTransaction]:
     """Generate transaction history with 2 international + domestic transactions.
-    
+
     Args:
         client_id: User identifier for transaction IDs
         rng: Random generator for consistent demo data
         anchor: Base timestamp for transaction dates
         count: Total number of transactions (min 2 international + rest domestic)
         card_last4: Last 4 digits of card used for transactions
-    
+
     Returns:
         List of DemoTransaction objects sorted by timestamp (newest first)
     """
@@ -1561,9 +1561,9 @@ async def _persist_profile_to_session(
 
     try:
         # Load or create MemoManager for this session
-        mm = MemoManager.from_redis(session_id, redis_mgr)
-        if mm is None:
-            mm = MemoManager(session_id=session_id)
+        from apps.artagent.backend.src.orchestration.session_memory import session_memo
+
+        mm = await session_memo(session_id, redis_mgr)
 
         # Build full session profile dict for comprehensive context
         profile_dict = profile.model_dump(mode="json")
@@ -1589,12 +1589,12 @@ async def _persist_profile_to_session(
             },
         )
     except Exception as exc:
-        # Don't fail the request if session persistence fails
         logger.warning(
             "Failed to persist demo profile to session: %s",
             exc,
             extra={"session_id": session_id, "client_id": profile.client_id},
         )
+        raise
 
 
 @router.post(

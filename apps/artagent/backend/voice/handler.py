@@ -59,6 +59,7 @@ from apps.artagent.backend.voice.messaging import (
 
 # Core dependencies - use direct module imports to avoid circular imports
 from apps.artagent.backend.voice.shared import TransportType, VoiceSessionContext
+from apps.artagent.backend.voice.shared.close import finish_persistence
 from apps.artagent.backend.voice.shared.config_resolver import resolve_orchestrator_config
 from apps.artagent.backend.voice.speech_cascade.handler import (
     BargeInController,
@@ -124,6 +125,7 @@ VOICE_LIVE_PCM_SAMPLE_RATE = BROWSER_PCM_SAMPLE_RATE
 VOICE_LIVE_SPEECH_RMS_THRESHOLD = BROWSER_SPEECH_RMS_THRESHOLD
 VOICE_LIVE_SILENCE_GAP_SECONDS = BROWSER_SILENCE_GAP_SECONDS
 
+
 class ACSMessageKind:
     """ACS WebSocket message types."""
 
@@ -171,11 +173,8 @@ class VoiceHandler:
     """
     Unified voice handler for STT → LLM → TTS pipeline.
 
-    Combines:
-    - MediaHandler (pool management, transport routing)
-    - SpeechCascadeHandler (SDK callbacks and asynchronous turn processing)
-
-    Single class, clear responsibilities, explicit context.
+    Owns pooled leases, the callback bridge, native speech/turn workers and
+    retained close. Low-level SDK and transport components remain separate.
 
     Key Methods:
     ------------
@@ -240,6 +239,7 @@ class VoiceHandler:
         self._running = False
         self._stopped = False
         self._shutdown_task: asyncio.Task | None = None
+        self._startup_task: asyncio.Task | None = None
         self._metadata_received = False  # ACS only
         self._last_activity_ts = time.monotonic()
         self._idle_task: asyncio.Task | None = None
@@ -292,7 +292,7 @@ class VoiceHandler:
         session_key = config.call_connection_id or config.session_id
 
         # Load or create memory manager
-        memory_manager = cls._load_memory_manager(redis_mgr, session_key, config.session_id)
+        memory_manager = await cls._load_memory_manager(redis_mgr, session_key, config.session_id)
 
         # Store scenario in memory for orchestrator access
         if config.scenario:
@@ -416,6 +416,9 @@ class VoiceHandler:
 
         # Setup websocket state for backward compatibility
         handler._setup_websocket_state()
+        session_manager = getattr(app_state, "session_manager", None)
+        if session_manager is not None:
+            await session_manager.add_session(config.session_id, memory_manager, config.websocket)
 
         # Initialize active agent
         await handler._initialize_active_agent()
@@ -558,11 +561,12 @@ class VoiceHandler:
         - Asynchronous turn worker
         - Greeting playback
         """
-        if self._running:
-            logger.warning("[%s] Already running", self._session_short)
-            return
+        if self._shutdown_task is not None:
+            raise RuntimeError("Cannot restart a closed VoiceHandler")
+        if self._startup_task is None:
+            self._startup_task = asyncio.create_task(self._start(), name="cascade-start")
         try:
-            await self._start()
+            await asyncio.shield(self._startup_task)
         except BaseException:
             await self.stop()
             raise
@@ -925,17 +929,48 @@ class VoiceHandler:
         await asyncio.shield(self._shutdown_task)
 
     async def _shutdown(self) -> None:
-        await self._stop_tasks()
+        errors: list[Exception] = []
+        quiesced = False
+        try:
+            await self._stop_tasks()
+            quiesced = True
+        except Exception as exc:
+            errors.append(exc)
+        try:
+            await finish_persistence(
+                self._context.memo_manager, self._app_state.redis, quiesced=quiesced
+            )
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            from apps.artagent.backend.src.orchestration.session_memory import (
+                release_session_memory,
+            )
 
-        session_key = self._context.call_connection_id
-        results = await asyncio.gather(
-            self._app_state.tts_pool.release_for_session(session_key, self._context.tts_client),
-            self._app_state.stt_pool.release_for_session(session_key, self._context.stt_client),
-            return_exceptions=True,
-        )
-        for result in results:
-            if isinstance(result, BaseException):
-                logger.error("[%s] Pool release error: %s", self._session_short, result)
+            try:
+                await release_session_memory(
+                    self._context.session_id, self._context.memo_manager, self.websocket
+                )
+            except Exception as exc:
+                errors.append(exc)
+            # A failed write must not leak safe leases. A failed native stop must
+            # not recycle either lease: both remain retained on this handler.
+            if quiesced:
+                session_key = self._context.call_connection_id
+                results = await asyncio.gather(
+                    self._app_state.tts_pool.release_for_session(
+                        session_key, self._context.tts_client
+                    ),
+                    self._app_state.stt_pool.release_for_session(
+                        session_key, self._context.stt_client
+                    ),
+                    return_exceptions=True,
+                )
+                errors.extend(result for result in results if isinstance(result, Exception))
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            raise ExceptionGroup("Cascade close failed", errors)
         logger.info("[%s] VoiceHandler stopped", self._session_short)
 
     async def _stop_tasks(self) -> None:
@@ -944,9 +979,14 @@ class VoiceHandler:
         self._running = False
         if self._route_turn_thread:
             self._route_turn_thread.running = False
-        await self._cancel_idle_monitor()
-
         logger.info("[%s] Stopping VoiceHandler", self._session_short)
+        cleanup_errors: list[Exception] = []
+        from apps.artagent.backend.voice.shared.close import cancel_and_join
+
+        try:
+            await cancel_and_join([self._startup_task] if self._startup_task else [])
+        except Exception as exc:
+            cleanup_errors.append(exc)
 
         # Cancel any running TTS
         if self._context.cancel_event:
@@ -954,19 +994,17 @@ class VoiceHandler:
         if self._tts:
             self._tts.cancel()
 
-        await self._thread_bridge.close()
-
-        if self._greeting_warmup_task and not self._greeting_warmup_task.done():
-            self._greeting_warmup_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._greeting_warmup_task
+        for close in (self._cancel_idle_monitor, self._thread_bridge.close):
+            try:
+                await close()
+            except Exception as exc:
+                cleanup_errors.append(exc)
 
         # Cancel orchestration tasks
         for task in list(self._orchestration_tasks):
             if not task.done():
                 task.cancel()
 
-        cleanup_errors: list[Exception] = []
         # Stop SDK and turn processing; a failed stop must not return a live lease.
         if self._route_turn_thread:
             try:
@@ -985,11 +1023,14 @@ class VoiceHandler:
         tasks = set(self._orchestration_tasks)
         if self._current_tts_task:
             tasks.add(self._current_tts_task)
-        tasks.discard(asyncio.current_task())
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        self._orchestration_tasks.clear()
+        if self._greeting_warmup_task:
+            tasks.add(self._greeting_warmup_task)
+        try:
+            await cancel_and_join(tasks)
+        except Exception as exc:
+            cleanup_errors.append(exc)
+        else:
+            self._orchestration_tasks.clear()
         if self._tts:
             try:
                 await self._tts.aclose()
@@ -1012,6 +1053,9 @@ class VoiceHandler:
         Args:
             audio_bytes: PCM16LE audio data.
         """
+        if self._stopped:
+            logger.debug("[%s] Dropping audio after stop", self._session_short)
+            return
         if self._stt_thread:
             self._stt_thread.write_audio(audio_bytes)
 
@@ -1869,17 +1913,18 @@ class VoiceHandler:
             logger.error("Failed to close websocket: %s", e)
 
     @staticmethod
-    def _load_memory_manager(redis_mgr, session_key: str, session_id: str) -> MemoManager:
-        """Load or create memory manager."""
-        try:
-            mm = MemoManager.from_redis(session_key, redis_mgr)
-            if mm is None:
-                return MemoManager(session_id=session_id)
-            mm.session_id = session_id
-            return mm
-        except Exception as e:
-            logger.error("Failed to load memory: %s", e)
-            return MemoManager(session_id=session_id)
+    async def _load_memory_manager(redis_mgr, session_key: str, session_id: str) -> MemoManager:
+        """Hydrate by the existing call key; retain the canonical write identity."""
+        mm = (
+            await MemoManager.from_redis_async(session_key, redis_mgr)
+            if redis_mgr is not None
+            else MemoManager(session_id=session_id)
+        )
+        mm.session_id = session_id
+        from apps.artagent.backend.src.orchestration.session_memory import prime_session_definitions
+
+        await prime_session_definitions(session_id, memo=mm)
+        return mm
 
     # =========================================================================
     # Queue Methods (for external event injection)

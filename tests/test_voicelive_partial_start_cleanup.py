@@ -65,6 +65,7 @@ async def test_stop_unwinds_connection_and_registration_after_partial_start():
 
     orch = MagicMock()
     orch.cleanup = MagicMock()
+    orch.cancel_and_join_tasks = AsyncMock()
     handler._orchestrator = orch
     register_voicelive_orchestrator(handler.session_id, orch)
 
@@ -141,8 +142,12 @@ async def test_stop_does_not_leak_registry_entries_across_sessions():
     baseline = get_orchestrator_registry_size()
     handler_a, _ = _make_handler("sess-reg-a")
     handler_b, _ = _make_handler("sess-reg-b")
-    register_voicelive_orchestrator("sess-reg-a", MagicMock(cleanup=MagicMock()))
-    register_voicelive_orchestrator("sess-reg-b", MagicMock(cleanup=MagicMock()))
+    register_voicelive_orchestrator(
+        "sess-reg-a", MagicMock(cleanup=MagicMock(), cancel_and_join_tasks=AsyncMock())
+    )
+    register_voicelive_orchestrator(
+        "sess-reg-b", MagicMock(cleanup=MagicMock(), cancel_and_join_tasks=AsyncMock())
+    )
     handler_a._orchestrator = get_voicelive_orchestrator("sess-reg-a")
     handler_b._orchestrator = get_voicelive_orchestrator("sess-reg-b")
 
@@ -174,6 +179,7 @@ async def test_stop_persists_final_snapshot_after_producers_quiesced():
     order: list[str] = []
 
     memo_manager = MagicMock()
+    memo_manager.flush_pending_persist = AsyncMock(side_effect=lambda **k: order.append("flush"))
     memo_manager.persist_to_redis_async = AsyncMock(
         side_effect=lambda *a, **k: order.append("persist")
     )
@@ -204,4 +210,8 @@ async def test_stop_persists_final_snapshot_after_producers_quiesced():
     assert order.index("reader_cancelled") < order.index("persist")
     # Orchestrator state is synced into the memo immediately before the barrier.
     assert order.index("sync") < order.index("persist")
-    memo_manager.persist_to_redis_async.assert_awaited_once()
+    memo_manager.persist_to_redis_async.assert_awaited_once_with(
+        ws.app.state.redis, raise_on_failure=True
+    )
+    memo_manager.flush_pending_persist.assert_awaited_once_with(raise_on_failure=True)
+    assert order.index("persist") < order.index("flush")

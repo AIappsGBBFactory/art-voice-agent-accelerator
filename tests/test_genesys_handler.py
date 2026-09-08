@@ -99,6 +99,8 @@ class _FakeLiveOrchestrator:
         self.kwargs = kwargs
         self.start = AsyncMock()
         self.cleanup = Mock()
+        self.cancel_and_join_tasks = AsyncMock()
+        self._sync_to_memo_manager = Mock()
         self.handle_event = AsyncMock()
 
 
@@ -118,9 +120,9 @@ async def test_barge_in_invalidates_queued_audio_and_drops_late_delta() -> None:
 
     queued = _drain_queue(handler)
     assert all(not isinstance(item, _OutboundAudioFrame) for item in queued)
-    assert [item["parameters"]["entities"][0]["type"] for item in queued if isinstance(item, dict)] == [
-        "barge_in"
-    ]
+    assert [
+        item["parameters"]["entities"][0]["type"] for item in queued if isinstance(item, dict)
+    ] == ["barge_in"]
     assert "resp-old" in handler._cancelled_response_ids
 
     await handler._handle_voicelive_event(
@@ -169,7 +171,9 @@ async def test_unidentified_audio_delta_is_dropped_instead_of_reusing_current_re
 async def test_control_messages_keep_monotonic_seq_after_audio_invalidation() -> None:
     handler, _ = _make_handler()
 
-    await handler._enqueue_message(handler._protocol.create_opened({"format": "PCMU", "rate": 8000}))
+    await handler._enqueue_message(
+        handler._protocol.create_opened({"format": "PCMU", "rate": 8000})
+    )
     await handler._enqueue_binary(b"abcdefgh", response_id="resp-old")
     await handler._flush_audio_buffer(response_id="resp-old")
     handler._active_response_ids.add("resp-old")
@@ -304,8 +308,12 @@ async def test_connect_drops_conflicting_byom_query_before_connect(
         "_build_credential",
         AsyncMock(return_value=object()),
     )
-    monkeypatch.setattr(genesys_handler, "connect", lambda **kwargs: captured.update(kwargs) or fake_cm)
-    monkeypatch.setattr(genesys_handler, "LiveOrchestrator", lambda *args, **kwargs: fake_orchestrator)
+    monkeypatch.setattr(
+        genesys_handler, "connect", lambda **kwargs: captured.update(kwargs) or fake_cm
+    )
+    monkeypatch.setattr(
+        genesys_handler, "LiveOrchestrator", lambda *args, **kwargs: fake_orchestrator
+    )
     monkeypatch.setattr(genesys_handler, "register_voicelive_orchestrator", Mock())
     monkeypatch.setattr(genesys_handler, "unregister_voicelive_orchestrator", Mock())
 
@@ -376,7 +384,9 @@ async def test_connect_passes_byom_query_and_shared_credential_helper(
         return fake_cm
 
     monkeypatch.setattr(genesys_handler, "connect", _fake_connect)
-    monkeypatch.setattr(genesys_handler, "LiveOrchestrator", lambda *args, **kwargs: fake_orchestrator)
+    monkeypatch.setattr(
+        genesys_handler, "LiveOrchestrator", lambda *args, **kwargs: fake_orchestrator
+    )
     monkeypatch.setattr(genesys_handler, "register_voicelive_orchestrator", Mock())
     monkeypatch.setattr(genesys_handler, "unregister_voicelive_orchestrator", Mock())
 
@@ -392,7 +402,9 @@ async def test_connect_passes_byom_query_and_shared_credential_helper(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("done_event_type", [ServerEventType.RESPONSE_AUDIO_DONE, ServerEventType.RESPONSE_DONE])
+@pytest.mark.parametrize(
+    "done_event_type", [ServerEventType.RESPONSE_AUDIO_DONE, ServerEventType.RESPONSE_DONE]
+)
 async def test_done_flush_failure_sends_single_disconnect_and_cleans_up(
     done_event_type: ServerEventType,
 ) -> None:
@@ -417,7 +429,11 @@ async def test_done_flush_failure_sends_single_disconnect_and_cleans_up(
     assert handler._terminal_shutdown_task is not None
     await asyncio.wait_for(handler._terminal_shutdown_task, timeout=1.0)
 
-    disconnects = [json.loads(payload) for payload in ws.sent_text if json.loads(payload)["type"] == "disconnect"]
+    disconnects = [
+        json.loads(payload)
+        for payload in ws.sent_text
+        if json.loads(payload)["type"] == "disconnect"
+    ]
     assert len(disconnects) == 1
     assert handler._writer_task is None
     assert handler._outbound_audio_response_id is None
@@ -482,4 +498,6 @@ async def test_partial_connect_failure_closes_connection(
     assert fake_cm.exited is True
     assert handler._connection is None
     assert handler._connection_cm is None
-    unregister.assert_called_with("genesys-session")
+    unregister.assert_called_once()
+    assert unregister.call_args.args == ("genesys-session",)
+    assert isinstance(unregister.call_args.kwargs["expected"], _FailingOrchestrator)

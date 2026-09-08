@@ -107,7 +107,7 @@ def _run_route_turn_prelude(memo: _FakeMemo, session_agent: UnifiedAgent | None)
 
     with (
         patch(
-            "apps.artagent.backend.src.orchestration.unified.get_cascade_orchestrator",
+            "apps.artagent.backend.src.orchestration.unified.CascadeOrchestratorAdapter.create",
             return_value=stand_in,
         ),
         patch(

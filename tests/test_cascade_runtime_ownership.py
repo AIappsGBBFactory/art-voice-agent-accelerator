@@ -396,7 +396,7 @@ async def test_factory_failure_after_warmup_started_joins_before_rollback():
     synth = app.tts_pool.client
 
     class FailingMemo(MockMemoManager):
-        async def persist_to_redis_async(self, redis_mgr):
+        async def persist_to_redis_async(self, redis_mgr, *, raise_on_failure=False):
             assert await asyncio.to_thread(synth.started.wait, 1)
             raise RuntimeError("initial persistence failed")
 

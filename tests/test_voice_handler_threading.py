@@ -178,11 +178,11 @@ class TestVoiceLiveBackgroundTasks:
 
         assert hasattr(VoiceLiveSDKHandler, "_background_task")
 
-    def test_handler_has_cancel_all_method(self):
-        """VoiceLiveSDKHandler should have _cancel_all_background_tasks instance method."""
+    def test_handler_has_awaitable_close(self):
+        """The public stop owns background cancellation and completion."""
         from apps.artagent.backend.voice.voicelive.handler import VoiceLiveSDKHandler
 
-        assert hasattr(VoiceLiveSDKHandler, "_cancel_all_background_tasks")
+        assert asyncio.iscoroutinefunction(VoiceLiveSDKHandler.stop)
 
     @pytest.mark.asyncio
     async def test_background_task_is_tracked(self):
@@ -212,8 +212,8 @@ class TestVoiceLiveBackgroundTasks:
         assert task not in handler._pending_background_tasks
 
     @pytest.mark.asyncio
-    async def test_cancel_all_background_tasks(self):
-        """_cancel_all_background_tasks should cancel pending tasks."""
+    async def test_stop_joins_all_background_tasks(self):
+        """Public stop must not finish while a background task is alive."""
         from apps.artagent.backend.voice.voicelive.handler import VoiceLiveSDKHandler
 
         mock_ws = MagicMock()
@@ -230,13 +230,11 @@ class TestVoiceLiveBackgroundTasks:
         task2 = handler._background_task(long_running(), label="task2")
 
         # Cancel all
-        cancelled = handler._cancel_all_background_tasks()
+        mock_ws.state.cm = None
+        mock_ws.app.state.redis = None
+        await handler.stop()
 
-        assert cancelled == 2
         assert len(handler._pending_background_tasks) == 0
-
-        # Give event loop a chance to process cancellations
-        await asyncio.sleep(0.01)
 
         # Tasks should now be cancelled or done
         assert task1.cancelled() or task1.done()
@@ -559,9 +557,7 @@ class TestSessionMessengerIntegration:
         await asyncio.sleep(0)
 
         user_payloads = [
-            frame["payload"]
-            for frame in emitted
-            if frame.get("payload", {}).get("type") == "user"
+            frame["payload"] for frame in emitted if frame.get("payload", {}).get("type") == "user"
         ]
         assert [payload["turn_id"] for payload in user_payloads] == [
             "turn-1",

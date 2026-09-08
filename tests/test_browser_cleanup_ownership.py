@@ -36,16 +36,20 @@ async def attach_browser_resources(app, monkeypatch):
     async def unregister(conn_id):
         del connections[conn_id]
 
-    async def remove_session(key):
+    async def remove_session(key, *, expected_context):
+        assert expected_context is ws.state.session_context
         del sessions[key]
 
     app.conn_manager = SimpleNamespace(unregister=AsyncMock(side_effect=unregister))
     app.session_manager = SimpleNamespace(remove_session=AsyncMock(side_effect=remove_session))
+    ws.state.session_context = SimpleNamespace(session_id=session_id)
     app.session_metrics = SimpleNamespace(increment_disconnected=AsyncMock())
     app.cosmos = SimpleNamespace(upsert_document=Mock())
     handler.memory_manager.histories = {}
     handler.memory_manager.context = {}
-    monkeypatch.setitem(unified._adapters, session_id, object())
+    monkeypatch.setitem(
+        unified._adapters, session_id, SimpleNamespace(memo_manager=handler.memory_manager)
+    )
     return handler, connections, sessions
 
 
@@ -66,7 +70,9 @@ def assert_safe_cleanup(handler, connections, sessions):
     assert not connections
     assert not sessions
     app.conn_manager.unregister.assert_awaited_once_with("conn")
-    app.session_manager.remove_session.assert_awaited_once_with(handler.session_id)
+    app.session_manager.remove_session.assert_awaited_once_with(
+        handler.session_id, expected_context=handler.websocket.state.session_context
+    )
     app.session_metrics.increment_disconnected.assert_awaited_once()
     handler.websocket.close.assert_awaited_once()
     app.cosmos.upsert_document.assert_called_once()

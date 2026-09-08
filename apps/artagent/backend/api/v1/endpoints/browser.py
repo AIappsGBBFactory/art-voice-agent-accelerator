@@ -31,6 +31,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
+from apps.artagent.backend.src.orchestration.unified import cleanup_adapter
 from apps.artagent.backend.src.services.acs.session_terminator import (
     TerminationReason,
     terminate_session,
@@ -47,7 +48,16 @@ from apps.artagent.backend.src.ws_helpers.shared_ws import (
     _set_connection_metadata,
     send_agent_inventory,
 )
-from apps.artagent.backend.voice import VoiceLiveSDKHandler
+from apps.artagent.backend.voice import (
+    VOICE_LIVE_PCM_SAMPLE_RATE,
+    VOICE_LIVE_SILENCE_GAP_SECONDS,
+    VOICE_LIVE_SPEECH_RMS_THRESHOLD,
+    TransportType,
+    VoiceHandler,
+    VoiceHandlerConfig,
+    VoiceLiveSDKHandler,
+    pcm16le_rms,
+)
 from apps.artagent.backend.voice.shared.errors import fail_websocket_session
 from fastapi import (
     APIRouter,
@@ -68,17 +78,6 @@ from src.stateful.state_managment import MemoManager
 from utils.ml_logging import get_logger
 from utils.session_context import session_context
 
-from apps.artagent.backend.src.orchestration.unified import cleanup_adapter
-
-from apps.artagent.backend.voice import (
-    VOICE_LIVE_PCM_SAMPLE_RATE,
-    VOICE_LIVE_SILENCE_GAP_SECONDS,
-    VOICE_LIVE_SPEECH_RMS_THRESHOLD,
-    TransportType,
-    VoiceHandler,
-    VoiceHandlerConfig,
-    pcm16le_rms,
-)
 from ..schemas.realtime import RealtimeStatusResponse
 
 logger = get_logger("api.v1.endpoints.browser")
@@ -389,7 +388,14 @@ async def _create_voice_live_handler(
         Tuple of (handler, memory_manager).
     """
     redis_mgr = websocket.app.state.redis
-    memory_manager = MemoManager.from_redis(session_id, redis_mgr)
+    memory_manager = (
+        await MemoManager.from_redis_async(session_id, redis_mgr)
+        if redis_mgr is not None
+        else MemoManager(session_id=session_id)
+    )
+    from apps.artagent.backend.src.orchestration.session_memory import prime_session_definitions
+
+    await prime_session_definitions(session_id, memo=memory_manager)
     if scenario:
         from apps.artagent.backend.src.orchestration.naming import (
             normalize_scenario_name,
@@ -801,6 +807,7 @@ async def _cleanup_conversation(
                 attributes={"session_id": session_id},
             ) as span:
                 errors: list[Exception] = []
+                registered_context = getattr(websocket.state, "session_context", None)
 
                 async def attempt(label: str, operation: Callable[[], Any]) -> None:
                     try:
@@ -820,16 +827,20 @@ async def _cleanup_conversation(
                     await attempt("speech_stop", handler.stop)
                 # VoiceLive handler cleanup remains owned by its processing finally.
 
-                if session_id:
-                    await attempt("adapter", lambda: cleanup_adapter(session_id))
+                if session_id and memory_manager is not None:
+                    await attempt(
+                        "adapter", lambda: cleanup_adapter(session_id, expected_memo=memory_manager)
+                    )
                 if conn_id:
                     await attempt(
                         "connection", lambda: websocket.app.state.conn_manager.unregister(conn_id)
                     )
-                if session_id:
+                if registered_context is not None:
                     await attempt(
                         "session",
-                        lambda: websocket.app.state.session_manager.remove_session(session_id),
+                        lambda: websocket.app.state.session_manager.remove_session(
+                            registered_context.session_id, expected_context=registered_context
+                        ),
                     )
                 if hasattr(websocket.app.state, "session_metrics"):
                     await attempt(

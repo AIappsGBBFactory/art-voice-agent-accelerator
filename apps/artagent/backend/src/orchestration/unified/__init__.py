@@ -206,8 +206,15 @@ def _get_or_create_adapter(
     return adapter
 
 
-def cleanup_adapter(session_id: str) -> None:
+def cleanup_adapter(session_id: str, *, expected_memo: MemoManager | None = None) -> None:
     """Remove adapter for a completed session."""
+    adapter = _adapters.get(session_id)
+    if (
+        expected_memo is not None
+        and adapter is not None
+        and adapter.memo_manager is not expected_memo
+    ):
+        return
     if session_id in _adapters:
         del _adapters[session_id]
         logger.debug("Cleaned up adapter for session: %s", session_id)

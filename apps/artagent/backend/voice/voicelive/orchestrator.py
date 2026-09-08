@@ -323,8 +323,12 @@ def register_voicelive_orchestrator(session_id: str, orchestrator: "LiveOrchestr
     )
 
 
-def unregister_voicelive_orchestrator(session_id: str) -> None:
+def unregister_voicelive_orchestrator(
+    session_id: str, *, expected: LiveOrchestrator | None = None
+) -> None:
     """Unregister a VoiceLive orchestrator when session ends."""
+    if expected is not None and _voicelive_orchestrators.get(session_id) is not expected:
+        return
     orchestrator = _voicelive_orchestrators.pop(session_id, None)
     if orchestrator:
         logger.debug(
