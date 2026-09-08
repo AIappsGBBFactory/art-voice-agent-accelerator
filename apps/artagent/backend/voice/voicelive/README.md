@@ -61,3 +61,16 @@ pytest tests/test_voicelive* tests/test_voice_tool_policy_contract.py \
 Coverage includes native batching and controls, interruptions across awaits,
 response/session-update deduplication, tuned agents, staged greetings,
 concurrent/self-initiated/partial close and strict persistence failure.
+
+Live scenario reconfiguration is also an owned task; it no longer bypasses
+close with an untracked thread-safe scheduling future. Without a running loop,
+sync definition edits log that a provider update cannot be scheduled and do not
+allocate an unawaited coroutine.
+
+ACS warmup consumption occurs inside retained startup. Timed-out or cancelled
+consumption transfers disposal into the handler's retained cleanup set while
+cold-start fallback stays fast. Close joins disposal without cancelling it; a
+deadline failure quarantines it. Prepared connections have retained/shielded
+close and cannot be claimed after closing begins. Recorded warmup/disposal
+failures remain visible at stop even if cold-start fallback established a call.
+Warmup configuration primes the same async definition contract as cold startup.

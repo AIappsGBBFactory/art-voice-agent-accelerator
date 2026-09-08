@@ -137,18 +137,24 @@ class VoiceLivePreparedConnection:
     session_prepared: bool = False
     created_at: float = field(default_factory=time.perf_counter)
     claimed: bool = False
+    _close_task: asyncio.Task | None = field(default=None, init=False, repr=False)
 
     def matches(self, model: str, byom_query: dict[str, str] | None) -> bool:
         return self.model == model and (self.byom_query or None) == (byom_query or None)
 
     def claim(self) -> None:
+        if self._close_task is not None:
+            raise RuntimeError("Cannot claim a closing prepared VoiceLive connection")
         self.claimed = True
 
     async def close(self) -> None:
         if self.claimed:
             return
-        with contextlib.suppress(Exception):
-            await self.connection_cm.__aexit__(None, None, None)
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(
+                self.connection_cm.__aexit__(None, None, None), name="voicelive-prepared-close"
+            )
+        await asyncio.shield(self._close_task)
 
 
 def _resolve_agent_label(agent_name: str | None) -> str | None:
@@ -943,6 +949,7 @@ class VoiceLiveSDKHandler:
 
         # Track pending background tasks at instance level to avoid memory leaks
         self._pending_background_tasks: set[asyncio.Task] = set()
+        self._warmup_cleanup_tasks: set[asyncio.Task] = set()
 
         # Pass background task function to messenger for tracked task creation
         self._messenger = _SessionMessenger(
@@ -1113,6 +1120,12 @@ class VoiceLiveSDKHandler:
         ) as span:
             start_ts = time.perf_counter()
             try:
+                if self._transport == "acs" and self._prepared_connection is None:
+                    self._prepared_connection = await consume_voicelive_call_warmup(
+                        self.websocket.app.state,
+                        call_connection_id=self.call_connection_id,
+                        cleanup_tasks=self._warmup_cleanup_tasks,
+                    )
                 self._settings = get_settings()
                 connection_options = {
                     "max_msg_size": self._settings.ws_max_msg_size,
@@ -1635,6 +1648,10 @@ class VoiceLiveSDKHandler:
                 await self._orchestrator.cancel_and_join_tasks()
         except Exception as exc:
             errors.append(exc)
+        try:
+            await cancel_and_join(self._warmup_cleanup_tasks, cancel=False)
+        except Exception as exc:
+            errors.append(exc)
         quiesced = not errors
         memo = getattr(self.websocket.state, "cm", None) if self.websocket else None
         redis = getattr(self.websocket.app.state, "redis", None) if self.websocket else None
@@ -1678,6 +1695,7 @@ class VoiceLiveSDKHandler:
                 self._orchestrator = None
             self._event_task = None
             self._pending_background_tasks.clear()
+            self._warmup_cleanup_tasks.clear()
             self._credential = None
             self._messenger = None
         if errors:
@@ -2808,9 +2826,10 @@ async def consume_voicelive_call_warmup(
     app_state: Any,
     *,
     call_connection_id: str | None,
+    cleanup_tasks: set[asyncio.Task],
     timeout_sec: float = _VOICELIVE_WARMUP_WAIT_SECONDS,
 ) -> VoiceLivePreparedConnection | None:
-    """Return a pending warm VoiceLive connection, or None for cold-start fallback."""
+    """Consume warmup; abandoned work remains in the caller's cleanup task set."""
     if not app_state or not call_connection_id:
         return None
 
@@ -2821,24 +2840,38 @@ async def consume_voicelive_call_warmup(
     if not task:
         return None
 
+    def retain_disposal() -> None:
+        async def dispose() -> None:
+            # Retained cleanup: the handler joins it without cancellation.
+            prepared = await task
+            if prepared:
+                await prepared.close()
+
+        disposing = asyncio.create_task(dispose(), name="voicelive-warmup-disposal")
+        cleanup_tasks.add(disposing)
+
+        def observe(done: asyncio.Task) -> None:
+            if not done.cancelled() and done.exception() is not None:
+                logger.error("VoiceLive warmup disposal failed: %s", done.exception())
+
+        disposing.add_done_callback(observe)
+
     try:
         return await asyncio.wait_for(asyncio.shield(task), timeout=timeout_sec)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.debug(
             "VoiceLive warmup not ready after %.0fms | call=%s",
             timeout_sec * 1000,
             call_connection_id,
         )
 
-        async def _close_when_ready(done: asyncio.Task) -> None:
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                prepared = done.result()
-                if prepared:
-                    await prepared.close()
-
-        task.add_done_callback(lambda done: asyncio.create_task(_close_when_ready(done)))
+        retain_disposal()
         return None
+    except asyncio.CancelledError:
+        retain_disposal()
+        raise
     except Exception:
+        cleanup_tasks.add(task)
         logger.debug("VoiceLive warmup consume failed | call=%s", call_connection_id, exc_info=True)
         return None
 
@@ -2907,7 +2940,7 @@ async def _prepare_voicelive_call_warmup(
             prepared.session_prepared,
         )
         return prepared
-    except Exception:
+    except BaseException:
         await prepared.close()
         raise
 
@@ -2920,6 +2953,9 @@ async def _resolve_voicelive_warmup_config(
     settings: Any,
     user_email: str | None,
 ) -> tuple[dict[str, Any], str, str, dict[str, str] | None, dict[str, Any]]:
+    from apps.artagent.backend.src.orchestration.session_memory import prime_session_definitions
+
+    await prime_session_definitions(session_id)
     if app_state and getattr(app_state, "unified_agents", None):
         agents = app_state.unified_agents
     else:

@@ -1129,16 +1129,12 @@ class LiveOrchestrator:
             except Exception:
                 logger.warning("Failed to update session after scenario change", exc_info=True)
 
-        # Schedule on the event loop
         try:
-            loop = asyncio.get_running_loop()
-            asyncio.run_coroutine_threadsafe(_do_update(), loop)
+            asyncio.get_running_loop()
         except RuntimeError:
-            # No running loop - try create_task if we're in an async context
-            try:
-                self._track_owned(_do_update())
-            except RuntimeError:
-                logger.warning("Cannot schedule session update - no event loop available")
+            logger.warning("Cannot schedule session update - no event loop available")
+            return
+        self._track_owned(_do_update())
 
     async def _inject_conversation_history(self) -> None:
         """

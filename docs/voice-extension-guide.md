@@ -86,6 +86,14 @@ logs the native failure and then reports an OK cleanup span. Local registry
 removal checks the expected lifetime so an old close cannot remove a replacement
 connection's context. This is an in-process cleanup guard, not distributed CAS.
 
+VoiceLive scenario updates must use the orchestrator's owned task set. ACS
+warmup consumption belongs inside retained startup, not before the handler
+exists. Its consumer must supply an owned cleanup set; abandoned warmups are
+disposed there and joined without cancellation before final persistence.
+Completed disposal failures are retained until close observes them. Unconsumed
+preconnection warmups still live in the existing application warmup registry;
+this does not introduce a new application-wide shutdown coordinator.
+
 ## Removed paths and retained compatibility
 
 | Removed path | Consumer/behavior replacement |

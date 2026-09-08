@@ -220,3 +220,30 @@ async def test_greeting_cancel_transport_failure_does_not_claim_a_sent_response(
     with pytest.raises(RuntimeError, match="transport closed"):
         await trigger_voicelive_response(UnifiedAgent(name="Agent"), conn, say="Welcome")
     conn.send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_live_scenario_update_is_owned_and_joined_before_close(monkeypatch):
+    from apps.artagent.backend.voice.voicelive import session
+
+    orch, _ = _make_orchestrator()
+    entered, cancelled, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+    async def apply(*args, **kwargs):
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+            await release.wait()
+
+    monkeypatch.setattr(session, "apply_voicelive_session", apply)
+    orch._schedule_scenario_session_update()
+    await entered.wait()
+    assert orch._owned_tasks
+    closing = asyncio.create_task(orch.cancel_and_join_tasks())
+    await asyncio.wait_for(cancelled.wait(), 1)
+    assert not closing.done()
+    release.set()
+    await asyncio.wait_for(closing, 1)
+    assert not orch._owned_tasks

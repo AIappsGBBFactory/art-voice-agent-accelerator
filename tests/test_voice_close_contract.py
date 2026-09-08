@@ -282,6 +282,154 @@ async def test_partial_close_does_not_unregister_a_replacement_lifetime(kind, mo
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("abandonment", ["timeout", "cancelled"])
+async def test_abandoned_warmup_remains_owned_until_prepared_socket_closes(abandonment):
+    from apps.artagent.backend.voice.voicelive.handler import (
+        VoiceLivePreparedConnection,
+        consume_voicelive_call_warmup,
+    )
+
+    handler, memo, app = await build_handler("voicelive")
+    prepared_ready, close_entered, close_release = (
+        asyncio.Event(),
+        asyncio.Event(),
+        asyncio.Event(),
+    )
+
+    async def exit_connection(*args):
+        close_entered.set()
+        await close_release.wait()
+
+    close = AsyncMock(side_effect=exit_connection)
+    prepared = VoiceLivePreparedConnection(
+        connection=object(),
+        connection_cm=SimpleNamespace(__aexit__=close),
+        credential=object(),
+        settings=object(),
+        model="gpt-realtime",
+    )
+
+    async def prepare():
+        await prepared_ready.wait()
+        return prepared
+
+    warmup = asyncio.create_task(prepare())
+    app.voicelive_warmups = {"call": warmup}
+    consuming = asyncio.create_task(
+        consume_voicelive_call_warmup(
+            app,
+            call_connection_id="call",
+            cleanup_tasks=handler._warmup_cleanup_tasks,
+            timeout_sec=0.001 if abandonment == "timeout" else 1,
+        )
+    )
+    if abandonment == "cancelled":
+        await asyncio.sleep(0)
+        consuming.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await consuming
+    else:
+        assert await consuming is None
+    assert len(handler._warmup_cleanup_tasks) == 1
+    closing = asyncio.create_task(handler.stop())
+    await asyncio.sleep(0)
+    assert not closing.done()
+    assert memo.actions == []
+    prepared_ready.set()
+    await asyncio.wait_for(close_entered.wait(), 1)
+    assert not closing.done()
+    assert memo.actions == []
+    close_release.set()
+    await asyncio.wait_for(closing, 1)
+    assert memo.actions == [("snapshot", None), ("flush", None)]
+    close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_completed_warmup_close_failure_is_not_forgotten():
+    from apps.artagent.backend.voice.voicelive.handler import VoiceLivePreparedConnection
+
+    handler, memo, _ = await build_handler("voicelive")
+    close = AsyncMock(side_effect=RuntimeError("prepared close failed"))
+    prepared = VoiceLivePreparedConnection(
+        connection=object(),
+        connection_cm=SimpleNamespace(__aexit__=close),
+        credential=object(),
+        settings=object(),
+        model="gpt-realtime",
+    )
+    disposing = asyncio.create_task(prepared.close())
+    handler._warmup_cleanup_tasks.add(disposing)
+    with pytest.raises(RuntimeError, match="prepared close failed") as original:
+        await disposing
+    with pytest.raises(ExceptionGroup):
+        await handler.stop()
+    assert memo.actions == [("flush", None)]
+    with pytest.raises(RuntimeError) as repeated:
+        await prepared.close()
+    assert repeated.value is original.value
+    close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_prepared_close_waits_for_same_result_after_caller_cancellation():
+    from apps.artagent.backend.voice.voicelive.handler import VoiceLivePreparedConnection
+
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def exit_connection(*args):
+        entered.set()
+        await release.wait()
+
+    close = AsyncMock(side_effect=exit_connection)
+    prepared = VoiceLivePreparedConnection(
+        connection=object(),
+        connection_cm=SimpleNamespace(__aexit__=close),
+        credential=object(),
+        settings=object(),
+        model="gpt-realtime",
+    )
+    first = asyncio.create_task(prepared.close())
+    await entered.wait()
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    with pytest.raises(RuntimeError, match="closing"):
+        prepared.claim()
+    second = asyncio.create_task(prepared.close())
+    await asyncio.sleep(0)
+    assert not second.done()
+    release.set()
+    await asyncio.wait_for(second, 1)
+    close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_unacknowledged_warmup_cleanup_is_retained_without_cancellation(monkeypatch):
+    from functools import partial
+
+    from apps.artagent.backend.voice.voicelive import handler as voicelive
+
+    handler, memo, _ = await build_handler("voicelive")
+    release = asyncio.Event()
+    task = asyncio.create_task(release.wait())
+    handler._warmup_cleanup_tasks.add(task)
+    monkeypatch.setattr(
+        voicelive, "cancel_and_join", partial(voicelive.cancel_and_join, timeout=0.01)
+    )
+    try:
+        with pytest.raises(ExceptionGroup):
+            await handler.stop()
+        assert not task.done()
+        assert task.cancelling() == 0
+        assert task in handler._warmup_cleanup_tasks
+        assert memo.actions == [("flush", None)]
+    finally:
+        release.set()
+        await task
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["cascade", "voicelive", "genesys"])
 async def test_unacknowledged_producer_skips_snapshot_but_drains_and_closes_socket(
     kind, monkeypatch
