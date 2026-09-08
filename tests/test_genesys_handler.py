@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -49,6 +50,10 @@ def _drain_queue(handler: GenesysVoiceLiveHandler) -> list[object]:
             return items
 
 
+def _sent_types(ws: _FakeWebSocket) -> list[str]:
+    return [json.loads(payload)["type"] for payload in ws.sent_text]
+
+
 class _FakeVoiceLiveConnection:
     def __init__(self) -> None:
         self.input_audio_buffer = SimpleNamespace(append=AsyncMock())
@@ -58,6 +63,20 @@ class _FakeVoiceLiveConnection:
 
     async def __anext__(self):
         raise StopAsyncIteration
+
+
+class _EventVoiceLiveConnection(_FakeVoiceLiveConnection):
+    def __init__(self, events: list[object]) -> None:
+        super().__init__()
+        self._events = iter(events)
+
+    async def __anext__(self):
+        try:
+            event = next(self._events)
+        except StopIteration as exc:
+            raise StopAsyncIteration from exc
+        await asyncio.sleep(0)
+        return event
 
 
 class _FakeConnectionManager:
@@ -114,7 +133,7 @@ async def test_barge_in_invalidates_queued_audio_and_drops_late_delta() -> None:
     )
 
     assert handler._pending_audio_bytes == 0
-    assert handler._audio_accum == bytearray()
+    assert handler._response_audio_buffers == {}
 
     await handler._handle_voicelive_event(
         SimpleNamespace(
@@ -125,7 +144,7 @@ async def test_barge_in_invalidates_queued_audio_and_drops_late_delta() -> None:
         ServerEventType.RESPONSE_AUDIO_DELTA,
     )
 
-    assert handler._audio_accum_response_id == "resp-new"
+    assert "resp-new" in handler._response_audio_buffers
     assert handler._pending_audio_bytes > 0
 
 
@@ -143,8 +162,7 @@ async def test_unidentified_audio_delta_is_dropped_instead_of_reusing_current_re
     )
 
     assert handler._pending_audio_bytes == 0
-    assert handler._audio_accum == bytearray()
-    assert handler._audio_accum_response_id is None
+    assert handler._response_audio_buffers == {}
 
 
 @pytest.mark.asyncio
@@ -172,6 +190,44 @@ async def test_control_messages_keep_monotonic_seq_after_audio_invalidation() ->
 
 
 @pytest.mark.asyncio
+async def test_event_loop_reads_speech_started_before_done_audio_drain() -> None:
+    handler, ws = _make_handler()
+    handler._AUDIO_PACE_MS = 60_000
+    await handler.start()
+
+    handler._connection = _EventVoiceLiveConnection(
+        [
+            SimpleNamespace(
+                type=ServerEventType.RESPONSE_AUDIO_DELTA,
+                response_id="resp-old",
+                delta=b"\x00\x00\x01\x00\x02\x00",
+            ),
+            SimpleNamespace(
+                type=ServerEventType.RESPONSE_AUDIO_DONE,
+                response_id="resp-old",
+            ),
+            SimpleNamespace(type=ServerEventType.INPUT_AUDIO_BUFFER_SPEECH_STARTED),
+            SimpleNamespace(
+                type=ServerEventType.RESPONSE_AUDIO_DELTA,
+                response_id="resp-old",
+                delta=b"\x03\x00\x04\x00\x05\x00",
+            ),
+        ]
+    )
+    handler._orchestrator = _FakeLiveOrchestrator()
+
+    await handler._event_loop()
+    await asyncio.sleep(0)
+    await handler.stop()
+
+    assert "resp-old" in handler._cancelled_response_ids or handler._cancelled_response_ids == set()
+    assert ws.sent_bytes == []
+    assert "event" in _sent_types(ws)
+    assert handler._pending_audio_bytes == 0
+    assert handler._response_audio_buffers == {}
+
+
+@pytest.mark.asyncio
 async def test_stop_cleans_up_pacer_writer_and_partial_runtime() -> None:
     handler, ws = _make_handler()
     await handler.start()
@@ -192,6 +248,72 @@ async def test_stop_cleans_up_pacer_writer_and_partial_runtime() -> None:
     assert handler._orchestrator is None
     assert handler._pending_audio_bytes == 0
     assert ws.sent_bytes == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("deployment_id", "profile"),
+    [
+        ("gpt-realtime", "byom-azure-openai-chat-completion"),
+        ("gpt-realtime-mini", "byom-azure-openai-chat-completion"),
+        ("phi4-mm-realtime", "byom-azure-openai-chat-completion"),
+    ],
+)
+async def test_connect_drops_conflicting_byom_query_before_connect(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    deployment_id: str,
+    profile: str,
+) -> None:
+    from apps.artagent.backend.voice.genesys import handler as genesys_handler
+    from apps.artagent.backend.voice.voicelive import handler as voicelive_handler
+
+    handler, _ = _make_handler()
+    captured: dict[str, object] = {}
+    fake_connection = _FakeVoiceLiveConnection()
+    fake_cm = _FakeConnectionManager(fake_connection)
+    fake_orchestrator = _FakeLiveOrchestrator()
+
+    class _Agent:
+        def get_model_for_mode(self, mode: str) -> ModelConfig:
+            assert mode == "voicelive"
+            return ModelConfig(deployment_id=deployment_id)
+
+        def get_byom_query(self) -> dict[str, str]:
+            return {"profile": profile}
+
+    monkeypatch.setattr(
+        genesys_handler,
+        "get_settings",
+        lambda: SimpleNamespace(
+            ws_max_msg_size=1024,
+            ws_heartbeat=30,
+            ws_timeout=10,
+            azure_voicelive_endpoint="wss://voice.example",
+            azure_voicelive_model="gpt-realtime",
+            has_api_key_auth=False,
+        ),
+    )
+    monkeypatch.setattr(
+        handler,
+        "_resolve_agents",
+        AsyncMock(return_value=({"StartAgent": _Agent()}, SimpleNamespace(), "StartAgent", {})),
+    )
+    monkeypatch.setattr(
+        voicelive_handler.VoiceLiveSDKHandler,
+        "_build_credential",
+        AsyncMock(return_value=object()),
+    )
+    monkeypatch.setattr(genesys_handler, "connect", lambda **kwargs: captured.update(kwargs) or fake_cm)
+    monkeypatch.setattr(genesys_handler, "LiveOrchestrator", lambda *args, **kwargs: fake_orchestrator)
+    monkeypatch.setattr(genesys_handler, "register_voicelive_orchestrator", Mock())
+    monkeypatch.setattr(genesys_handler, "unregister_voicelive_orchestrator", Mock())
+
+    await handler._connect_voicelive()
+    await handler.stop()
+
+    assert captured.get("query") is None
+    assert "byom_profile_model_conflict" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -267,6 +389,40 @@ async def test_connect_passes_byom_query_and_shared_credential_helper(
         "profile": "byom-azure-openai-chat-completion",
         "foundry-resource-override": "resource-1",
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("done_event_type", [ServerEventType.RESPONSE_AUDIO_DONE, ServerEventType.RESPONSE_DONE])
+async def test_done_flush_failure_sends_single_disconnect_and_cleans_up(
+    done_event_type: ServerEventType,
+) -> None:
+    handler, ws = _make_handler()
+    await handler.start()
+    handler._session_opened = True
+    handler._outbound_audio_response_id = "resp-bad"
+    handler._outbound_audio_encoder = SimpleNamespace(
+        flush=Mock(side_effect=ValueError("incomplete sample byte pair"))
+    )
+    handler._active_response_ids.add("resp-bad")
+    handler._current_response_id = "resp-bad"
+
+    event = SimpleNamespace(type=done_event_type, response_id="resp-bad")
+    if done_event_type == ServerEventType.RESPONSE_DONE:
+        event = SimpleNamespace(
+            type=done_event_type,
+            response=SimpleNamespace(id="resp-bad"),
+        )
+
+    await handler._handle_voicelive_event(event, done_event_type)
+    assert handler._terminal_shutdown_task is not None
+    await asyncio.wait_for(handler._terminal_shutdown_task, timeout=1.0)
+
+    disconnects = [json.loads(payload) for payload in ws.sent_text if json.loads(payload)["type"] == "disconnect"]
+    assert len(disconnects) == 1
+    assert handler._writer_task is None
+    assert handler._outbound_audio_response_id is None
+    assert handler._connection is None
+    assert handler._pending_audio_bytes == 0
 
 
 @pytest.mark.asyncio
