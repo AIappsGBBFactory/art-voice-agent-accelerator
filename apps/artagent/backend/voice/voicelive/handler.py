@@ -1260,17 +1260,13 @@ class VoiceLiveSDKHandler:
                             self.session_id,
                         )
 
-                    agents, effective_start_agent, effective_handoff_map = (
-                        build_effective_registry(
-                            orchestrator_config,
-                            base_agents=agents,
-                            session_agent=session_agent,
-                            app_state_handoff_map=getattr(app_state, "handoff_map", None),
-                        )
+                    agents, effective_start_agent, effective_handoff_map = build_effective_registry(
+                        orchestrator_config,
+                        base_agents=agents,
+                        session_agent=session_agent,
+                        app_state_handoff_map=getattr(app_state, "handoff_map", None),
                     )
-                    if not session_agent and not getattr(
-                        orchestrator_config, "start_agent", None
-                    ):
+                    if not session_agent and not getattr(orchestrator_config, "start_agent", None):
                         effective_start_agent = (
                             getattr(self._settings, "start_agent", None) or DEFAULT_START_AGENT
                         )
@@ -1675,6 +1671,16 @@ class VoiceLiveSDKHandler:
                     pass
                 finally:
                     self._event_task = None
+
+            # Cancel and join the orchestrator's owned tasks (business-tool tasks,
+            # batch finalizers, throttled context updates) BEFORE closing the
+            # connection, so a task mid-way through conn.response.create() is torn
+            # down first and cannot race the socket close.
+            if self._orchestrator and hasattr(self._orchestrator, "cancel_and_join_tasks"):
+                try:
+                    await self._orchestrator.cancel_and_join_tasks()
+                except Exception:
+                    logger.debug("Failed to cancel orchestrator tasks", exc_info=True)
 
             if self._connection_cm:
                 try:

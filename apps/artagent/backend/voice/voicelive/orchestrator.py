@@ -41,6 +41,7 @@ import hashlib
 import json
 import time
 from collections import deque
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 # Self-contained tool registry (no legacy vlagent dependency)
@@ -67,6 +68,7 @@ from azure.ai.voicelive.models import (
     FunctionCallOutputItem,
     InputTextContentPart,
     OutputTextContentPart,
+    ResponseStatus,
     ServerEventType,
     UserMessageItem,
 )
@@ -115,6 +117,34 @@ GREETING_FALLBACK_DELAY_S = 1.5
 # logged as errors or surfaced to the UI. Shared with the handler so both layers
 # suppress exactly the same set.
 _BENIGN_ERROR_CODES = BENIGN_VOICELIVE_ERROR_CODES
+
+
+@dataclass
+class _ToolBatch:
+    """One response's worth of *business* tool calls, resolved off the reader.
+
+    VoiceLive delivers every server event on a single ``async for`` stream. If a
+    slow business tool is awaited inline on that stream, later speech / audio /
+    interrupt events cannot be intaken until the tool returns — head-of-line
+    blocking on the whole call. Business tools are therefore offloaded to owned
+    tasks that append their ``(call_id, output_json)`` result here, and a single
+    finalizer awaits them once ``response.done`` has been seen.
+
+    ``epoch`` freezes the response-generation counter at batch creation. If the
+    live :attr:`LiveOrchestrator._response_epoch` has moved on by the time the
+    finalizer runs (a barge-in, handoff, or a cancelled ``response.done``), the
+    spoken continuation is stale and is dropped — the model's next turn already
+    superseded it. The tools' *durable* effects (memo writes, ``notify_tool_end``)
+    have already run inside the tasks and are intentionally preserved.
+    """
+
+    epoch: int
+    response_id: str | None = None
+    tasks: set[asyncio.Task] = field(default_factory=set)
+    outputs: list[tuple[str, str]] = field(default_factory=list)
+    response_done: bool = False
+    finalized: bool = False
+    had_tool_calls: bool = False
 
 
 def _voice_identity(voice: Any) -> str | None:
@@ -470,6 +500,24 @@ class LiveOrchestrator:
         # When model makes multiple tool calls, we queue results and trigger ONE response
         self._pending_tool_outputs: list[tuple[str, str]] = []  # [(call_id, output_json), ...]
         self._response_had_tool_calls: bool = False
+
+        # ── Response epoch + off-reader tool batching (F12) ──────────────────
+        # `_response_epoch` monotonically counts response *generations*. It is
+        # bumped whenever the in-flight model response is invalidated (barge-in,
+        # handoff/transfer cancel, session-updated cancel, a cancelled
+        # response.done). A tool batch captures the epoch at creation; if the
+        # epoch has advanced by the time its finalizer runs, the spoken
+        # continuation is stale and dropped rather than restarting speech.
+        self._response_epoch: int = 0
+        # The batch currently accumulating business-tool outputs for the active
+        # response, or None between responses. Detached (set to None) the moment
+        # response.done schedules its finalizer, so overlapping responses never
+        # mix outputs.
+        self._active_tool_batch: _ToolBatch | None = None
+        # Every task this orchestrator owns (business-tool tasks, batch
+        # finalizers, throttled context updates). Cancelled/joined on cleanup so
+        # nothing keeps touching the connection after teardown begins.
+        self._owned_tasks: set[asyncio.Task] = set()
 
         # MemoManager for session state continuity (consistent with CascadeOrchestratorAdapter)
         self._memo_manager: MemoManager | None = memo_manager
@@ -856,6 +904,15 @@ class LiveOrchestrator:
         """
         # Cancel all pending greeting tasks
         self._cancel_pending_greeting_tasks()
+
+        # Cancel owned tasks (business-tool tasks, batch finalizers, throttled
+        # context updates). This is the synchronous safety net; the handler's
+        # stop() awaits cancel_and_join_tasks() first so tasks that touch the
+        # connection are fully joined before it is closed.
+        for task in list(self._owned_tasks):
+            task.cancel()
+        self._owned_tasks.clear()
+        self._active_tool_batch = None
 
         # Clear agents registry reference
         self.agents = {}
@@ -1494,14 +1551,17 @@ class LiveOrchestrator:
         self._refresh_session_context()
 
         # Schedule the actual session update as a background task
-        # This prevents blocking the event loop
+        # This prevents blocking the event loop. Tracked so cleanup() cancels it
+        # rather than leaving a task that touches the connection after teardown.
         async def _do_session_update():
             try:
                 await self._update_session_context()
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 logger.debug("Background session update failed", exc_info=True)
 
-        asyncio.create_task(_do_session_update())
+        self._track_owned(_do_session_update())
 
     def _schedule_background_sync(self) -> None:
         """
@@ -1654,7 +1714,21 @@ class LiveOrchestrator:
             )
 
     async def handle_event(self, event):
-        """Route VoiceLive events to audio + handoff logic."""
+        """Route VoiceLive events to audio + handoff logic.
+
+        This coroutine runs on the single SDK reader stream, so it must return
+        quickly. Business tool execution is offloaded off-reader via
+        :meth:`_dispatch_tool_call`. Two categories still run inline and can
+        therefore stall intake while they await:
+
+        * **Handoff / transfer tools** — control operations whose ordering vs.
+          the session/response mutations they trigger must be preserved. A slow
+          handoff/transfer tool blocks intake for its duration. This is a known,
+          honestly-documented limitation, not a silently accepted one; isolating
+          it needs a coordinated response-ordering contract with the shared
+          handoff owner and is out of this workstream's scope.
+        * **Session/audio control events** — short by construction.
+        """
         et = event.type
 
         if et == ServerEventType.SESSION_UPDATED:
@@ -1683,7 +1757,12 @@ class LiveOrchestrator:
             await self._handle_transcript_done(event)
 
         elif et == ServerEventType.RESPONSE_FUNCTION_CALL_ARGUMENTS_DONE:
-            await self._execute_tool_call(
+            # Route through the dispatcher, NOT inline execution: business tools
+            # are offloaded to owned tasks so a slow tool cannot block intake of
+            # later speech/audio/interrupt events. Handoff/transfer stay inline to
+            # preserve control ordering (see _dispatch_tool_call / handle_event
+            # docstring for the intake-stall caveat).
+            await self._dispatch_tool_call(
                 call_id=getattr(event, "call_id", None),
                 name=getattr(event, "name", None),
                 args_json=getattr(event, "arguments", None),
@@ -1958,6 +2037,9 @@ class LiveOrchestrator:
         # server error, which the handler treats as a hard error (StopAudio +
         # UI error) and breaks the next turn. Same guard as the barge-in path.
         if self._active_response_id:
+            # A genuine reconfigure that cancels the in-flight response also
+            # invalidates any pending tool continuation for it.
+            self._bump_response_epoch("session_updated_cancel")
             try:
                 await self.conn.response.cancel()
             except Exception:
@@ -1986,6 +2068,12 @@ class LiveOrchestrator:
     async def _handle_speech_started(self) -> None:
         """Handle user speech started (barge-in)."""
         logger.debug("User speech started → cancel current response")
+
+        # A new user utterance supersedes any tool continuation still pending for
+        # the previous response: bump the epoch so a batch finalizer that has not
+        # yet run drops its (now stale) spoken continuation instead of talking
+        # over the user. Durable tool effects already applied are untouched.
+        self._bump_response_epoch("barge_in")
 
         # Sync state to MemoManager in background - don't block barge-in response
         # This ensures any partial response context is preserved
@@ -2140,12 +2228,187 @@ class LiveOrchestrator:
                 if response_id and response_id == self._active_response_id:
                     self._active_response_id = None
 
+    def _track_owned(self, coro) -> asyncio.Task:
+        """Spawn a task this orchestrator owns and will cancel/join on cleanup.
+
+        Used for work scheduled off the SDK reader (business-tool tasks, batch
+        finalizers, throttled context updates) so teardown can guarantee nothing
+        keeps touching the connection after ``stop()`` begins.
+        """
+        task = asyncio.create_task(coro)
+        self._owned_tasks.add(task)
+        task.add_done_callback(self._owned_tasks.discard)
+        return task
+
+    def _bump_response_epoch(self, reason: str) -> None:
+        """Invalidate the in-flight response generation.
+
+        Any tool batch created before this call will have its spoken
+        continuation dropped by the finalizer (its captured epoch no longer
+        matches). Durable tool effects already applied are untouched.
+        """
+        self._response_epoch += 1
+        logger.debug(
+            "[ToolBatch] Response epoch bumped → %d | reason=%s", self._response_epoch, reason
+        )
+
+    async def cancel_and_join_tasks(self) -> None:
+        """Cancel and await every owned task. Called by the handler during stop.
+
+        Invoked *before* the handler closes the connection so a task mid-way
+        through ``conn.response.create()`` is torn down first and cannot race the
+        socket close. Safe to call from a synchronous ``cleanup()`` as well,
+        which cancels without awaiting.
+        """
+        tasks = list(self._owned_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._owned_tasks.clear()
+        self._active_tool_batch = None
+
+    async def _dispatch_tool_call(
+        self, call_id: str | None, name: str | None, args_json: str | None
+    ) -> None:
+        """Route a completed function call, keeping the SDK reader responsive.
+
+        Handoff and transfer tools are *control* operations whose ordering
+        relative to the surrounding session/response mutations must be preserved,
+        so they run inline on the reader as before. (This means a slow handoff or
+        transfer tool still stalls intake — a known limitation documented on
+        :meth:`handle_event`; it is not silently worked around here.)
+
+        Business tools are offloaded to an owned task that appends its result to
+        the active batch, so a slow tool never blocks later speech / audio /
+        interrupt events. All business tools of one response share a single
+        batch; the finalizer scheduled at ``response.done`` emits exactly one
+        continuation for the whole batch.
+        """
+        if not name or not call_id:
+            logger.warning("Missing call_id or name for function call")
+            return
+
+        is_control = self.handoff_service.is_handoff(name) or name in TRANSFER_TOOL_NAMES
+        if is_control:
+            await self._execute_tool_call(call_id=call_id, name=name, args_json=args_json)
+            return
+
+        batch = self._active_tool_batch
+        if batch is None:
+            batch = _ToolBatch(epoch=self._response_epoch, response_id=self._active_response_id)
+            self._active_tool_batch = batch
+        batch.had_tool_calls = True
+        batch.tasks.add(
+            self._track_owned(self._business_tool_task(batch, call_id, name, args_json))
+        )
+
+    async def _business_tool_task(
+        self, batch: _ToolBatch, call_id: str, name: str, args_json: str | None
+    ) -> None:
+        """Run one business tool off the reader, recording its output on the batch.
+
+        Failures are already handled inside :meth:`_execute_tool_call` (which
+        reports a tool error back to the model rather than raising); this wrapper
+        only guards against an unexpected escape so a single tool can never kill
+        the finalizer's ``gather``.
+        """
+        try:
+            await self._execute_tool_call(
+                call_id=call_id, name=name, args_json=args_json, batch=batch
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Business tool task crashed | tool=%s call_id=%s", name, call_id)
+
+    async def _finalize_tool_batch(self, batch: _ToolBatch) -> None:
+        """Await all business tools of one response, then emit one continuation.
+
+        Runs off the reader. After the tool barrier, the batch's captured epoch
+        is re-checked against the live epoch: if the response was superseded
+        (barge-in, handoff, cancelled response.done) the continuation is dropped
+        — the durable tool effects already ran inside the tasks, so only the now
+        stale *spoken* turn is discarded. Otherwise the collected outputs are
+        flushed and a single ``response.create()`` continues the conversation.
+        """
+        try:
+            if batch.tasks:
+                await asyncio.gather(*batch.tasks, return_exceptions=True)
+
+            if batch.epoch != self._response_epoch:
+                logger.info(
+                    "[ToolBatch] Dropping stale continuation | batch_epoch=%d current=%d outputs=%d",
+                    batch.epoch,
+                    self._response_epoch,
+                    len(batch.outputs),
+                )
+                return
+
+            await self._flush_tool_outputs_and_continue(batch.outputs)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("[ToolBatch] Finalizer failed", exc_info=True)
+        finally:
+            batch.finalized = True
+
+    async def _flush_tool_outputs_and_continue(self, outputs: list[tuple[str, str]]) -> None:
+        """Create tool-output items, refresh context, and trigger ONE response.
+
+        Shared by the off-reader batch finalizer and the legacy inline path in
+        :meth:`_handle_response_done` (which serves direct-call tests). Emitting a
+        single ``response.create()`` for the whole batch is what prevents the
+        duplicate assistant turns a per-tool continuation would produce.
+        """
+        for call_id, output_json in outputs:
+            try:
+                output_item = FunctionCallOutputItem(call_id=call_id, output=output_json)
+                await self.conn.conversation.item.create(item=output_item)
+                logger.debug("Created function_call_output item for call_id=%s", call_id)
+            except Exception:
+                logger.warning(
+                    "Failed to create tool output item for call_id=%s", call_id, exc_info=True
+                )
+
+        # Update session context with collected information BEFORE response
+        await self._update_session_context()
+
+        # Advance turn_id once for all tool calls combined
+        if self.messenger:
+            self.messenger.advance_turn_for_tool()
+
+        with tracer.start_as_current_span(
+            "voicelive.response.create_batched",
+            kind=trace.SpanKind.SERVER,
+            attributes=create_service_dependency_attrs(
+                source_service="voicelive_orchestrator",
+                target_service="azure_voicelive",
+                call_connection_id=self.call_connection_id,
+                session_id=(
+                    getattr(self.messenger, "session_id", None) if self.messenger else None
+                ),
+            ),
+        ):
+            await self.conn.response.create()
+        logger.info("[Response Done] Triggered single response for batched tool outputs")
+
     async def _handle_response_done(self, event) -> None:
         """Handle response complete.
 
-        CRITICAL: When the model makes multiple tool calls in a single response,
-        each tool is executed but we defer response.create() until ALL tools finish.
-        This handler flushes pending tool outputs and triggers ONE response.
+        Two continuation paths converge here:
+
+        * **Off-reader batch (production):** business tools of this response were
+          offloaded to owned tasks and their outputs collect on
+          ``self._active_tool_batch``. We do NOT await them here — awaiting on the
+          SDK reader is exactly the head-of-line blocking F12 removes. Instead we
+          mark the batch done, bump the epoch if the service reported the response
+          CANCELLED (so the finalizer drops a stale continuation), schedule ONE
+          owned finalizer, detach the batch, and return immediately.
+        * **Legacy inline (direct-call tests):** when no batch exists but
+          ``_pending_tool_outputs`` were appended synchronously, flush them inline
+          exactly as before so the existing unit tests keep exercising the same
+          contract.
         """
         logger.debug("Response complete")
         response_id = self._response_id_from_event(event)
@@ -2156,53 +2419,34 @@ class LiveOrchestrator:
 
         self._emit_model_metrics(event)
 
-        # Flush pending tool outputs if any and trigger ONE model response
-        # This prevents duplicate messages when model makes multiple tool calls
-        if self._pending_tool_outputs:
+        # A CANCELLED response.done means the model turn was torn down (barge-in
+        # / cancel) — its tool continuation is stale. Bump the epoch BEFORE
+        # scheduling the finalizer so the finalizer's epoch re-check fails and it
+        # drops the spoken continuation (durable tool effects already ran).
+        response_obj = getattr(event, "response", None)
+        status = getattr(response_obj, "status", None) if response_obj else None
+        response_cancelled = status == ResponseStatus.CANCELLED or (
+            isinstance(status, str) and status.lower() == ResponseStatus.CANCELLED.value
+        )
+
+        batch = self._active_tool_batch
+        if batch is not None:
+            # Off-reader path: hand the batch to a finalizer and return; never
+            # await tools on the reader.
+            self._active_tool_batch = None
+            batch.response_done = True
+            if response_cancelled:
+                self._bump_response_epoch("response_done_cancelled")
+            self._track_owned(self._finalize_tool_batch(batch))
+        elif self._pending_tool_outputs:
+            # Legacy inline path (direct-call tests): flush synchronously.
             logger.debug(
-                "[Response Done] Flushing %d pending tool outputs",
+                "[Response Done] Flushing %d pending tool outputs (inline)",
                 len(self._pending_tool_outputs),
             )
-
-            # Create all tool output items
-            for call_id, output_json in self._pending_tool_outputs:
-                try:
-                    output_item = FunctionCallOutputItem(
-                        call_id=call_id,
-                        output=output_json,
-                    )
-                    await self.conn.conversation.item.create(item=output_item)
-                    logger.debug("Created function_call_output item for call_id=%s", call_id)
-                except Exception:
-                    logger.warning(
-                        "Failed to create tool output item for call_id=%s", call_id, exc_info=True
-                    )
-
-            # Clear pending outputs
+            outputs = self._pending_tool_outputs
             self._pending_tool_outputs = []
-
-            # Update session context with collected information BEFORE response
-            await self._update_session_context()
-
-            # Advance turn_id once for all tool calls combined
-            if self.messenger:
-                self.messenger.advance_turn_for_tool()
-
-            # Trigger ONE response for all tool outputs
-            with tracer.start_as_current_span(
-                "voicelive.response.create_batched",
-                kind=trace.SpanKind.SERVER,
-                attributes=create_service_dependency_attrs(
-                    source_service="voicelive_orchestrator",
-                    target_service="azure_voicelive",
-                    call_connection_id=self.call_connection_id,
-                    session_id=(
-                        getattr(self.messenger, "session_id", None) if self.messenger else None
-                    ),
-                ),
-            ):
-                await self.conn.response.create()
-            logger.info("[Response Done] Triggered single response for batched tool outputs")
+            await self._flush_tool_outputs_and_continue(outputs)
 
         # Reset the tool calls flag
         self._response_had_tool_calls = False
@@ -2434,12 +2678,25 @@ class LiveOrchestrator:
     # ═══════════════════════════════════════════════════════════════════════════
 
     async def _execute_tool_call(
-        self, call_id: str | None, name: str | None, args_json: str | None
+        self,
+        call_id: str | None,
+        name: str | None,
+        args_json: str | None,
+        *,
+        batch: _ToolBatch | None = None,
     ) -> bool:
         """
         Execute tool call via shared tool registry and send result back to model.
 
         Returns True if this was a handoff (agent switch), False otherwise.
+
+        ``batch`` is supplied when the caller offloaded a *business* tool to an
+        owned task (the production F12 path): the tool's output is appended to
+        ``batch.outputs`` instead of ``self._pending_tool_outputs``, so the batch
+        finalizer emits one continuation for the whole response. When ``batch`` is
+        None (direct-call tests, and the inline handoff/transfer control path) the
+        legacy ``_pending_tool_outputs`` list is used and remains flushed inline by
+        :meth:`_handle_response_done`.
         """
         if not name or not call_id:
             logger.warning("Missing call_id or name for function call")
@@ -2729,6 +2986,7 @@ class LiveOrchestrator:
                         logger.debug("Failed to emit transfer status update", exc_info=True)
                 try:
                     if result.get("should_interrupt_playback", True):
+                        self._bump_response_epoch("transfer_cancel")
                         await self.conn.response.cancel()
                 except Exception:
                     logger.debug("response.cancel() failed during transfer", exc_info=True)
@@ -2799,6 +3057,10 @@ class LiveOrchestrator:
                 # This prevents the old agent from saying "I'll connect you..." while
                 # the session switches to the new agent.
                 try:
+                    # The switch invalidates any pending tool continuation queued
+                    # under the old agent's response — bump the epoch so a batch
+                    # finalizer drops it rather than speaking as the new agent.
+                    self._bump_response_epoch("handoff_cancel")
                     await self.conn.response.cancel()
                     logger.debug("[Handoff] Cancelled old agent response before switch")
                 except Exception:
@@ -2978,14 +3240,22 @@ class LiveOrchestrator:
                 #
                 # CRITICAL: Do NOT call response.create() here! The model may have
                 # multiple tool calls in a single response. We queue all outputs and
-                # trigger ONE response in _handle_response_done().
+                # trigger ONE response via the batch finalizer (production) or
+                # _handle_response_done's inline flush (direct-call tests).
                 output_json = json.dumps(result)
-                self._pending_tool_outputs.append((call_id, output_json))
+                if batch is not None:
+                    # Offloaded path: append to the response-scoped batch so the
+                    # finalizer (which re-checks epoch) owns the continuation.
+                    batch.outputs.append((call_id, output_json))
+                    pending_count = len(batch.outputs)
+                else:
+                    self._pending_tool_outputs.append((call_id, output_json))
+                    pending_count = len(self._pending_tool_outputs)
                 self._response_had_tool_calls = True
                 logger.debug(
                     "[Business Tool] Queued output for call_id=%s | pending_count=%d",
                     call_id,
-                    len(self._pending_tool_outputs),
+                    pending_count,
                 )
 
                 if self.messenger:
