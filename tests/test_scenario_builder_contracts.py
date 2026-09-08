@@ -28,6 +28,7 @@ from apps.artagent.backend.registries.agentstore.base import (
     ModelConfig,
     UnifiedAgent,
 )
+from apps.artagent.backend.registries.scenariostore.loader import ScenarioConfig
 from apps.artagent.backend.src.orchestration.session_scenarios import (
     remove_session_scenario,
 )
@@ -43,6 +44,9 @@ class CountingRedisManager:
 
     def get_session_data(self, key: str) -> dict:
         return dict(self.store.get(key, {}))
+
+    async def get_session_data_async(self, key: str, *, raise_on_failure=False) -> dict:
+        return self.get_session_data(key)
 
     async def store_session_data_async(self, key: str, data: dict) -> bool:
         self.write_count += 1
@@ -128,6 +132,39 @@ def _clean_session(session_id):
     ss.set_redis_manager(None)
     remove_session_scenario(session_id)
     ss.set_redis_manager(None)
+
+
+@pytest.mark.asyncio
+async def test_direct_async_mutations_prime_all_scenarios_and_surface_write_failure(
+    session_id, monkeypatch
+):
+    import apps.artagent.backend.src.orchestration.session_agents as sa
+
+    redis = CountingRedisManager()
+    monkeypatch.setattr(sa, "_redis_manager", None)
+    monkeypatch.setattr(ss, "_redis_manager", redis)
+    monkeypatch.setattr(ss, "_session_scenarios", {})
+    monkeypatch.setattr(ss, "_active_scenario", {})
+    monkeypatch.setattr(ss, "_session_load_times", {})
+    await ss.set_session_scenario_async(session_id, ScenarioConfig(name="First"))
+    ss._session_scenarios.clear()
+    ss._active_scenario.clear()
+    ss._session_load_times.clear()
+    await ss.set_session_scenario_async(session_id, ScenarioConfig(name="Second"))
+    assert {scenario.name for scenario in ss.get_session_scenarios(session_id).values()} == {
+        "First",
+        "Second",
+    }
+    ss._session_scenarios.clear()
+    ss._active_scenario.clear()
+    ss._session_load_times.clear()
+    assert await ss.remove_session_scenario_async(session_id, "First", raise_on_failure=True)
+    assert [scenario.name for scenario in ss.get_session_scenarios(session_id).values()] == [
+        "Second"
+    ]
+    redis.fail_writes = True
+    with pytest.raises(RuntimeError):
+        await ss.set_active_scenario_async(session_id, "Second")
 
 
 class TestScenarioBuilderGenericHandoff:

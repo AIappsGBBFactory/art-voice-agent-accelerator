@@ -23,6 +23,7 @@ so they exercise the real server-side processing without standing up the app.
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -46,6 +47,7 @@ from apps.artagent.backend.src.orchestration.session_agents import (
     get_session_agent,
     remove_session_agent,
     set_redis_manager,
+    set_session_agent,
 )
 
 # =============================================================================
@@ -127,6 +129,9 @@ class CountingRedisManager:
     def get_session_data(self, key: str) -> dict:
         return dict(self.store.get(key, {}))
 
+    async def get_session_data_async(self, key: str, *, raise_on_failure=False) -> dict:
+        return self.get_session_data(key)
+
     async def store_session_data_async(self, key: str, data: dict) -> bool:
         self.write_count += 1
         if self.fail_writes:
@@ -154,6 +159,25 @@ def _clean_session(session_id):
 # =============================================================================
 # FRONTEND PAYLOAD -> PUT -> SESSION STATE
 # =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_update_preserves_server_provenance_and_distinct_models(session_id):
+    original = UnifiedAgent(name="My Bot", source_dir=Path("/configured/agents/my-bot"))
+    set_session_agent(session_id, original, persist=False)
+    payload = frontend_payload(cascade_deployment="gpt-4o-mini")
+    payload["model"] = {"deployment_id": "gpt-4o", "name": "legacy"}
+    payload["source_dir"] = "/untrusted/client/path"
+    response = await update_session_agent(
+        session_id, DynamicAgentConfig.model_validate(payload), stub_request()
+    )
+    saved = get_session_agent(session_id)
+    assert saved.source_dir == original.source_dir
+    assert saved.model.deployment_id == "gpt-4o"
+    assert saved.model.name == "legacy"
+    assert saved.cascade_model.deployment_id == "gpt-4o-mini"
+    assert saved.voicelive_model.deployment_id == "gpt-realtime"
+    assert response.config["source_dir"] == str(original.source_dir)
 
 
 class TestUpdatePathPersists:

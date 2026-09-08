@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from apps.artagent.backend.registries.definitions import decode_definition, definition_payload
 from jinja2 import Template
 from utils.ml_logging import get_logger
 
@@ -57,13 +58,9 @@ class HandoffConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> HandoffConfig:
         """Create HandoffConfig from dict (YAML parsing)."""
-        if not data:
-            return cls()
+        from apps.artagent.backend.registries.definitions import decode_definition
 
-        return cls(
-            trigger=data.get("trigger", ""),
-            is_entry_point=data.get("is_entry_point", False),
-        )
+        return decode_definition(cls, data or {})
 
 
 @dataclass
@@ -80,27 +77,15 @@ class VoiceConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> VoiceConfig:
         """Create VoiceConfig from dict."""
-        if not data:
-            return cls()
-        return cls(
-            name=data.get("name", cls.name),
-            type=data.get("type", cls.type),
-            style=data.get("style", cls.style),
-            rate=data.get("rate", cls.rate),
-            pitch=data.get("pitch", cls.pitch),
-            endpoint_id=data.get("endpoint_id"),
-        )
+        from apps.artagent.backend.registries.definitions import decode_definition
+
+        return decode_definition(cls, data or {})
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict for serialization."""
-        return {
-            "name": self.name,
-            "type": self.type,
-            "style": self.style,
-            "rate": self.rate,
-            "pitch": self.pitch,
-            "endpoint_id": self.endpoint_id,
-        }
+        from apps.artagent.backend.registries.definitions import definition_payload
+
+        return definition_payload(self)
 
 
 @dataclass
@@ -180,116 +165,18 @@ class ModelConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ModelConfig:
         """Create ModelConfig from dict."""
-        if not data:
-            return cls()
-        deployment_id = data.get("deployment_id", data.get("name", cls.deployment_id))
-
-        # Parse legacy parameters (allow None)
-        temperature = data.get("temperature")
-        if temperature is not None:
-            temperature = float(temperature)
-        else:
-            temperature = cls.temperature
-
-        top_p = data.get("top_p")
-        if top_p is not None:
-            top_p = float(top_p)
-        else:
-            top_p = cls.top_p
-
-        max_tokens = data.get("max_tokens")
-        if max_tokens is not None:
-            max_tokens = int(max_tokens)
-        else:
-            max_tokens = cls.max_tokens
-
-        # Parse new parameters (default to None if not present)
-        min_p = data.get("min_p")
-        if min_p is not None:
-            min_p = float(min_p)
-
-        typical_p = data.get("typical_p")
-        if typical_p is not None:
-            typical_p = float(typical_p)
-
-        max_completion_tokens = data.get("max_completion_tokens")
-        if max_completion_tokens is not None:
-            max_completion_tokens = int(max_completion_tokens)
-
-        # Parse verbosity parameter (default to 0 for real-time performance)
-        verbosity = data.get("verbosity", 0)
-        if verbosity is not None:
-            verbosity = int(verbosity)
-
-        # Parse store parameter
-        store = data.get("store")
-        if store is not None:
-            store = bool(store)
-
-        # Create instance
-        instance = cls(
-            deployment_id=deployment_id,
-            name=data.get("name", deployment_id),
-            temperature=temperature,
-            top_p=top_p,
-            max_tokens=max_tokens,
-            min_p=min_p,
-            typical_p=typical_p,
-            reasoning_effort=data.get("reasoning_effort"),
-            include_reasoning=bool(data.get("include_reasoning", False)),
-            max_completion_tokens=max_completion_tokens,
-            verbosity=verbosity,
-            store=store,
-            metadata=data.get("metadata"),
-            response_format=data.get("response_format"),
-            endpoint_preference=data.get("endpoint_preference", "auto"),
-            api_version=data.get("api_version", "v1"),
-            model_family=data.get("model_family"),
-        )
-
-        # Auto-detect model family if not provided
-        if not instance.model_family:
+        data = dict(data or {})
+        data.setdefault("deployment_id", data.get("name") or cls.deployment_id)
+        if data.get("name") is None:
+            data["name"] = data["deployment_id"]
+        instance = decode_definition(cls, data)
+        if "model_family" not in data:
             instance.model_family = instance._detect_model_family()
-
         return instance
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict for serialization."""
-        result = {
-            "deployment_id": self.deployment_id,
-            "name": self.name,
-            "temperature": self.temperature,
-            "top_p": self.top_p,
-            "max_tokens": self.max_tokens,
-        }
-
-        # Add new parameters only if they're set
-        if self.min_p is not None:
-            result["min_p"] = self.min_p
-        if self.typical_p is not None:
-            result["typical_p"] = self.typical_p
-        if self.reasoning_effort is not None:
-            result["reasoning_effort"] = self.reasoning_effort
-        if self.include_reasoning:
-            result["include_reasoning"] = self.include_reasoning
-        if self.max_completion_tokens is not None:
-            result["max_completion_tokens"] = self.max_completion_tokens
-        if self.verbosity != 0:  # Only serialize if non-default
-            result["verbosity"] = self.verbosity
-        if self.store is not None:
-            result["store"] = self.store
-        if self.metadata is not None:
-            result["metadata"] = self.metadata
-        if self.response_format is not None:
-            result["response_format"] = self.response_format
-        if self.endpoint_preference != "auto":
-            result["endpoint_preference"] = self.endpoint_preference
-        if self.api_version:
-            result["api_version"] = self.api_version
-        if self.model_family:
-            result["model_family"] = self.model_family
-
-        return result
+        return definition_payload(self)
 
 
 # Valid Voice Live BYOM (Bring Your Own Model) profile modes. These map to the
@@ -334,7 +221,7 @@ class VoiceLiveBYOMConfig:
             mode = mode.strip() or None
         if not mode:
             return None
-        return cls(mode=mode)
+        return decode_definition(cls, {**data, "mode": mode})
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a YAML/JSON-friendly dict (omits empty fields)."""
@@ -427,9 +314,7 @@ def is_realtime_voicelive_model(deployment_id: str | None) -> bool:
     return "realtime" in (deployment_id or "").lower()
 
 
-def byom_profile_model_conflict(
-    mode: str | None, deployment_id: str | None
-) -> str | None:
+def byom_profile_model_conflict(mode: str | None, deployment_id: str | None) -> str | None:
     """Explain why BYOM profile ``mode`` cannot drive ``deployment_id``.
 
     Returns ``None`` when the pairing is valid (or not decidable). Only the two
@@ -482,40 +367,18 @@ class SpeechConfig:
     enable_diarization: bool = False  # Speaker diarization for multi-speaker scenarios
     speaker_count_hint: int = 2  # Hint for number of speakers in diarization
 
-    # Default languages constant for from_dict
-    _DEFAULT_LANGS: list[str] = field(
-        default=None,
-        init=False,
-        repr=False,
-    )
-
-    def __post_init__(self):
-        """Initialize default languages constant."""
-        object.__setattr__(self, "_DEFAULT_LANGS", ["en-US", "es-ES", "fr-FR", "de-DE", "it-IT"])
-
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SpeechConfig:
         """Create SpeechConfig from dict."""
-        if not data:
-            return cls()
-        default_langs = ["en-US", "es-ES", "fr-FR", "de-DE", "it-IT"]
-        return cls(
-            vad_silence_timeout_ms=int(data.get("vad_silence_timeout_ms", 800)),
-            use_semantic_segmentation=bool(data.get("use_semantic_segmentation", False)),
-            candidate_languages=data.get("candidate_languages", default_langs),
-            enable_diarization=bool(data.get("enable_diarization", False)),
-            speaker_count_hint=int(data.get("speaker_count_hint", 2)),
-        )
+        from apps.artagent.backend.registries.definitions import decode_definition
+
+        return decode_definition(cls, data or {})
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict for serialization."""
-        return {
-            "vad_silence_timeout_ms": self.vad_silence_timeout_ms,
-            "use_semantic_segmentation": self.use_semantic_segmentation,
-            "candidate_languages": self.candidate_languages,
-            "enable_diarization": self.enable_diarization,
-            "speaker_count_hint": self.speaker_count_hint,
-        }
+        from apps.artagent.backend.registries.definitions import definition_payload
+
+        return definition_payload(self)
 
 
 @dataclass

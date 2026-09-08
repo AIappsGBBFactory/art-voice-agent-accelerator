@@ -19,10 +19,17 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from apps.artagent.backend.registries.definitions import (
+    agent_from_payload as _deserialize_agent,
+)
+from apps.artagent.backend.registries.definitions import (
+    definition_payload as _serialize_agent,
+)
 from apps.artagent.backend.src.orchestration.naming import (
     agent_key,
     find_agent_by_name,
 )
+from apps.artagent.backend.src.orchestration.session_memory import live_memo, session_memo
 from utils.ml_logging import get_logger
 
 if TYPE_CHECKING:
@@ -78,79 +85,6 @@ def register_adapter_update_callback(callback: Callable[[str, UnifiedAgent, bool
 # ═══════════════════════════════════════════════════════════════════════════════
 # SERIALIZATION (Redis persistence)
 # ═══════════════════════════════════════════════════════════════════════════════
-
-
-def _serialize_agent(agent: UnifiedAgent) -> dict[str, Any]:
-    """Serialize a UnifiedAgent into a JSON-safe dict for Redis storage."""
-    return {
-        "name": agent.name,
-        "description": agent.description,
-        "greeting": agent.greeting,
-        "return_greeting": agent.return_greeting,
-        "handoff": {
-            "trigger": agent.handoff.trigger if agent.handoff else "",
-            "is_entry_point": agent.handoff.is_entry_point if agent.handoff else False,
-        },
-        "model": agent.model.to_dict() if agent.model else None,
-        "cascade_model": agent.cascade_model.to_dict() if agent.cascade_model else None,
-        "voicelive_model": agent.voicelive_model.to_dict() if agent.voicelive_model else None,
-        "byom": agent.byom.to_dict() if agent.byom else None,
-        "voice": agent.voice.to_dict() if agent.voice else None,
-        "speech": agent.speech.to_dict() if agent.speech else None,
-        "session": agent.session or {},
-        "prompt_template": agent.prompt_template,
-        "tool_names": list(agent.tool_names or []),
-        "mcp_servers": list(agent.mcp_servers or []),
-        "template_vars": agent.template_vars or {},
-        "metadata": agent.metadata or {},
-    }
-
-
-def _deserialize_agent(data: dict[str, Any]) -> UnifiedAgent:
-    """Reconstruct a UnifiedAgent from a Redis-stored dict."""
-    from apps.artagent.backend.registries.agentstore.base import (
-        HandoffConfig,
-        ModelConfig,
-        SpeechConfig,
-        UnifiedAgent,
-        VoiceConfig,
-        VoiceLiveBYOMConfig,
-    )
-
-    model = ModelConfig.from_dict(data["model"]) if data.get("model") else ModelConfig()
-    cascade_model = (
-        ModelConfig.from_dict(data["cascade_model"]) if data.get("cascade_model") else None
-    )
-    voicelive_model = (
-        ModelConfig.from_dict(data["voicelive_model"]) if data.get("voicelive_model") else None
-    )
-    # Voice Live BYOM (Bring Your Own Model) — must survive the Redis round-trip,
-    # otherwise a session agent configured for a Foundry deployment reloads with
-    # byom=None and connects as managed Voice Live (which can't serve the model).
-    byom = VoiceLiveBYOMConfig.from_dict(data["byom"]) if data.get("byom") else None
-    voice = VoiceConfig.from_dict(data["voice"]) if data.get("voice") else VoiceConfig()
-    speech = SpeechConfig.from_dict(data["speech"]) if data.get("speech") else SpeechConfig()
-    handoff = HandoffConfig.from_dict(data.get("handoff") or {})
-
-    return UnifiedAgent(
-        name=data["name"],
-        description=data.get("description", ""),
-        greeting=data.get("greeting", ""),
-        return_greeting=data.get("return_greeting", ""),
-        handoff=handoff,
-        model=model,
-        cascade_model=cascade_model,
-        voicelive_model=voicelive_model,
-        byom=byom,
-        voice=voice,
-        speech=speech,
-        session=data.get("session") or {},
-        prompt_template=data.get("prompt_template", ""),
-        tool_names=list(data.get("tool_names") or []),
-        mcp_servers=list(data.get("mcp_servers") or []),
-        template_vars=data.get("template_vars") or {},
-        metadata=data.get("metadata") or {},
-    )
 
 
 def _persist_agents_to_redis(session_id: str) -> None:
@@ -212,9 +146,7 @@ async def persist_session_agents_to_redis(
         return
 
     try:
-        from src.stateful.state_managment import MemoManager
-
-        memo = MemoManager.from_redis(session_id, _redis_manager)
+        memo = await session_memo(session_id, _redis_manager)
         all_agents_data = {
             name: _serialize_agent(agent)
             for name, agent in _session_agents.get(session_id, {}).items()
@@ -245,15 +177,16 @@ def _log_persistence_result(task) -> None:
         logger.error("Session agent persistence failed: %s", task.exception())
 
 
-def _load_agents_from_redis(session_id: str) -> dict[str, UnifiedAgent]:
+def _load_agents_from_redis(session_id: str, *, memo=None) -> dict[str, UnifiedAgent]:
     """Load all session agents for a session from Redis. Merges Redis → in-memory."""
-    if not _redis_manager:
+    if memo is None and not _redis_manager:
         return {}
 
     try:
         from src.stateful.state_managment import MemoManager
 
-        memo = MemoManager.from_redis(session_id, _redis_manager)
+        if memo is None:
+            memo = live_memo(session_id) or MemoManager.from_redis(session_id, _redis_manager)
         all_agents_data = memo.get_value_from_corememory(AGENTS_KEY_ALL)
         active_agent = memo.get_value_from_corememory(AGENTS_KEY_ACTIVE)
 
@@ -291,7 +224,7 @@ def _load_agents_from_redis(session_id: str) -> dict[str, UnifiedAgent]:
         return loaded
     except Exception as e:
         logger.warning("Failed to load session agents from Redis: %s", e)
-        return {}
+        raise
 
 
 def _ensure_session_loaded(session_id: str, *, force: bool = False) -> None:
@@ -305,6 +238,16 @@ def _ensure_session_loaded(session_id: str, *, force: bool = False) -> None:
     worker re-syncs after the cooldown to pick up agents created on other workers.
     """
     if not _redis_manager:
+        return
+
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    else:
+        # Async boundaries prime the view; native turns never perform sync I/O.
         return
 
     if not force:
@@ -351,9 +294,7 @@ async def clear_session_agents_from_redis(
         return
 
     try:
-        from src.stateful.state_managment import MemoManager
-
-        memo = MemoManager.from_redis(session_id, _redis_manager)
+        memo = await session_memo(session_id, _redis_manager)
         memo.set_corememory(AGENTS_KEY_ALL, None)
         memo.set_corememory(AGENTS_KEY_ACTIVE, None)
         await memo.persist_to_redis_async(_redis_manager, raise_on_failure=raise_on_failure)
@@ -527,6 +468,9 @@ async def remove_session_agent_async(
     raise_on_failure: bool = False,
 ) -> bool:
     """Remove session agent config and await durable Redis persistence."""
+    from apps.artagent.backend.src.orchestration.session_memory import prime_session_definitions
+
+    await prime_session_definitions(session_id)
     removed = remove_session_agent(session_id, agent_name, persist=False)
     if not removed:
         return False

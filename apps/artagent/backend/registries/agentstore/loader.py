@@ -20,12 +20,13 @@ from typing import Any
 import yaml
 from apps.artagent.backend.registries.agentstore.base import (
     HandoffConfig,
-    ModelConfig,
-    SpeechConfig,
     UnifiedAgent,
-    VoiceConfig,
     VoiceLiveBYOMConfig,
 )
+from apps.artagent.backend.registries.agentstore.base import (
+    build_handoff_map as build_handoff_map,
+)
+from apps.artagent.backend.registries.definitions import agent_from_payload, definition_payload
 from apps.artagent.backend.src.orchestration.naming import find_agent_by_name
 from utils.ml_logging import get_logger
 
@@ -185,25 +186,22 @@ def load_agent(
     # Extract handoff config
     handoff = _extract_handoff_config(raw)
 
-    return UnifiedAgent(
-        name=identity["name"],
-        description=identity["description"],
-        greeting=identity["greeting"],
-        return_greeting=identity["return_greeting"],
-        handoff=handoff,
-        model=ModelConfig.from_dict(model_raw),
-        voicelive_model=ModelConfig.from_dict(voicelive_model_raw),
-        cascade_model=ModelConfig.from_dict(cascade_model_raw),
-        byom=VoiceLiveBYOMConfig.from_dict(raw.get("byom")),
-        voice=VoiceConfig.from_dict(voice_raw),
-        speech=SpeechConfig.from_dict(speech_raw),
-        session=session_raw,
-        prompt_template=prompt_template,
-        tool_names=raw.get("tools", []),
-        mcp_servers=raw.get("mcp_servers", []),
-        template_vars=template_vars,
-        metadata=raw.get("metadata", {}),
-        source_dir=agent_dir,
+    return agent_from_payload(
+        {
+            **raw,
+            **identity,
+            "handoff": definition_payload(handoff),
+            "model": model_raw,
+            "voicelive_model": voicelive_model_raw,
+            "cascade_model": cascade_model_raw,
+            "byom": definition_payload(VoiceLiveBYOMConfig.from_dict(raw.get("byom"))),
+            "voice": voice_raw,
+            "speech": speech_raw,
+            "session": session_raw,
+            "prompt_template": prompt_template,
+            "template_vars": template_vars,
+            "source_dir": agent_dir,
+        }
     )
 
 
@@ -247,26 +245,6 @@ def discover_agents(agents_dir: Path = AGENTS_DIR) -> dict[str, UnifiedAgent]:
 
     logger.debug("Discovered %d agents: %s", len(agents), list(agents.keys()))
     return agents
-
-
-def build_handoff_map(agents: dict[str, UnifiedAgent]) -> dict[str, str]:
-    """
-    Build handoff map from agent declarations.
-
-    Each agent can declare a `handoff.trigger` which is the tool name
-    that other agents use to transfer to this agent.
-
-    Returns:
-        Dict of tool_name → agent_name
-    """
-    handoff_map: dict[str, str] = {}
-
-    for agent in agents.values():
-        if agent.handoff.trigger:
-            handoff_map[agent.handoff.trigger] = agent.name
-
-    logger.debug("Built handoff map: %s", handoff_map)
-    return handoff_map
 
 
 def build_agent_summaries(agents: dict[str, UnifiedAgent]) -> list[dict[str, Any]]:

@@ -73,11 +73,17 @@ from apps.artagent.backend.registries.agentstore.loader import (
     load_agent,
     load_defaults,
 )
+from apps.artagent.backend.registries.definitions import (
+    agent_api_payload,
+    agent_from_payload,
+    definition_fields,
+    definition_payload,
+)
 from apps.artagent.backend.registries.toolstore.registry import (
     _TOOL_DEFINITIONS,
     initialize_tools,
 )
-from apps.artagent.backend.src.orchestration.naming import find_agent_by_name
+from apps.artagent.backend.src.orchestration.naming import agent_key, find_agent_by_name
 from apps.artagent.backend.src.orchestration.session_agents import (
     get_session_agent,
     list_session_agents,
@@ -88,7 +94,7 @@ from apps.artagent.backend.src.orchestration.session_agents import (
 )
 from config import DEFAULT_TTS_VOICE
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, create_model, field_validator, model_validator
 from utils.ml_logging import get_logger
 
 logger = get_logger("v1.agent_builder")
@@ -135,35 +141,21 @@ class VoiceInfo(BaseModel):
     region_verified: bool = False
 
 
-class ModelConfigSchema(BaseModel):
+class ModelConfigSchema(
+    create_model("ModelDefinitionSchema", __base__=BaseModel, **definition_fields(ModelConfig))
+):
     """Model configuration schema."""
 
-    deployment_id: str = "gpt-4o"
     name: str | None = None
-    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
-    top_p: float = Field(default=0.9, ge=0.0, le=1.0)
-    max_tokens: int = Field(default=4096, ge=1, le=16384)
-
-    # Responses API parameters
-    endpoint_preference: str = Field(
-        default="auto",
-        description="Endpoint selection: 'auto' (smart routing), 'chat' (chat/completions), 'responses' (responses API)",
-    )
-    verbosity: int = Field(
-        default=0, ge=0, le=2, description="Response verbosity: 0=minimal, 1=standard, 2=detailed"
-    )
+    temperature: float | None = Field(default=ModelConfig.temperature, ge=0.0, le=2.0)
+    top_p: float | None = Field(default=ModelConfig.top_p, ge=0.0, le=1.0)
+    max_tokens: int | None = Field(default=ModelConfig.max_tokens, ge=1, le=16384)
+    verbosity: int = Field(default=ModelConfig.verbosity, ge=0, le=2)
     min_p: float | None = Field(
         default=None, ge=0.0, le=1.0, description="Minimum probability threshold"
     )
     typical_p: float | None = Field(
         default=None, ge=0.0, le=1.0, description="Typical sampling parameter"
-    )
-    reasoning_effort: str | None = Field(
-        default=None,
-        description="Reasoning effort level: 'low', 'medium', 'high' (for o1/o3/o4 models)",
-    )
-    include_reasoning: bool = Field(
-        default=False, description="Include reasoning tokens in response"
     )
     max_completion_tokens: int | None = Field(
         default=None,
@@ -172,17 +164,10 @@ class ModelConfigSchema(BaseModel):
         description="Max completion tokens (for reasoning models and responses API)",
     )
 
-    # Enhanced parameters
-    store: bool | None = Field(default=None, description="Store conversation for training")
-    metadata: dict[str, Any] | None = Field(default=None, description="Custom metadata")
-    response_format: dict[str, Any] | None = Field(
-        default=None, description="Structured output format"
-    )
-    api_version: str | None = Field(default="v1", description="Model API version override")
-    model_family: str | None = Field(default=None, description="Detected/declared model family")
 
-
-class ByomConfigSchema(BaseModel):
+class ByomConfigSchema(
+    create_model("ByomDefinitionSchema", **definition_fields(VoiceLiveBYOMConfig))
+):
     """Voice Live BYOM (Bring Your Own Model) configuration.
 
     Opt-in, VoiceLive mode only. When ``mode`` is set, the VoiceLive connection
@@ -215,42 +200,37 @@ class ByomConfigSchema(BaseModel):
         return v
 
 
-class VoiceConfigSchema(BaseModel):
+class VoiceConfigSchema(
+    create_model("VoiceDefinitionSchema", __base__=BaseModel, **definition_fields(VoiceConfig))
+):
     """Voice configuration schema."""
 
     name: str = "en-US-AvaMultilingualNeural"
-    type: str = "azure-standard"
-    style: str = "chat"
-    rate: str = "+0%"
-    pitch: str = Field(default="+0%", description="Voice pitch: -50% to +50%")
-    endpoint_id: str | None = Field(default=None, description="Custom voice endpoint ID")
 
 
-class SpeechConfigSchema(BaseModel):
+class SpeechConfigSchema(
+    create_model("SpeechDefinitionSchema", __base__=BaseModel, **definition_fields(SpeechConfig))
+):
     """Speech recognition (STT) configuration schema."""
 
     vad_silence_timeout_ms: int = Field(
-        default=800,
+        default=SpeechConfig.vad_silence_timeout_ms,
         ge=100,
         le=5000,
         description="Silence duration (ms) before finalizing recognition",
     )
-    use_semantic_segmentation: bool = Field(
-        default=False, description="Enable semantic sentence boundary detection"
-    )
-    candidate_languages: list[str] = Field(
-        default_factory=lambda: ["en-US", "es-ES", "fr-FR", "de-DE", "it-IT"],
-        description="Languages for automatic detection",
-    )
-    enable_diarization: bool = Field(default=False, description="Enable speaker diarization")
     speaker_count_hint: int = Field(
-        default=2, ge=1, le=10, description="Hint for number of speakers"
+        default=SpeechConfig.speaker_count_hint,
+        ge=1,
+        le=10,
+        description="Hint for number of speakers",
     )
 
 
 class SessionConfigSchema(BaseModel):
     """VoiceLive session configuration schema."""
 
+    model_config = ConfigDict(extra="allow")
     modalities: list[str] = Field(
         default_factory=lambda: ["TEXT", "AUDIO"],
         description="Session modalities (TEXT, AUDIO)",
@@ -281,39 +261,38 @@ class SessionConfigSchema(BaseModel):
             return data
         turn_detection = data.get("turn_detection")
         if isinstance(turn_detection, dict):
-            aliases = {
-                "turn_detection_type": "type",
-                "turn_detection_threshold": "threshold",
-                "silence_duration_ms": "silence_duration_ms",
-                "prefix_padding_ms": "prefix_padding_ms",
-            }
+            from apps.artagent.backend.registries.definitions import TURN_DETECTION_ALIASES
+
             data = dict(data)
-            for field_name, nested_name in aliases.items():
+            for field_name, nested_name in TURN_DETECTION_ALIASES.items():
                 if field_name not in data and nested_name in turn_detection:
                     data[field_name] = turn_detection[nested_name]
         return data
 
 
-class DynamicAgentConfig(BaseModel):
+class DynamicAgentConfig(
+    create_model(
+        "AgentDefinitionSchema",
+        __base__=BaseModel,
+        **{
+            {"tool_names": "tools", "prompt_template": "prompt"}.get(name, name): definition
+            for name, definition in definition_fields(UnifiedAgent).items()
+            if name != "source_dir"
+        },
+    )
+):
     """Configuration for creating a dynamic agent."""
 
     name: str = Field(..., min_length=1, max_length=64, description="Agent display name")
-    description: str = Field(default="", max_length=512, description="Agent description")
-    greeting: str = Field(default="", max_length=1024, description="Initial greeting message")
-    return_greeting: str = Field(
-        default="", max_length=1024, description="Return greeting when caller comes back"
-    )
+    description: str = Field(default=UnifiedAgent.description, max_length=512)
+    greeting: str = Field(default=UnifiedAgent.greeting, max_length=1024)
+    return_greeting: str = Field(default=UnifiedAgent.return_greeting, max_length=1024)
     handoff_trigger: str = Field(
         default="",
         max_length=128,
         description="Tool name that routes to this agent (e.g., handoff_my_agent)",
     )
     prompt: str = Field(..., min_length=10, description="System prompt for the agent")
-    tools: list[str] = Field(default_factory=list, description="List of tool names to enable")
-    mcp_servers: list[str] = Field(
-        default_factory=list,
-        description="MCP server names whose tools should be attached to this agent",
-    )
     cascade_model: ModelConfigSchema | None = Field(
         default=None, description="Model config for cascade mode (STT→LLM→TTS)"
     )
@@ -334,6 +313,7 @@ class DynamicAgentConfig(BaseModel):
         default=None, description="VoiceLive session settings (VAD, modalities, etc.)"
     )
     template_vars: dict[str, Any] | None = None
+    handoff: HandoffConfig | None = None
 
 
 class LiveTurnDetectionPatch(BaseModel):
@@ -1877,26 +1857,9 @@ def _load_base_templates_cached(_mtime_key: float) -> list[AgentTemplateInfo]:
             templates.append(
                 AgentTemplateInfo(
                     id=agent_dir.name,
-                    name=agent.name,
-                    description=agent.description,
-                    greeting=agent.greeting,
-                    prompt_preview=prompt_preview,
-                    prompt_full=prompt_full,
-                    tools=agent.tool_names,
-                    mcp_servers=agent.mcp_servers,
-                    voice=agent.voice.to_dict() if agent.voice else None,
-                    model=agent.model.to_dict() if agent.model else None,
-                    cascade_model=agent.cascade_model.to_dict() if agent.cascade_model else None,
-                    voicelive_model=(
-                        agent.voicelive_model.to_dict() if agent.voicelive_model else None
-                    ),
-                    byom=agent.byom.to_dict() if agent.byom else None,
-                    speech=agent.speech.to_dict() if agent.speech else None,
-                    session=agent.session or {},
-                    template_vars=agent.template_vars or {},
+                    **{**agent_api_payload(agent), "prompt_preview": prompt_preview},
                     source="yaml",
                     source_path=str(agent_file.relative_to(AGENTS_DIR.parent)),
-                    is_entry_point=agent.handoff.is_entry_point if agent.handoff else False,
                 )
             )
         except Exception as e:
@@ -1926,6 +1889,9 @@ async def list_agent_templates(session_id: str | None = None) -> dict[str, Any]:
     base YAML agent of the same name (so edits are reflected in the card list);
     without it, session agents from all sessions are appended as separate entries.
     """
+    from apps.artagent.backend.src.orchestration.session_memory import prime_session_definitions
+
+    await prime_session_definitions(session_id)
     start = time.time()
     # Base templates come from immutable, image-local YAML files. Cache the disk
     # scan (yaml + prompt reads) keyed on the agentstore mtime so repeated opens
@@ -1946,24 +1912,13 @@ async def list_agent_templates(session_id: str | None = None) -> dict[str, Any]:
         prompt_preview = prompt_full[:300] + "..." if len(prompt_full) > 300 else prompt_full
         return AgentTemplateInfo(
             id=f"session:{composite_key}",
-            name=agent.name,
-            description=agent.description or "",
-            greeting=agent.greeting or "",
-            prompt_preview=prompt_preview,
-            prompt_full=prompt_full,
-            tools=agent.tool_names or [],
-            mcp_servers=agent.mcp_servers or [],
-            voice=agent.voice.to_dict() if agent.voice else None,
-            model=agent.model.to_dict() if agent.model else None,
-            cascade_model=agent.cascade_model.to_dict() if agent.cascade_model else None,
-            voicelive_model=agent.voicelive_model.to_dict() if agent.voicelive_model else None,
-            byom=agent.byom.to_dict() if agent.byom else None,
-            speech=agent.speech.to_dict() if agent.speech else None,
-            session=agent.session or {},
-            template_vars=agent.template_vars or {},
+            **{
+                **agent_api_payload(agent),
+                "prompt_preview": prompt_preview,
+                "is_entry_point": False,
+            },
             source="session",
             source_path=None,
-            is_entry_point=False,
             is_session_agent=True,
             session_id=sid,
         )
@@ -2034,27 +1989,7 @@ async def get_agent_template(template_id: str) -> dict[str, Any]:
             "status": "success",
             "template": {
                 "id": template_id,
-                "name": agent.name,
-                "description": agent.description,
-                "greeting": agent.greeting,
-                "return_greeting": agent.return_greeting,
-                "prompt": agent.prompt_template or "",
-                "tools": agent.tool_names,
-                "mcp_servers": agent.mcp_servers,
-                "voice": agent.voice.to_dict() if agent.voice else {},
-                "model": agent.model.to_dict() if agent.model else {},
-                "cascade_model": agent.cascade_model.to_dict() if agent.cascade_model else {},
-                "voicelive_model": (
-                    agent.voicelive_model.to_dict() if agent.voicelive_model else {}
-                ),
-                "byom": agent.byom.to_dict() if agent.byom else None,
-                "speech": agent.speech.to_dict() if agent.speech else {},
-                "session": agent.session or {},
-                "template_vars": agent.template_vars or {},
-                "handoff": {
-                    "trigger": agent.handoff.trigger if agent.handoff else "",
-                    "is_entry_point": (agent.handoff.is_entry_point if agent.handoff else False),
-                },
+                **agent_api_payload(agent),
                 "source": "yaml",
                 "source_path": str(agent_file.relative_to(AGENTS_DIR.parent)),
             },
@@ -2072,25 +2007,10 @@ def _model_from_schema(
     schema: ModelConfigSchema, *, deployment_id: str | None = None
 ) -> ModelConfig:
     """Convert a ModelConfigSchema into a ModelConfig (optionally overriding deployment)."""
-    return ModelConfig(
-        deployment_id=deployment_id or schema.deployment_id,
-        name=schema.name,
-        temperature=schema.temperature,
-        top_p=schema.top_p,
-        max_tokens=schema.max_tokens,
-        endpoint_preference=schema.endpoint_preference,
-        verbosity=schema.verbosity,
-        min_p=schema.min_p,
-        typical_p=schema.typical_p,
-        reasoning_effort=schema.reasoning_effort,
-        include_reasoning=schema.include_reasoning,
-        max_completion_tokens=schema.max_completion_tokens,
-        store=schema.store,
-        metadata=schema.metadata,
-        response_format=schema.response_format,
-        api_version=schema.api_version,
-        model_family=schema.model_family,
-    )
+    data = schema.model_dump()
+    if deployment_id:
+        data["deployment_id"] = deployment_id
+    return ModelConfig.from_dict(data)
 
 
 def build_session_agent(
@@ -2138,50 +2058,26 @@ def build_session_agent(
             deployment_id="gpt-realtime", temperature=0.7, top_p=0.9, max_tokens=4096
         )
 
-    voice_config = VoiceConfig(
-        name=config.voice.name if config.voice else "en-US-AvaMultilingualNeural",
-        type=config.voice.type if config.voice else "azure-standard",
-        style=config.voice.style if config.voice else "chat",
-        rate=config.voice.rate if config.voice else "+0%",
-        pitch=config.voice.pitch if config.voice else "+0%",
-        endpoint_id=config.voice.endpoint_id if config.voice else None,
-    )
-
-    speech_config = SpeechConfig(
-        vad_silence_timeout_ms=config.speech.vad_silence_timeout_ms if config.speech else 800,
-        use_semantic_segmentation=(
-            config.speech.use_semantic_segmentation if config.speech else False
-        ),
-        candidate_languages=config.speech.candidate_languages if config.speech else ["en-US"],
-        enable_diarization=config.speech.enable_diarization if config.speech else False,
-        speaker_count_hint=config.speech.speaker_count_hint if config.speech else 2,
-    )
-
     handoff_trigger = config.handoff_trigger.strip() if config.handoff_trigger else ""
     if not handoff_trigger:
         handoff_trigger = f"handoff_{config.name.lower().replace(' ', '_')}"
 
     session_dict: dict[str, Any] = {}
     if config.session:
-        session_dict = {
-            "modalities": config.session.modalities,
-            "input_audio_format": config.session.input_audio_format,
-            "output_audio_format": config.session.output_audio_format,
-            "turn_detection": {
-                "type": config.session.turn_detection_type,
-                "threshold": config.session.turn_detection_threshold,
-                "silence_duration_ms": config.session.silence_duration_ms,
-                "prefix_padding_ms": config.session.prefix_padding_ms,
-            },
-            "tool_choice": config.session.tool_choice,
-        }
-        if config.session.input_audio_transcription_settings:
-            session_dict["input_audio_transcription_settings"] = {
-                "model": config.session.input_audio_transcription_settings.get("model"),
-                "language": config.session.input_audio_transcription_settings.get("language"),
-            }
+        from apps.artagent.backend.registries.definitions import TURN_DETECTION_ALIASES
+
+        session_dict = config.session.model_dump()
+        nested_supplied = "turn_detection" in session_dict
+        nested = session_dict.get("turn_detection", {})
+        for flat, key in TURN_DETECTION_ALIASES.items():
+            value = session_dict.pop(flat)
+            if not nested_supplied or flat in config.session.model_fields_set:
+                if isinstance(nested, dict):
+                    nested[key] = value
+        session_dict["turn_detection"] = nested
 
     metadata: dict[str, Any] = {
+        **config.metadata,
         "source": "dynamic",
         "session_id": session_id,
         "created_at": created_at,
@@ -2229,24 +2125,26 @@ def build_session_agent(
             byom_conflict,
         )
 
-    return UnifiedAgent(
-        name=config.name,
-        description=config.description,
-        greeting=config.greeting,
-        return_greeting=config.return_greeting,
-        handoff=HandoffConfig(trigger=handoff_trigger),
-        model=cascade_model,
-        cascade_model=cascade_model,
-        voicelive_model=voicelive_model,
-        byom=byom_config,
-        voice=voice_config,
-        speech=speech_config,
-        session=session_dict,
-        prompt_template=config.prompt,
-        tool_names=config.tools,
-        mcp_servers=config.mcp_servers,
-        template_vars=config.template_vars or {},
-        metadata=metadata,
+    return agent_from_payload(
+        {
+            **config.model_dump(),
+            "handoff": definition_payload(config.handoff or HandoffConfig(trigger=handoff_trigger)),
+            "model": (
+                _model_from_schema(config.model).to_dict()
+                if config.model
+                else cascade_model.to_dict()
+            ),
+            "cascade_model": cascade_model.to_dict(),
+            "voicelive_model": voicelive_model.to_dict(),
+            "byom": definition_payload(byom_config),
+            "voice": (config.voice or VoiceConfigSchema()).model_dump(),
+            "speech": (
+                config.speech.model_dump() if config.speech else {"candidate_languages": ["en-US"]}
+            ),
+            "session": session_dict,
+            "template_vars": config.template_vars or {},
+            "metadata": metadata,
+        }
     )
 
 
@@ -2254,35 +2152,17 @@ def _session_agent_response(
     agent: UnifiedAgent, session_id: str, *, status: str
 ) -> SessionAgentResponse:
     """Build the standard SessionAgentResponse from a built UnifiedAgent."""
-    prompt = agent.prompt_template or ""
     return SessionAgentResponse(
         session_id=session_id,
         agent_name=agent.name,
         status=status,
-        config={
-            "name": agent.name,
-            "description": agent.description,
-            "greeting": agent.greeting,
-            "return_greeting": agent.return_greeting,
-            "handoff_trigger": agent.handoff.trigger if agent.handoff else "",
-            "prompt_preview": (prompt[:200] + "...") if len(prompt) > 200 else prompt,
-            "prompt_full": prompt,
-            "tools": agent.tool_names,
-            "mcp_servers": agent.mcp_servers,
-            "cascade_model": agent.cascade_model.to_dict() if agent.cascade_model else {},
-            "voicelive_model": agent.voicelive_model.to_dict() if agent.voicelive_model else {},
-            "byom": agent.byom.to_dict() if agent.byom else None,
-            "model": agent.model.to_dict() if agent.model else {},
-            "voice": agent.voice.to_dict() if agent.voice else {},
-            "speech": agent.speech.to_dict() if agent.speech else {},
-            "session": agent.session or {},
-        },
+        config=agent_api_payload(agent),
         created_at=agent.metadata.get("created_at"),
         modified_at=agent.metadata.get("modified_at"),
     )
 
 
-def _resolve_live_session_agent(session_id: str, request: Request) -> UnifiedAgent | None:
+async def _resolve_live_session_agent(session_id: str, request: Request) -> UnifiedAgent | None:
     """
     Return the session-scoped agent to patch for a live-settings change.
 
@@ -2298,15 +2178,11 @@ def _resolve_live_session_agent(session_id: str, request: Request) -> UnifiedAge
 
     # Resolve the active agent name: corememory active_agent → start_agent → first.
     active_name: str | None = None
-    try:
-        redis_mgr = getattr(app_state, "redis", None) or getattr(app_state, "redis_manager", None)
-        if redis_mgr is not None:
-            from src.stateful.state_managment import MemoManager
+    from apps.artagent.backend.src.orchestration.session_memory import session_memo
 
-            memo = MemoManager.from_redis(session_id, redis_mgr)
-            active_name = memo.get_value_from_corememory("active_agent")
-    except Exception:  # pragma: no cover - defensive
-        active_name = None
+    redis_mgr = getattr(app_state, "redis", None) or getattr(app_state, "redis_manager", None)
+    memo = await session_memo(session_id, redis_mgr)
+    active_name = memo.get_value_from_corememory("active_agent")
     if not active_name:
         active_name = getattr(app_state, "start_agent", None)
 
@@ -2370,6 +2246,8 @@ async def _upsert_session_agent(
     created_at = existing.metadata.get("created_at", now) if existing else now
 
     agent = build_session_agent(config, session_id, created_at=created_at, modified_at=now)
+    if existing is not None and agent_key(existing.name) == agent_key(agent.name):
+        agent.source_dir = existing.source_dir
 
     set_session_agent(session_id, agent, set_active=True, persist=False)
     try:
@@ -2420,6 +2298,9 @@ async def create_dynamic_agent(
     This agent will be used instead of the default agent for this session.
     The configuration is stored in memory and can be modified at runtime.
     """
+    from apps.artagent.backend.src.orchestration.session_memory import prime_session_definitions
+
+    await prime_session_definitions(session_id)
     return await _upsert_session_agent(config, session_id, status="created")
 
 
@@ -2435,6 +2316,9 @@ async def get_session_agent_config(
     request: Request,
 ) -> SessionAgentResponse:
     """Get the dynamic agent for a session."""
+    from apps.artagent.backend.src.orchestration.session_memory import prime_session_definitions
+
+    await prime_session_definitions(session_id)
     agent = get_session_agent(session_id)
 
     if not agent:
@@ -2447,33 +2331,7 @@ async def get_session_agent_config(
         session_id=session_id,
         agent_name=agent.name,
         status="active",
-        config={
-            "name": agent.name,
-            "description": agent.description,
-            "greeting": agent.greeting,
-            "return_greeting": agent.return_greeting,
-            "handoff_trigger": agent.handoff.trigger if agent.handoff else "",
-            "prompt_preview": (
-                agent.prompt_template[:200] + "..."
-                if len(agent.prompt_template) > 200
-                else agent.prompt_template
-            ),
-            "prompt_full": agent.prompt_template,
-            "tools": agent.tool_names,
-            "mcp_servers": agent.mcp_servers,
-            "model": agent.model.to_dict(),
-            "cascade_model": (
-                agent.cascade_model.to_dict() if agent.cascade_model else agent.model.to_dict()
-            ),
-            "voicelive_model": (
-                agent.voicelive_model.to_dict() if agent.voicelive_model else agent.model.to_dict()
-            ),
-            "byom": agent.byom.to_dict() if agent.byom else None,
-            "voice": agent.voice.to_dict(),
-            "speech": agent.speech.to_dict() if agent.speech else {},
-            "session": agent.session or {},
-            "template_vars": agent.template_vars,
-        },
+        config=agent_api_payload(agent),
         created_at=agent.metadata.get("created_at"),
         modified_at=agent.metadata.get("modified_at"),
     )
@@ -2497,6 +2355,9 @@ async def update_session_agent(
     Creates a new agent if one doesn't exist (upsert). Shares the exact build /
     store / persist path with ``POST /create`` via ``_upsert_session_agent``.
     """
+    from apps.artagent.backend.src.orchestration.session_memory import prime_session_definitions
+
+    await prime_session_definitions(session_id)
     return await _upsert_session_agent(config, session_id, status="updated")
 
 
@@ -2531,6 +2392,9 @@ async def apply_live_session_settings(
       are persisted to the session agent (if one exists) so a reconnect applies
       them and the builder reflects them.
     """
+    from apps.artagent.backend.src.orchestration.session_memory import prime_session_definitions
+
+    await prime_session_definitions(session_id)
     mode = (payload.mode or "voicelive").lower()
 
     # Best-effort persist onto the session agent so the builder and any reconnect
@@ -2538,7 +2402,7 @@ async def apply_live_session_settings(
     # scenario/base-agent call), clone the active base agent into session scope so
     # the tweak is captured in session state rather than lost on reconnect.
     persisted = False
-    existing = _resolve_live_session_agent(session_id, request)
+    existing = await _resolve_live_session_agent(session_id, request)
     if existing is not None:
         try:
             if payload.turn_detection is not None:
@@ -2661,6 +2525,9 @@ async def reset_session_agent(
     request: Request,
 ) -> dict[str, Any]:
     """Remove the dynamic agent for a session."""
+    from apps.artagent.backend.src.orchestration.session_memory import prime_session_definitions
+
+    await prime_session_definitions(session_id)
     try:
         removed = await remove_session_agent_async(session_id, raise_on_failure=True)
     except Exception as exc:
