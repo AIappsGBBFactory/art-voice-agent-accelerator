@@ -323,3 +323,213 @@ async def test_cascade_target_prompt_and_later_turn_use_resolved_handoff_context
     next_prompt = adapter._process_llm.call_args.kwargs["messages"][0]["content"]
     assert "scenario-case" in next_prompt
     assert ("source-private-profile" in next_prompt) is share_context
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("handoff_first", [False, True])
+@pytest.mark.parametrize("outcome", ["success", "failure", "cancelled"])
+async def test_voicelive_complete_mixed_batch_publishes_business_before_routing(
+    handoff_first, outcome, monkeypatch
+):
+    from apps.artagent.backend.voice.shared.handoff_service import HandoffService
+    from apps.artagent.backend.voice.voicelive import session
+
+    orch, conn = _make_orchestrator()
+    orch.agents = {name: UnifiedAgent(name=name) for name in ("Concierge", "Target")}
+    orch._handoff_service = HandoffService(
+        agents=orch.agents, handoff_map={"handoff_target": "Target"}
+    )
+    orch._memo_manager = MemoManager(session_id="mixed-batch")
+    monkeypatch.setattr(session, "apply_voicelive_session", AsyncMock())
+    started, release = asyncio.Event(), asyncio.Event()
+    executed, order = [], []
+
+    async def execute(name, args):
+        executed.append(name)
+        if name == "lookup":
+            started.set()
+            await release.wait()
+            if outcome == "failure":
+                raise RuntimeError("business failed")
+            return {"slots": {"committed": True}}
+        order.append("route")
+        return {"success": True}
+
+    async def publish(*, item):
+        if getattr(item, "call_id", None) == "business":
+            order.append("business-output")
+
+    monkeypatch.setattr("apps.artagent.backend.voice.voicelive.orchestrator.execute_tool", execute)
+    conn.conversation.item.create.side_effect = publish
+    business = _fn_args_done("business", "lookup", {})
+    handoff = _fn_args_done("control", "handoff_target", {})
+    try:
+        for event in [handoff, business] if handoff_first else [business, handoff]:
+            intake = asyncio.create_task(orch.handle_event(event))
+            done, _ = await asyncio.wait({intake}, timeout=0.1)
+            assert done, "A control intent must not block the SDK event reader"
+            await intake
+        await started.wait()
+        assert orch.active == "Concierge"
+        assert "handoff_target" not in executed
+        await orch.handle_event(
+            _response_done(
+                "response",
+                ResponseStatus.CANCELLED if outcome == "cancelled" else ResponseStatus.COMPLETED,
+            )
+        )
+        assert orch.active == "Concierge"
+        release.set()
+        await _drain(orch)
+        assert executed.count("lookup") == 1
+        if outcome == "cancelled":
+            assert orch.active == "Concierge"
+            assert executed == ["lookup"]
+            assert orch._memo_manager.get_context("slots") == {"committed": True}
+            conn.response.create.assert_not_awaited()
+        else:
+            assert order == ["business-output", "route"]
+            assert orch.active == "Target"
+            assert executed.count("handoff_target") == 1
+            conn.response.create.assert_awaited_once()
+    finally:
+        release.set()
+        if not intake.done():
+            await intake
+        await _drain(orch)
+        await orch.cancel_and_join_tasks()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("replace", ["scenario", "agent"])
+async def test_detached_business_batch_cannot_continue_after_logical_replacement(
+    replace, monkeypatch
+):
+    from apps.artagent.backend.voice.voicelive import session
+
+    orch, conn = _make_orchestrator()
+    orch.agents = {name: UnifiedAgent(name=name) for name in ("Concierge", "Target")}
+    orch._memo_manager = MemoManager(session_id="detached")
+    monkeypatch.setattr(session, "apply_voicelive_session", AsyncMock())
+    monkeypatch.setattr(orch, "_schedule_scenario_session_update", lambda: None)
+    monkeypatch.setattr(orch, "_select_pending_greeting", lambda **kwargs: None)
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def execute(*args):
+        started.set()
+        await release.wait()
+        return {"slots": {"durable": True}}
+
+    monkeypatch.setattr("apps.artagent.backend.voice.voicelive.orchestrator.execute_tool", execute)
+    try:
+        await orch.handle_event(_fn_args_done("slow", "lookup", {}))
+        await started.wait()
+        await orch.handle_event(_response_done("response", ResponseStatus.COMPLETED))
+        assert not orch._tool_batches
+        assert orch._active_response_id is None
+        previous_epoch = orch._response_epoch
+        if replace == "scenario":
+            orch.update_scenario(orch.agents, {}, start_agent="Target", scenario_name="new")
+        else:
+            await orch._switch_to("Target", {})
+        assert orch._response_epoch > previous_epoch
+        release.set()
+        await _drain(orch)
+        assert orch._memo_manager.get_context("slots") == {"durable": True}
+        conn.response.create.assert_not_awaited()
+    finally:
+        release.set()
+        await _drain(orch)
+        await orch.cancel_and_join_tasks()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["tool", "session-update"])
+@pytest.mark.parametrize("replacement", ["barge-in", "scenario"])
+async def test_control_transition_rechecks_ownership_across_awaits(phase, replacement, monkeypatch):
+    from apps.artagent.backend.voice.shared.handoff_service import HandoffService
+    from apps.artagent.backend.voice.voicelive import session
+
+    orch, conn = _make_orchestrator()
+    orch.agents = {name: UnifiedAgent(name=name) for name in ("Concierge", "Target")}
+    orch._handoff_service = HandoffService(
+        agents=orch.agents, handoff_map={"handoff_target": "Target"}
+    )
+    monkeypatch.setattr(orch, "_schedule_scenario_session_update", lambda: None)
+    entered, release = asyncio.Event(), asyncio.Event()
+    executions = []
+
+    async def execute(name, args):
+        executions.append(name)
+        if phase == "tool":
+            entered.set()
+            await release.wait()
+        return {"success": True}
+
+    async def apply(*args, **kwargs):
+        if phase == "session-update":
+            entered.set()
+            await release.wait()
+
+    monkeypatch.setattr("apps.artagent.backend.voice.voicelive.orchestrator.execute_tool", execute)
+    monkeypatch.setattr(session, "apply_voicelive_session", apply)
+    try:
+        await orch.handle_event(_fn_args_done("control", "handoff_target", {}))
+        await orch.handle_event(_response_done("response", ResponseStatus.COMPLETED))
+        await asyncio.wait_for(entered.wait(), 1)
+        if replacement == "barge-in":
+            await orch.handle_event(
+                SimpleNamespace(type=ServerEventType.INPUT_AUDIO_BUFFER_SPEECH_STARTED)
+            )
+        else:
+            orch.update_scenario(orch.agents, {}, start_agent="Concierge", scenario_name="new")
+        release.set()
+        await _drain(orch)
+        assert executions == ["handoff_target"]
+        conn.response.create.assert_not_awaited()
+        if replacement == "scenario":
+            assert orch.active == "Concierge"
+    finally:
+        release.set()
+        await _drain(orch)
+        await orch.cancel_and_join_tasks()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["status", "response-cancel"])
+async def test_transfer_does_not_cancel_replacement_after_control_await(phase, monkeypatch):
+    orch, conn = _make_orchestrator()
+    entered, release = asyncio.Event(), asyncio.Event()
+    execute = AsyncMock(return_value={"success": True})
+    monkeypatch.setattr("apps.artagent.backend.voice.voicelive.orchestrator.execute_tool", execute)
+    monkeypatch.setattr(orch, "_schedule_scenario_session_update", lambda: None)
+
+    async def hold(**kwargs):
+        entered.set()
+        await release.wait()
+
+    orch.messenger = SimpleNamespace(
+        notify_tool_start=AsyncMock(),
+        notify_tool_end=AsyncMock(),
+        send_status_update=AsyncMock(side_effect=hold if phase == "status" else None),
+    )
+    orch.audio = SimpleNamespace(stop_playback=AsyncMock())
+    if phase == "response-cancel":
+        conn.response.cancel.side_effect = hold
+    try:
+        await orch.handle_event(_fn_args_done("transfer", "transfer_call_to_destination", {}))
+        await orch.handle_event(_response_done("response", ResponseStatus.COMPLETED))
+        await asyncio.wait_for(entered.wait(), 1)
+        orch.update_scenario(orch.agents, {}, start_agent="Concierge", scenario_name="new")
+        cancellations = conn.response.cancel.await_count
+        release.set()
+        await _drain(orch)
+        execute.assert_awaited_once()
+        assert conn.response.cancel.await_count == cancellations
+        orch.audio.stop_playback.assert_not_awaited()
+        conn.response.create.assert_not_awaited()
+        orch.messenger.notify_tool_end.assert_awaited_once()
+    finally:
+        release.set()
+        await _drain(orch)
+        await orch.cancel_and_join_tasks()

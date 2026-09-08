@@ -22,7 +22,9 @@ from apps.artagent.backend.voice.speech_cascade.orchestrator import (
     CascadeOrchestratorAdapter,
 )
 from apps.artagent.backend.voice.voicelive.orchestrator import LiveOrchestrator
-from azure.ai.voicelive.models import UserMessageItem
+from azure.ai.voicelive.models import ResponseStatus, UserMessageItem
+
+from tests.test_voicelive_tool_offload import _drain, _fn_args_done, _response_done
 
 
 class DummyVoiceLiveConnection:
@@ -176,14 +178,18 @@ async def test_voicelive_discrete_handoff_success_state() -> None:
         "apps.artagent.backend.voice.voicelive.orchestrator.execute_tool",
         new=AsyncMock(return_value={"handoff_summary": "summary"}),
     ):
-        await orchestrator._dispatch_tool_call(
-            call_id="call-1",
-            name="handoff_to_agent",
-            args_json=json.dumps({"target_agent": "Advisor", "reason": "Card help"}),
+        await orchestrator.handle_event(
+            _fn_args_done(
+                "call-1", "handoff_to_agent", {"target_agent": "Advisor", "reason": "Card help"}
+            )
         )
+        assert orchestrator.active == "Concierge"
+        await orchestrator.handle_event(_response_done("response", ResponseStatus.COMPLETED))
+        await _drain(orchestrator)
 
     assert orchestrator.active == "Advisor"
     assert orchestrator._handoff_response_pending is True
+    conn.response.create.assert_awaited_once()
 
     additional_instruction = conn.response.create.call_args.kwargs["additional_instructions"]
     assert "respond immediately" in additional_instruction.lower()
@@ -220,14 +226,18 @@ async def test_voicelive_announced_handoff_success_state() -> None:
         "apps.artagent.backend.voice.voicelive.orchestrator.execute_tool",
         new=AsyncMock(return_value={"handoff_summary": "summary"}),
     ):
-        await orchestrator._dispatch_tool_call(
-            call_id="call-2",
-            name="handoff_to_agent",
-            args_json=json.dumps({"target_agent": "Advisor", "reason": "Policy help"}),
+        await orchestrator.handle_event(
+            _fn_args_done(
+                "call-2", "handoff_to_agent", {"target_agent": "Advisor", "reason": "Policy help"}
+            )
         )
+        assert orchestrator.active == "Concierge"
+        await orchestrator.handle_event(_response_done("response", ResponseStatus.COMPLETED))
+        await _drain(orchestrator)
 
     assert orchestrator.active == "Advisor"
     assert orchestrator._handoff_response_pending is True
+    conn.response.create.assert_awaited_once()
 
     additional_instruction = conn.response.create.call_args.kwargs["additional_instructions"]
     assert "after your greeting" in additional_instruction.lower()

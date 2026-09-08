@@ -128,7 +128,7 @@ _BENIGN_ERROR_CODES = BENIGN_VOICELIVE_ERROR_CODES
 
 @dataclass
 class _ToolBatch:
-    """One response's worth of *business* tool calls, resolved off the reader.
+    """One complete response's business work and control intents, resolved off-reader.
 
     VoiceLive delivers every server event on a single ``async for`` stream. If a
     slow business tool is awaited inline on that stream, later speech / audio /
@@ -149,6 +149,7 @@ class _ToolBatch:
     response_id: str | None = None
     tasks: set[asyncio.Task] = field(default_factory=set)
     outputs: list[tuple[str, str]] = field(default_factory=list)
+    controls: list[tuple[str, str, str | None]] = field(default_factory=list)
     response_done: bool = False
     finalized: bool = False
     had_tool_calls: bool = False
@@ -987,7 +988,11 @@ class LiveOrchestrator:
         """
         old_agents = list(self.agents.keys())
         old_active = self.active
-        needs_session_update = False
+        self._bump_response_epoch("scenario_replaced")
+        self._cancel_pending_greeting_tasks()
+        self._pending_greeting = None
+        self._pending_greeting_agent = None
+        self._handoff_response_pending = False
 
         # Update agents registry
         self.agents = dict(agents)
@@ -1028,22 +1033,17 @@ class LiveOrchestrator:
         if start_agent:
             if start_agent != self.active:
                 self.active = start_agent
-                needs_session_update = True
                 logger.info(
                     "🔄 VoiceLive switching to scenario start_agent | from=%s to=%s scenario=%s",
                     old_active,
                     start_agent,
                     scenario_name or "(unknown)",
                 )
-            else:
-                # Same agent but scenario changed - still need to update session
-                needs_session_update = True
         elif self.active not in agents:
             # Current agent not in new scenario - switch to first available
             available = list(agents.keys())
             if available:
                 self.active = available[0]
-                needs_session_update = True
                 logger.warning(
                     "🔄 VoiceLive current agent not in scenario, switching | from=%s to=%s",
                     old_active,
@@ -1064,8 +1064,7 @@ class LiveOrchestrator:
 
         # CRITICAL: Trigger a session update to apply the new agent's instructions
         # This ensures VoiceLive uses the correct system prompt for the new agent
-        if needs_session_update:
-            self._schedule_scenario_session_update()
+        self._schedule_scenario_session_update()
 
     def _schedule_scenario_session_update(self) -> None:
         """
@@ -1724,16 +1723,10 @@ class LiveOrchestrator:
 
         This coroutine runs on the single SDK reader stream, so it must return
         quickly. Business tool execution is offloaded off-reader via
-        :meth:`_dispatch_tool_call`. Two categories still run inline and can
-        therefore stall intake while they await:
-
-        * **Handoff / transfer tools** — control operations whose ordering vs.
-          the session/response mutations they trigger must be preserved. A slow
-          handoff/transfer tool blocks intake for its duration. This is a known,
-          honestly-documented limitation, not a silently accepted one; isolating
-          it needs a coordinated response-ordering contract with the shared
-          handoff owner and is out of this workstream's scope.
-        * **Session/audio control events** — short by construction.
+        :meth:`_dispatch_tool_call`. Model-issued controls are collected until
+        response.done, then executed off-reader after business outputs publish.
+        Session/audio callbacks and transcript-triggered automatic transfer still
+        run on the reader; they are not part of a model response batch.
         """
         et = event.type
 
@@ -1771,9 +1764,8 @@ class LiveOrchestrator:
         elif et == ServerEventType.RESPONSE_FUNCTION_CALL_ARGUMENTS_DONE:
             # Route through the dispatcher, NOT inline execution: business tools
             # are offloaded to owned tasks so a slow tool cannot block intake of
-            # later speech/audio/interrupt events. Handoff/transfer stay inline to
-            # preserve control ordering (see _dispatch_tool_call / handle_event
-            # docstring for the intake-stall caveat).
+            # later speech/audio/interrupt events. Controls wait for full batch
+            # membership at response.done, never for business work on the reader.
             await self._dispatch_tool_call(
                 call_id=getattr(event, "call_id", None),
                 name=getattr(event, "name", None),
@@ -2290,11 +2282,8 @@ class LiveOrchestrator:
     ) -> None:
         """Route a completed function call, keeping the SDK reader responsive.
 
-        Handoff and transfer tools are *control* operations whose ordering
-        relative to the surrounding session/response mutations must be preserved,
-        so they run inline on the reader as before. (This means a slow handoff or
-        transfer tool still stalls intake — a known limitation documented on
-        :meth:`handle_event`; it is not silently worked around here.)
+        Control intents wait for response.done, which closes batch membership.
+        An early handoff must not race a later business call in the same response.
 
         Business tools are offloaded to an owned task that appends its result to
         the active batch, so a slow tool never blocks later speech / audio /
@@ -2313,11 +2302,7 @@ class LiveOrchestrator:
             self._tool_batches[response_id] = batch
         batch.had_tool_calls = True
         if self.handoff_service.is_handoff(name) or name in TRANSFER_TOOL_NAMES:
-            if batch.tasks:
-                await asyncio.gather(*batch.tasks)
-            await self._execute_tool_call(
-                call_id=call_id, name=name, args_json=args_json, batch=batch
-            )
+            batch.controls.append((call_id, name, args_json))
             return
         batch.tasks.add(
             self._track_owned(self._business_tool_task(batch, call_id, name, args_json))
@@ -2365,7 +2350,19 @@ class LiveOrchestrator:
                 )
                 return
 
-            if batch.outputs:
+            if batch.controls:
+                if not await self._publish_tool_outputs(batch):
+                    return
+                for call_id, name, args_json in batch.controls:
+                    if batch.epoch != self._response_epoch:
+                        return
+                    terminal = await self._execute_tool_call(
+                        call_id=call_id, name=name, args_json=args_json, batch=batch
+                    )
+                    if terminal or batch.epoch != self._response_epoch:
+                        return
+                await self._flush_tool_outputs_and_continue(batch)
+            elif batch.outputs:
                 await self._flush_tool_outputs_and_continue(batch)
         except asyncio.CancelledError:
             raise
@@ -2374,13 +2371,21 @@ class LiveOrchestrator:
         finally:
             batch.finalized = True
 
-    async def _flush_tool_outputs_and_continue(self, batch: _ToolBatch) -> None:
-        """Publish one response batch; recheck cancellation across every await."""
-        for call_id, output_json in batch.outputs:
+    async def _publish_tool_outputs(self, batch: _ToolBatch) -> bool:
+        """Publish each output once before routing can invalidate its response."""
+        while batch.outputs:
             if batch.epoch != self._response_epoch:
-                return
+                return False
+            call_id, output_json = batch.outputs[0]
             output_item = FunctionCallOutputItem(call_id=call_id, output=output_json)
             await self.conn.conversation.item.create(item=output_item)
+            batch.outputs.pop(0)
+        return batch.epoch == self._response_epoch
+
+    async def _flush_tool_outputs_and_continue(self, batch: _ToolBatch) -> None:
+        """Publish one response batch; recheck cancellation across every await."""
+        if not await self._publish_tool_outputs(batch):
+            return
 
         # Update session context with collected information BEFORE response
         if batch.epoch != self._response_epoch:
@@ -2453,10 +2458,16 @@ class LiveOrchestrator:
     # AGENT SWITCHING
     # ═══════════════════════════════════════════════════════════════════════════
 
-    async def _switch_to(self, agent_name: str, system_vars: dict):
-        """Switch to a different agent and apply its session configuration."""
+    async def _switch_to(
+        self, agent_name: str, system_vars: dict, *, expected_epoch: int | None = None
+    ) -> int | None:
+        """Apply a logical replacement, returning its still-current ownership epoch."""
+        if expected_epoch is not None and expected_epoch != self._response_epoch:
+            return None
         previous_agent = self.active
         agent = self.agents[agent_name]
+        self._bump_response_epoch("agent_replaced")
+        switch_epoch = self._response_epoch
 
         # Emit invoke_agent summary span for the outgoing agent
         if previous_agent != agent_name and self._metrics._response_count > 0:
@@ -2536,6 +2547,8 @@ class LiveOrchestrator:
 
             # Auto-load user profile if client_id is present but session_profile is missing
             await _auto_load_user_context(system_vars)
+            if switch_epoch != self._response_epoch:
+                return None
 
             self.active = agent_name
 
@@ -2626,6 +2639,8 @@ class LiveOrchestrator:
                         session_id=session_id,
                         call_connection_id=self.call_connection_id,
                     )
+                    if switch_epoch != self._response_epoch:
+                        return None
                     apply_ms = (time.perf_counter() - t_apply) * 1000
                     logger.info(
                         "[VoiceLive Startup] apply_session_ms=%.1f | agent=%s",
@@ -2638,6 +2653,8 @@ class LiveOrchestrator:
                 # This must happen AFTER session update but BEFORE first response
                 t_hist = time.perf_counter()
                 await self._inject_conversation_history()
+                if switch_epoch != self._response_epoch:
+                    return None
                 hist_ms = (time.perf_counter() - t_hist) * 1000
                 if hist_ms > 5:
                     logger.info(
@@ -2665,6 +2682,7 @@ class LiveOrchestrator:
                 raise
 
             logger.info("[Active Agent] %s is now active", self.active)
+            return switch_epoch
 
     # ═══════════════════════════════════════════════════════════════════════════
     # TOOL EXECUTION
@@ -2681,13 +2699,18 @@ class LiveOrchestrator:
         """
         Execute tool call via shared tool registry and send result back to model.
 
-        Returns True if this was a handoff (agent switch), False otherwise.
+        Returns True after a terminal handoff or transfer, False otherwise.
 
         Every call belongs to the dispatcher's response batch. Control operations
-        run inline; business calls run off-reader. Only its finalizer continues.
+        wait for batch completion; business calls run off-reader. Only its finalizer continues.
         """
         if not name or not call_id:
             logger.warning("Missing call_id or name for function call")
+            return False
+
+        is_handoff = self.handoff_service.is_handoff(name)
+        is_control = is_handoff or name in TRANSFER_TOOL_NAMES
+        if is_control and batch.epoch != self._response_epoch:
             return False
 
         try:
@@ -2721,7 +2744,7 @@ class LiveOrchestrator:
                 "voicelive.agent_name": self.active,
                 "voicelive.is_acs": self._transport == "acs",
                 "voicelive.args_length": len(args_json) if args_json else 0,
-                "voicelive.tool.is_handoff": self.handoff_service.is_handoff(name),
+                "voicelive.tool.is_handoff": is_handoff,
                 "voicelive.tool.is_transfer": name in TRANSFER_TOOL_NAMES,
             },
         ) as tool_span:
@@ -2753,7 +2776,7 @@ class LiveOrchestrator:
 
             # Use full message history for better handoff context
             last_user_message = (self._last_user_message or "").strip()
-            if self.handoff_service.is_handoff(name):
+            if is_handoff:
                 # Build conversation summary from message history
                 if self._user_message_history:
                     # Use last message for immediate context
@@ -2803,6 +2826,13 @@ class LiveOrchestrator:
 
             start_ts = time.perf_counter()
             result: dict[str, Any] = {}
+
+            if is_control and batch.epoch != self._response_epoch:
+                if self.messenger:
+                    await self.messenger.notify_tool_end(
+                        call_id=call_id, name=name, status="cancelled", elapsed_ms=0
+                    )
+                return False
 
             try:
                 # Tool execution runs under the enclosing `execute_tool {name}`
@@ -2858,6 +2888,18 @@ class LiveOrchestrator:
             tool_span.set_attribute("result.type", type(result).__name__ if result else "None")
             tool_span.set_attribute("voicelive.tool.status", notify_status)
 
+            if is_control and batch.epoch != self._response_epoch:
+                if self.messenger:
+                    await self.messenger.notify_tool_end(
+                        call_id=call_id,
+                        name=name,
+                        status=notify_status,
+                        elapsed_ms=elapsed_ms,
+                        result=result,
+                        error=error_payload,
+                    )
+                return False
+
             # Handle transfer tools
             if (
                 name in TRANSFER_TOOL_NAMES
@@ -2878,13 +2920,17 @@ class LiveOrchestrator:
                         )
                     except Exception:
                         logger.debug("Failed to emit transfer status update", exc_info=True)
+                transfer_epoch = batch.epoch
                 try:
-                    if result.get("should_interrupt_playback", True):
+                    if transfer_epoch == self._response_epoch and result.get(
+                        "should_interrupt_playback", True
+                    ):
                         self._bump_response_epoch("transfer_cancel")
+                        transfer_epoch = self._response_epoch
                         await self.conn.response.cancel()
                 except Exception:
                     logger.debug("response.cancel() failed during transfer", exc_info=True)
-                if self.audio:
+                if transfer_epoch == self._response_epoch and self.audio:
                     try:
                         await self.audio.stop_playback()
                     except Exception:
@@ -2902,10 +2948,10 @@ class LiveOrchestrator:
                     except Exception:
                         logger.debug("Tool end messenger notification failed", exc_info=True)
                 tool_span.set_status(trace.StatusCode.OK)
-                return False
+                return True
 
             # Handle handoff tools using unified HandoffService
-            if self.handoff_service.is_handoff(name):
+            if is_handoff:
                 # Use HandoffService for consistent resolution across orchestrators
                 resolution = self.handoff_service.resolve_handoff(
                     tool_name=name,
@@ -2917,6 +2963,9 @@ class LiveOrchestrator:
                 )
 
                 if not resolution.success:
+                    batch.outputs.append(
+                        (call_id, json.dumps({"success": False, "error": resolution.error}))
+                    )
                     logger.warning(
                         "Handoff resolution failed: %s | tool=%s",
                         resolution.error,
@@ -2951,14 +3000,12 @@ class LiveOrchestrator:
                 # This prevents the old agent from saying "I'll connect you..." while
                 # the session switches to the new agent.
                 try:
-                    # The switch invalidates any pending tool continuation queued
-                    # under the old agent's response — bump the epoch so a batch
-                    # finalizer drops it rather than speaking as the new agent.
-                    self._bump_response_epoch("handoff_cancel")
                     await self.conn.response.cancel()
                     logger.debug("[Handoff] Cancelled old agent response before switch")
                 except Exception:
                     pass  # No active response to cancel
+                if batch.epoch != self._response_epoch:
+                    return False
 
                 # Stop audio playback to prevent old agent's voice from continuing
                 if self.audio:
@@ -2966,13 +3013,17 @@ class LiveOrchestrator:
                         await self.audio.stop_playback()
                     except Exception:
                         logger.debug("[Handoff] Audio stop failed", exc_info=True)
+                if batch.epoch != self._response_epoch:
+                    return False
 
                 # Use system_vars from HandoffService resolution
                 ctx = resolution.system_vars
 
                 logger.info("[Handoff Tool] '%s' triggered | %s → %s", name, self.active, target)
 
-                await self._switch_to(target, ctx)
+                transition_epoch = await self._switch_to(target, ctx, expected_epoch=batch.epoch)
+                if transition_epoch is None:
+                    return False
                 self._last_user_message = None
 
                 if result.get("call_center_transfer"):
@@ -2998,6 +3049,8 @@ class LiveOrchestrator:
                         )
                     except Exception:
                         logger.debug("Tool end messenger notification failed", exc_info=True)
+                if transition_epoch != self._response_epoch:
+                    return False
 
                 # NOTE: We intentionally do NOT send the handoff tool output back to the model.
                 # The old agent's tool call was an internal action that triggered the switch.
@@ -3070,6 +3123,8 @@ class LiveOrchestrator:
                                 logger.debug(
                                     "[Handoff] Failed to inject user question item", exc_info=True
                                 )
+                    if transition_epoch != self._response_epoch:
+                        return False
 
                     # Trigger response synchronously - no fire-and-forget background task
                     # This ensures the handoff response is reliably triggered
