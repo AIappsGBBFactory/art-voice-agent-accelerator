@@ -46,6 +46,33 @@ A provider operation already submitted cannot be retracted; a stale completion
 cannot schedule further handoff speech or cancel/stop a replacement response.
 Transfer completion notifications still report committed tool outcomes.
 
+### Handoff transition ownership
+
+`_HandoffTransition` is one native epoch's state, not a registry or a second
+orchestrator. `_run_handoff_transition` claims it before cancellation/playback,
+then applies the target, replays a captured history snapshot, and requests the
+handoff response. Startup greeting/fallback delivery is never armed for that
+transition. An acknowledgement during apply, replay, or response creation cannot
+start a competing greeting or tear down its response.
+
+The transition moves from `applying` to `responding` to `complete`; acknowledgement
+is recorded independently because it can arrive at any phase. Its first
+`response.created` invalidates older batches while retaining this response's
+acknowledgement protection. Logical replacement and close invalidate ownership.
+Failure releases only the matching transition, never a replacement's protection.
+History values are captured before the transition's first await, and replay checks
+its epoch before every new item submission, including the assistant item.
+
+Tool execution and routing are separate outcomes. The handoff branch makes one
+completion-notification attempt in `finally` after execution, including when
+routing is superseded or fails. The original result/status is retained, with
+notification-only `handoff_transition.status` (`switched`, `superseded`,
+`rejected`, `failed`, or `response_failed`) and `target_agent` metadata. This does
+not change the registered tool's result or retry its side effects. Notification
+delivery still follows the existing messenger/socket contract, not a durable
+exactly-once delivery guarantee. Context-update credits and normal startup
+acknowledgement/fallback behavior remain separate and unchanged.
+
 Quick Tune resolves the current native identity before any default session agent.
 `session_agents.session_agent_for_edit` installs the matching owned definition
 before either API or native tuning mutates it. Nested voice, session, speech,

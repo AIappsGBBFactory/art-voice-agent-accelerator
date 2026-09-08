@@ -37,6 +37,23 @@ argument-arrival orders and cancellation during tool execution and SDK session
 updates. Logical scenario/agent replacement advances ownership immediately, even
 when an old finalizer is detached and there is no active response ID.
 
+For native handoff await changes, use the existing `_HandoffTransition` epoch
+and `_run_handoff_transition` sequence. Claim ownership before the first await,
+snapshot history once, and check ownership before each subsequent submission.
+Only that transition initiates its handoff response; startup greeting delivery
+must not compete with it. Acknowledgement and completion can arrive in either
+order, and cleanup releases only the matching owner. Do not reintroduce a shared
+handoff-pending Boolean. Extend `test_voicelive_handoff_transition.py` with a
+held provider await plus replacement/acknowledgement, rather than setting a
+private protection flag to simulate a successful handoff.
+
+An executed tool's completion notification has its own lifetime: report it once
+even if routing is superseded during cancel, playback, session application,
+replay, or response creation. Keep the actual tool outcome and use the
+notification-only `handoff_transition` metadata to distinguish routing status.
+This is a single notification attempt through the existing messenger, not
+durable exactly-once delivery or an atomic provider transition.
+
 ## Add a model, voice, speech or scenario field
 
 Add the declared field/default to the existing dataclass in
