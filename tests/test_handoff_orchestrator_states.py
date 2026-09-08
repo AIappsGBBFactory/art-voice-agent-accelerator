@@ -188,7 +188,7 @@ async def test_voicelive_discrete_handoff_success_state() -> None:
         await _drain(orchestrator)
 
     assert orchestrator.active == "Advisor"
-    assert orchestrator._handoff_response_pending is True
+    assert orchestrator._handoff_transition.phase == "complete"
     conn.response.create.assert_awaited_once()
 
     additional_instruction = conn.response.create.call_args.kwargs["additional_instructions"]
@@ -236,7 +236,7 @@ async def test_voicelive_announced_handoff_success_state() -> None:
         await _drain(orchestrator)
 
     assert orchestrator.active == "Advisor"
-    assert orchestrator._handoff_response_pending is True
+    assert orchestrator._handoff_transition.phase == "complete"
     conn.response.create.assert_awaited_once()
 
     additional_instruction = conn.response.create.call_args.kwargs["additional_instructions"]

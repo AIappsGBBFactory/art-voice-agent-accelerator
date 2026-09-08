@@ -336,23 +336,39 @@ async def test_fallback_is_a_noop_once_the_echo_has_greeted(fast_fallback):
 
 
 @pytest.mark.asyncio
-async def test_handoff_response_pending_still_skips_the_reset():
-    orch, conn, audio, messenger = _make_orchestrator()
-    orch._handoff_response_pending = True
+async def test_handoff_response_pending_still_skips_the_reset(monkeypatch):
+    from tests.test_voicelive_handoff_transition import (
+        dispatch_handoff,
+        handoff_runtime,
+        session_ack,
+    )
+
+    orch, conn, _ = handoff_runtime(monkeypatch)
+    await asyncio.gather(*(await dispatch_handoff(orch)))
     orch._active_response_id = "resp-handoff"
+    cancels = conn.response.cancel.await_count
+    stops = orch.audio.stop_playback.await_count
 
-    await orch._handle_session_updated(_event())
+    await session_ack(orch)
 
-    assert orch._handoff_response_pending is False
-    assert audio.calls == ["start_capture"], "handoff response must not be torn down"
-    assert conn.response.cancels == 0
-    assert len(messenger.session_updates) == 1
+    assert orch._handoff_transition is None
+    orch.audio.start_capture.assert_awaited_once()
+    assert orch.audio.stop_playback.await_count == stops
+    assert conn.response.cancel.await_count == cancels
+    orch.messenger.send_session_update.assert_awaited_once()
+    await orch.cancel_and_join_tasks()
 
 
 @pytest.mark.asyncio
-async def test_handoff_branch_clears_greeting_state_and_guard(fast_fallback):
+async def test_handoff_branch_clears_greeting_state_and_guard(fast_fallback, monkeypatch):
     """The handoff owns delivery; the greeting guard must hand over cleanly."""
-    orch, _conn, _audio, _messenger = _make_orchestrator()
+    from tests.test_voicelive_handoff_transition import (
+        dispatch_handoff,
+        handoff_runtime,
+        session_ack,
+    )
+
+    orch, _conn, _ = handoff_runtime(monkeypatch)
     _arm_greeting(orch)
     _record_triggers(orch)
 
@@ -360,16 +376,14 @@ async def test_handoff_branch_clears_greeting_state_and_guard(fast_fallback):
     await _drain_greeting_tasks(orch)
     assert orch._greeting_response_pending is True
 
-    # The sequence _execute_tool_call() runs before conn.response.create().
-    orch._cancel_pending_greeting_tasks()
-    orch._pending_greeting = None
-    orch._pending_greeting_agent = None
-    orch._handoff_response_pending = True
+    await asyncio.gather(*(await dispatch_handoff(orch)))
 
     assert orch._greeting_response_pending is False, "stale greeting guard would mask the handoff"
+    assert orch._pending_greeting is None
 
-    await orch._handle_session_updated(_event())
-    assert orch._handoff_response_pending is False
+    await session_ack(orch)
+    assert orch._handoff_transition is None
+    await orch.cancel_and_join_tasks()
 
 
 # =============================================================================

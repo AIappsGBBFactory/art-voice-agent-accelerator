@@ -42,7 +42,7 @@ import json
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 # Self-contained tool registry (no legacy vlagent dependency)
 from apps.artagent.backend.registries.toolstore import (
@@ -58,7 +58,7 @@ from apps.artagent.backend.voice.shared.errors import (
     classify_voicelive_server_error,
     emit_voice_error,
 )
-from apps.artagent.backend.voice.shared.handoff_service import HandoffService
+from apps.artagent.backend.voice.shared.handoff_service import HandoffResolution, HandoffService
 from apps.artagent.backend.voice.shared.metrics import OrchestratorMetrics
 from apps.artagent.backend.voice.shared.session_state import (
     sync_state_from_memo,
@@ -124,6 +124,18 @@ GREETING_FALLBACK_DELAY_S = 1.5
 # logged as errors or surfaced to the UI. Shared with the handler so both layers
 # suppress exactly the same set.
 _BENIGN_ERROR_CODES = BENIGN_VOICELIVE_ERROR_CODES
+
+
+@dataclass
+class _HandoffTransition:
+    """One epoch's replay and response lifetime, independent of tool completion."""
+
+    epoch: int
+    user_messages: tuple[str, ...]
+    assistant_message: str | None
+    phase: Literal["applying", "responding", "complete"] = "applying"
+    acknowledged: bool = False
+    response_id: str | None = None
 
 
 @dataclass
@@ -495,8 +507,7 @@ class LiveOrchestrator:
         # response.done and each new user turn.
         self._seen_transcript_delta_ids: set[str] = set()
         self._system_vars: dict[str, Any] = {}
-        # Flag to prevent SESSION_UPDATED from cancelling handoff-triggered responses
-        self._handoff_response_pending: bool = False
+        self._handoff_transition: _HandoffTransition | None = None
         # Same guard for a greeting the fallback timer already put on the wire.
         # The bootstrap echo races that response, and because a greeting really
         # is in flight the `_active_response_id` guard below does not stop the
@@ -950,6 +961,7 @@ class LiveOrchestrator:
         # Clear pending greeting state
         self._pending_greeting = None
         self._pending_greeting_agent = None
+        self._handoff_transition = None
 
         # Reset tracking variables
         self._active_response_id = None
@@ -992,7 +1004,6 @@ class LiveOrchestrator:
         self._cancel_pending_greeting_tasks()
         self._pending_greeting = None
         self._pending_greeting_agent = None
-        self._handoff_response_pending = False
 
         # Update agents registry
         self.agents = dict(agents)
@@ -1135,7 +1146,9 @@ class LiveOrchestrator:
             return
         self._track_owned(_do_update())
 
-    async def _inject_conversation_history(self) -> None:
+    async def _inject_conversation_history(
+        self, *, epoch: int, user_messages: tuple[str, ...], assistant_message: str | None
+    ) -> None:
         """
         Inject conversation history as text items into VoiceLive conversation.
 
@@ -1151,13 +1164,15 @@ class LiveOrchestrator:
         The text items become part of the conversation context that the model
         sees for all subsequent responses.
         """
-        if not self.conn or not self._user_message_history:
+        if not self.conn or not user_messages:
             return
 
         try:
             # Inject each historical user message as a text conversation item
             # This establishes explicit text context for the model
-            for msg in self._user_message_history:
+            for msg in user_messages:
+                if epoch != self._response_epoch:
+                    return
                 if not msg or not msg.strip():
                     continue
 
@@ -1169,15 +1184,17 @@ class LiveOrchestrator:
                 await self.conn.conversation.item.create(item=user_item)
 
             # Also inject last assistant message if available
-            if self._last_assistant_message:
+            if epoch != self._response_epoch:
+                return
+            if assistant_message:
                 # Create assistant message with text content
-                text_part = OutputTextContentPart(text=self._last_assistant_message)
+                text_part = OutputTextContentPart(text=assistant_message)
                 assistant_item = AssistantMessageItem(content=[text_part])
                 await self.conn.conversation.item.create(item=assistant_item)
 
             logger.info(
                 "[LiveOrchestrator] Injected %d conversation items for context",
-                len(self._user_message_history) + (1 if self._last_assistant_message else 0),
+                len(user_messages) + (1 if assistant_message else 0),
             )
         except Exception:
             logger.debug("Failed to inject conversation history", exc_info=True)
@@ -1758,7 +1775,7 @@ class LiveOrchestrator:
         elif et == ServerEventType.RESPONSE_CREATED:
             response_id = self._response_id_from_event(event)
             if response_id and response_id != self._active_response_id:
-                self._bump_response_epoch("response_created")
+                self._bump_response_epoch("response_created", response_id=response_id)
                 self._active_response_id = response_id
 
         elif et == ServerEventType.RESPONSE_FUNCTION_CALL_ARGUMENTS_DONE:
@@ -2001,6 +2018,8 @@ class LiveOrchestrator:
             # bootstrap / agent-switch echo.
             return
 
+        transition = self._handoff_transition
+        acknowledgement_epoch = self._response_epoch
         if self.messenger:
             try:
                 await self.messenger.send_session_update(
@@ -2012,13 +2031,16 @@ class LiveOrchestrator:
             except Exception:
                 logger.debug("Failed to emit session update envelope", exc_info=True)
 
-        # If a handoff response was just triggered, DON'T cancel it
-        # The handoff code already called response.create() with the appropriate instructions
-        if self._handoff_response_pending:
-            logger.debug("[Session Updated] Skipping response.cancel() - handoff response pending")
-            self._handoff_response_pending = False
-            if self.audio:
-                await self.audio.start_capture()
+        # The handoff claims delivery before any provider await, not just create().
+        if transition is not None:
+            if self._handoff_transition is transition:
+                transition.acknowledged = True
+                if transition.phase == "complete":
+                    self._release_handoff_transition(transition)
+                if self.audio:
+                    await self.audio.start_capture()
+            return
+        if acknowledgement_epoch != self._response_epoch:
             return
 
         # A greeting the fallback timer already put on the wire is *our* response.
@@ -2037,6 +2059,8 @@ class LiveOrchestrator:
 
         if self.audio:
             await self.audio.stop_playback()
+        if acknowledgement_epoch != self._response_epoch:
+            return
         # Only cancel when a response is actually in flight. Cancelling with no
         # active response makes VoiceLive emit a `response_cancel_not_active`
         # server error, which the handler treats as a hard error (StopAudio +
@@ -2045,12 +2069,17 @@ class LiveOrchestrator:
             # A genuine reconfigure that cancels the in-flight response also
             # invalidates any pending tool continuation for it.
             self._bump_response_epoch("session_updated_cancel")
+            acknowledgement_epoch = self._response_epoch
             try:
                 await self.conn.response.cancel()
             except Exception:
                 logger.debug("response.cancel() failed during session_ready", exc_info=True)
+        if acknowledgement_epoch != self._response_epoch:
+            return
         if self.audio:
             await self.audio.start_capture()
+        if acknowledgement_epoch != self._response_epoch:
+            return
 
         if self._pending_greeting and self._pending_greeting_agent == self.active:
             self._cancel_pending_greeting_tasks()
@@ -2247,7 +2276,7 @@ class LiveOrchestrator:
         task.add_done_callback(self._owned_tasks.discard)
         return task
 
-    def _bump_response_epoch(self, reason: str) -> None:
+    def _bump_response_epoch(self, reason: str, *, response_id: str | None = None) -> None:
         """Invalidate the in-flight response generation.
 
         Any tool batch created before this call will have its spoken
@@ -2255,9 +2284,24 @@ class LiveOrchestrator:
         matches). Durable tool effects already applied are untouched.
         """
         self._response_epoch += 1
+        transition = self._handoff_transition
+        if (
+            response_id
+            and transition is not None
+            and transition.phase in ("responding", "complete")
+            and transition.response_id is None
+        ):
+            # Its first response.created invalidates old batches, not its own ack guard.
+            transition.response_id = response_id
+        else:
+            self._handoff_transition = None
         logger.debug(
             "[ToolBatch] Response epoch bumped → %d | reason=%s", self._response_epoch, reason
         )
+
+    def _release_handoff_transition(self, transition: _HandoffTransition) -> None:
+        if self._handoff_transition is transition:
+            self._handoff_transition = None
 
     async def cancel_and_join_tasks(self) -> None:
         """Cancel and await every owned task. Called by the handler during stop.
@@ -2459,15 +2503,27 @@ class LiveOrchestrator:
     # ═══════════════════════════════════════════════════════════════════════════
 
     async def _switch_to(
-        self, agent_name: str, system_vars: dict, *, expected_epoch: int | None = None
+        self,
+        agent_name: str,
+        system_vars: dict,
+        *,
+        transition: _HandoffTransition | None = None,
     ) -> int | None:
         """Apply a logical replacement, returning its still-current ownership epoch."""
-        if expected_epoch is not None and expected_epoch != self._response_epoch:
+        if transition is not None and self._handoff_transition is not transition:
             return None
         previous_agent = self.active
         agent = self.agents[agent_name]
-        self._bump_response_epoch("agent_replaced")
-        switch_epoch = self._response_epoch
+        if transition is None:
+            self._bump_response_epoch("agent_replaced")
+            user_messages = tuple(self._user_message_history)
+            assistant_message = (
+                None if system_vars.get("handoff_context") else self._last_assistant_message
+            )
+        else:
+            user_messages = transition.user_messages
+            assistant_message = transition.assistant_message
+        switch_epoch = transition.epoch if transition else self._response_epoch
 
         # Emit invoke_agent summary span for the outgoing agent
         if previous_agent != agent_name and self._metrics._response_count > 0:
@@ -2509,7 +2565,7 @@ class LiveOrchestrator:
                 system_vars=system_vars,
                 is_first_visit=is_first_visit,
             )
-            if greeting:
+            if greeting and transition is None:
                 self._pending_greeting = greeting
                 self._pending_greeting_agent = agent_name
             else:
@@ -2652,7 +2708,11 @@ class LiveOrchestrator:
                 # VoiceLive audio models can "forget" context - explicit text items help
                 # This must happen AFTER session update but BEFORE first response
                 t_hist = time.perf_counter()
-                await self._inject_conversation_history()
+                await self._inject_conversation_history(
+                    epoch=switch_epoch,
+                    user_messages=user_messages,
+                    assistant_message=assistant_message,
+                )
                 if switch_epoch != self._response_epoch:
                     return None
                 hist_ms = (time.perf_counter() - t_hist) * 1000
@@ -2663,8 +2723,7 @@ class LiveOrchestrator:
                         len(self._user_message_history),
                     )
 
-                # Schedule greeting fallback if we have a pending greeting
-                # This applies to both handoffs and normal agent switches
+                # Handoffs own delivery; only normal switches arm the startup greeting.
                 if self._pending_greeting and self._pending_greeting_agent == agent_name:
                     self._schedule_greeting_fallback(agent_name)
 
@@ -2860,17 +2919,6 @@ class LiveOrchestrator:
                     "Tool execution raised an exception | tool=%s call_id=%s", name, call_id
                 )
                 result = {"success": False, "error": notify_error}
-                if self.messenger:
-                    try:
-                        await self.messenger.notify_tool_end(
-                            call_id=call_id,
-                            name=name,
-                            status="error",
-                            elapsed_ms=(time.perf_counter() - start_ts) * 1000,
-                            error=notify_error,
-                        )
-                    except Exception:
-                        logger.debug("Tool end messenger notification failed", exc_info=True)
 
             elapsed_ms = (time.perf_counter() - start_ts) * 1000
             tool_span.set_attribute("execution.duration_ms", elapsed_ms)
@@ -2888,7 +2936,7 @@ class LiveOrchestrator:
             tool_span.set_attribute("result.type", type(result).__name__ if result else "None")
             tool_span.set_attribute("voicelive.tool.status", notify_status)
 
-            if is_control and batch.epoch != self._response_epoch:
+            if is_control and not is_handoff and batch.epoch != self._response_epoch:
                 if self.messenger:
                     await self.messenger.notify_tool_end(
                         call_id=call_id,
@@ -2952,236 +3000,71 @@ class LiveOrchestrator:
 
             # Handle handoff tools using unified HandoffService
             if is_handoff:
-                # Use HandoffService for consistent resolution across orchestrators
-                resolution = self.handoff_service.resolve_handoff(
-                    tool_name=name,
-                    tool_args=args,
-                    source_agent=self.active,
-                    current_system_vars=self._system_vars,
-                    user_last_utterance=last_user_message,
-                    tool_result=result if isinstance(result, dict) else None,
-                )
-
-                if not resolution.success:
-                    batch.outputs.append(
-                        (call_id, json.dumps({"success": False, "error": resolution.error}))
+                routing_status = "failed"
+                target = None
+                try:
+                    if batch.epoch != self._response_epoch:
+                        routing_status = "superseded"
+                        return False
+                    resolution = self.handoff_service.resolve_handoff(
+                        tool_name=name,
+                        tool_args=args,
+                        source_agent=self.active,
+                        current_system_vars=self._system_vars,
+                        user_last_utterance=last_user_message,
+                        tool_result=result,
                     )
-                    logger.warning(
-                        "Handoff resolution failed: %s | tool=%s",
-                        resolution.error,
-                        name,
+                    target = resolution.target_agent
+                    if not resolution.success:
+                        routing_status = "rejected"
+                        batch.outputs.append(
+                            (call_id, json.dumps({"success": False, "error": resolution.error}))
+                        )
+                        logger.warning("Handoff resolution failed: %s", resolution.error)
+                        tool_span.set_status(trace.StatusCode.ERROR, "handoff_resolution_failed")
+                        return False
+                    tool_span.set_attribute("voicelive.handoff.target_agent", target)
+                    tool_span.add_event("tool.handoff_triggered", {"target_agent": target})
+                    tool_span.set_attribute(
+                        "voicelive.handoff.share_context", resolution.share_context
                     )
-                    notify_status = "error"
-                    tool_span.set_status(trace.StatusCode.ERROR, "handoff_resolution_failed")
+                    tool_span.set_attribute(
+                        "voicelive.handoff.greet_on_switch", resolution.greet_on_switch
+                    )
+                    tool_span.set_attribute("voicelive.handoff.type", resolution.handoff_type)
+                    routing_status = await self._run_handoff_transition(
+                        resolution, result, last_user_message
+                    )
+                    tool_span.set_attribute("voicelive.handoff.status", routing_status)
+                    if routing_status == "response_failed":
+                        tool_span.set_status(trace.StatusCode.ERROR, routing_status)
+                    elif execution_success:
+                        tool_span.set_status(trace.StatusCode.OK)
+                    return routing_status == "switched"
+                except asyncio.CancelledError:
+                    routing_status = "superseded"
+                    raise
+                finally:
+                    # Reporting an executed outcome outlives permission to continue routing.
                     if self.messenger:
+                        notification_result = {
+                            **result,
+                            "handoff_transition": {
+                                "status": routing_status,
+                                "target_agent": target,
+                            },
+                        }
                         try:
                             await self.messenger.notify_tool_end(
                                 call_id=call_id,
                                 name=name,
                                 status=notify_status,
                                 elapsed_ms=(time.perf_counter() - start_ts) * 1000,
-                                result=result if isinstance(result, dict) else None,
-                                error=resolution.error or "handoff_resolution_failed",
+                                result=notification_result,
+                                error=error_payload,
                             )
                         except Exception:
                             logger.debug("Tool end messenger notification failed", exc_info=True)
-                    return False
-
-                target = resolution.target_agent
-                tool_span.set_attribute("voicelive.handoff.target_agent", target)
-                tool_span.add_event("tool.handoff_triggered", {"target_agent": target})
-                tool_span.set_attribute("voicelive.handoff.share_context", resolution.share_context)
-                tool_span.set_attribute(
-                    "voicelive.handoff.greet_on_switch", resolution.greet_on_switch
-                )
-                tool_span.set_attribute("voicelive.handoff.type", resolution.handoff_type)
-
-                # CRITICAL: Cancel any ongoing response from the OLD agent immediately.
-                # This prevents the old agent from saying "I'll connect you..." while
-                # the session switches to the new agent.
-                try:
-                    await self.conn.response.cancel()
-                    logger.debug("[Handoff] Cancelled old agent response before switch")
-                except Exception:
-                    pass  # No active response to cancel
-                if batch.epoch != self._response_epoch:
-                    return False
-
-                # Stop audio playback to prevent old agent's voice from continuing
-                if self.audio:
-                    try:
-                        await self.audio.stop_playback()
-                    except Exception:
-                        logger.debug("[Handoff] Audio stop failed", exc_info=True)
-                if batch.epoch != self._response_epoch:
-                    return False
-
-                # Use system_vars from HandoffService resolution
-                ctx = resolution.system_vars
-
-                logger.info("[Handoff Tool] '%s' triggered | %s → %s", name, self.active, target)
-
-                transition_epoch = await self._switch_to(target, ctx, expected_epoch=batch.epoch)
-                if transition_epoch is None:
-                    return False
-                self._last_user_message = None
-
-                if result.get("call_center_transfer"):
-                    transfer_args: dict[str, Any] = {}
-                    if self._transport_supports_acs() and self.call_connection_id:
-                        transfer_args["call_connection_id"] = self.call_connection_id
-                    if self.messenger:
-                        sess_id = getattr(self.messenger, "session_id", None)
-                        if sess_id:
-                            transfer_args["session_id"] = sess_id
-                    if transfer_args:
-                        self._call_center_triggered = True
-                        await self._trigger_call_center_transfer(transfer_args)
-                if self.messenger:
-                    try:
-                        await self.messenger.notify_tool_end(
-                            call_id=call_id,
-                            name=name,
-                            status=notify_status,
-                            elapsed_ms=(time.perf_counter() - start_ts) * 1000,
-                            result=result if isinstance(result, dict) else None,
-                            error=error_payload,
-                        )
-                    except Exception:
-                        logger.debug("Tool end messenger notification failed", exc_info=True)
-                if transition_epoch != self._response_epoch:
-                    return False
-
-                # NOTE: We intentionally do NOT send the handoff tool output back to the model.
-                # The old agent's tool call was an internal action that triggered the switch.
-                # Sending the output to the new agent's session would confuse it - the new
-                # agent would see a tool call it didn't make and might try to "complete" it.
-                # Instead, we trigger the new agent's response cleanly via additional_instructions.
-                logger.debug(
-                    "[Handoff] Skipping tool output injection | "
-                    "call_id=%s | The new agent will respond via additional_instructions",
-                    call_id,
-                )
-
-                # Trigger the new agent to respond naturally as itself
-                # Build context about the handoff for the new agent's instruction
-                handoff_ctx = ctx.get("handoff_context", {})
-                user_question = (
-                    handoff_ctx.get("question")
-                    or handoff_ctx.get("details")
-                    or last_user_message
-                    or "general inquiry"
-                )
-                handoff_summary = (
-                    result.get("handoff_summary", "") if isinstance(result, dict) else ""
-                )
-                previous_agent = self._system_vars.get("previous_agent", "previous agent")
-
-                # Get handoff mode from context (set by build_handoff_system_vars)
-                greet_on_switch = ctx.get("greet_on_switch", True)
-
-                # Trigger the new agent to respond immediately (no background task)
-                # The agent's system prompt already contains discrete/announced handoff instructions
-                # via is_handoff and greet_on_switch template variables.
-                #
-                # CRITICAL: Use additional_instructions (which APPENDS to system prompt)
-                # instead of ResponseCreateParams(instructions=...) which OVERRIDES it!
-                # The agent's prompt template has discrete handoff behavior built in.
-                try:
-                    # Build additional instruction to append (not override) the system prompt
-                    if greet_on_switch:
-                        # Announced mode: greeting will be spoken, then address request
-                        additional_instruction = (
-                            f'The customer\'s request: "{user_question}". '
-                            f"Address their request directly after your greeting."
-                        )
-                        if handoff_summary:
-                            additional_instruction += f" Context: {handoff_summary}"
-                    else:
-                        # Discrete mode: system prompt already has discrete handoff instructions
-                        # Just provide the user's question as context - don't override behavior
-                        additional_instruction = (
-                            f'The customer\'s request: "{user_question}". '
-                            f"Respond immediately without any greeting or introduction."
-                        )
-
-                        # CRITICAL FIX: For discrete handoffs, inject the user's question as
-                        # an explicit conversation item. This gives the model a concrete user
-                        # message to respond to, not just additional_instructions context.
-                        # Without this, the model may not generate a response because there's
-                        # no actual user turn in the conversation to respond to.
-                        if user_question and user_question != "general inquiry":
-                            try:
-                                text_part = InputTextContentPart(text=user_question)
-                                user_item = UserMessageItem(content=[text_part])
-                                await self.conn.conversation.item.create(item=user_item)
-                                logger.debug(
-                                    "[Handoff] Injected user question as conversation item: %s",
-                                    user_question[:50] if user_question else "none",
-                                )
-                            except Exception:
-                                logger.debug(
-                                    "[Handoff] Failed to inject user question item", exc_info=True
-                                )
-                    if transition_epoch != self._response_epoch:
-                        return False
-
-                    # Trigger response synchronously - no fire-and-forget background task
-                    # This ensures the handoff response is reliably triggered
-                    #
-                    # Use conn.response.create() with additional_instructions parameter
-                    # This APPENDS to the session's system prompt rather than overriding it
-                    #
-                    # Advance turn_id to create a new message segment for the new agent
-                    # This ensures the handoff response appears as a fresh message
-                    if self.messenger:
-                        self.messenger.advance_turn_for_tool()
-
-                    # CRITICAL: Clear pending greeting state BEFORE calling response.create()
-                    # The _switch_to() method sets _pending_greeting, and when session_ready
-                    # event arrives (from session.update()), _handle_session_ready() would try
-                    # to trigger another response via trigger_voicelive_response(). This causes
-                    # "Conversation already has an active response" error.
-                    # We handle the handoff response here with additional_instructions, so we
-                    # must prevent the competing greeting mechanism from also triggering.
-                    self._cancel_pending_greeting_tasks()
-                    self._pending_greeting = None
-                    self._pending_greeting_agent = None
-
-                    # CRITICAL: Set flag to prevent _handle_session_updated from cancelling
-                    # this response. The SESSION_UPDATED event from session.update() arrives
-                    # async and would cancel our handoff response without this guard.
-                    self._handoff_response_pending = True
-
-                    with tracer.start_as_current_span(
-                        "voicelive.handoff.response_create",
-                        kind=trace.SpanKind.SERVER,
-                        attributes=create_service_dependency_attrs(
-                            source_service="voicelive_orchestrator",
-                            target_service="azure_voicelive",
-                            call_connection_id=self.call_connection_id,
-                            session_id=(
-                                getattr(self.messenger, "session_id", None)
-                                if self.messenger
-                                else None
-                            ),
-                        ),
-                    ):
-                        await self.conn.response.create(
-                            additional_instructions=additional_instruction
-                        )
-                    logger.info(
-                        "[Handoff] Triggered new agent '%s' | greet=%s | question=%s",
-                        target,
-                        greet_on_switch,
-                        user_question[:50] if user_question else "none",
-                    )
-                except Exception as e:
-                    logger.warning("[Handoff] Failed to trigger response: %s", e)
-                    self._handoff_response_pending = False  # Reset flag on failure
-
-                tool_span.set_status(trace.StatusCode.OK)
-                return True
 
             else:
                 output_json = json.dumps(result)
@@ -3208,6 +3091,120 @@ class LiveOrchestrator:
                         logger.debug("Tool end messenger notification failed", exc_info=True)
                 tool_span.set_status(trace.StatusCode.OK)
                 return False
+
+    async def _run_handoff_transition(
+        self, resolution: HandoffResolution, result: dict[str, Any], last_user_message: str
+    ) -> Literal["switched", "superseded", "response_failed"]:
+        """Own cancel -> apply/replay -> response; release only this transition's state."""
+        ctx = resolution.system_vars
+        target = resolution.target_agent
+        self._bump_response_epoch("handoff")
+        transition = _HandoffTransition(
+            epoch=self._response_epoch,
+            user_messages=tuple(self._user_message_history),
+            assistant_message=None if ctx.get("handoff_context") else self._last_assistant_message,
+        )
+        self._handoff_transition = transition
+        self._cancel_pending_greeting_tasks()
+        self._pending_greeting = None
+        self._pending_greeting_agent = None
+
+        try:
+            try:
+                await self.conn.response.cancel()
+            except Exception:
+                logger.debug("No active response to cancel before handoff", exc_info=True)
+            if self._handoff_transition is not transition:
+                return "superseded"
+            if self.audio:
+                try:
+                    await self.audio.stop_playback()
+                except Exception:
+                    logger.debug("[Handoff] Audio stop failed", exc_info=True)
+            if self._handoff_transition is not transition:
+                return "superseded"
+
+            switched = await self._switch_to(target, ctx, transition=transition)
+            if switched is None:
+                return "superseded"
+            self._last_user_message = None
+            if result.get("call_center_transfer"):
+                transfer_args: dict[str, Any] = {}
+                if self._transport_supports_acs() and self.call_connection_id:
+                    transfer_args["call_connection_id"] = self.call_connection_id
+                if self.messenger:
+                    sess_id = getattr(self.messenger, "session_id", None)
+                    if sess_id:
+                        transfer_args["session_id"] = sess_id
+                if transfer_args:
+                    self._call_center_triggered = True
+                    await self._trigger_call_center_transfer(transfer_args)
+            if self._handoff_transition is not transition:
+                return "superseded"
+
+            handoff_ctx = ctx.get("handoff_context", {})
+            user_question = (
+                handoff_ctx.get("question")
+                or handoff_ctx.get("details")
+                or last_user_message
+                or "general inquiry"
+            )
+            if ctx.get("greet_on_switch", True):
+                additional_instruction = (
+                    f'The customer\'s request: "{user_question}". '
+                    "Address their request directly after your greeting."
+                )
+                if result.get("handoff_summary"):
+                    additional_instruction += f" Context: {result['handoff_summary']}"
+            else:
+                additional_instruction = (
+                    f'The customer\'s request: "{user_question}". '
+                    "Respond immediately without any greeting or introduction."
+                )
+                if user_question and user_question != "general inquiry":
+                    try:
+                        await self.conn.conversation.item.create(
+                            item=UserMessageItem(content=[InputTextContentPart(text=user_question)])
+                        )
+                    except Exception:
+                        logger.debug("[Handoff] Failed to inject user question", exc_info=True)
+            if self._handoff_transition is not transition:
+                return "superseded"
+
+            if self.messenger:
+                self.messenger.advance_turn_for_tool()
+            transition.phase = "responding"
+            try:
+                # Append, never replace the target's system prompt or replay old tool output.
+                with tracer.start_as_current_span(
+                    "voicelive.handoff.response_create",
+                    kind=trace.SpanKind.SERVER,
+                    attributes=create_service_dependency_attrs(
+                        source_service="voicelive_orchestrator",
+                        target_service="azure_voicelive",
+                        call_connection_id=self.call_connection_id,
+                        session_id=(
+                            getattr(self.messenger, "session_id", None) if self.messenger else None
+                        ),
+                    ),
+                ):
+                    await self.conn.response.create(additional_instructions=additional_instruction)
+            except Exception:
+                logger.warning("[Handoff] Failed to trigger response", exc_info=True)
+                return "response_failed" if self._handoff_transition is transition else "superseded"
+            if self._handoff_transition is not transition:
+                return "superseded"
+            transition.phase = "complete"
+            logger.info(
+                "[Handoff] Triggered new agent '%s' | greet=%s | question=%s",
+                target,
+                ctx.get("greet_on_switch", True),
+                user_question[:50],
+            )
+            return "switched"
+        finally:
+            if transition.phase != "complete" or transition.acknowledged:
+                self._release_handoff_transition(transition)
 
     # ═══════════════════════════════════════════════════════════════════════════
     # GREETING HELPERS

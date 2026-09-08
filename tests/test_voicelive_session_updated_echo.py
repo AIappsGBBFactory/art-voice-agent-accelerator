@@ -185,18 +185,25 @@ async def test_context_only_echo_still_verifies_the_session_contract():
 
 
 @pytest.mark.asyncio
-async def test_context_only_echo_preserves_pending_greeting_and_handoff_flags():
-    orch, conn, _audio, _messenger = _make_orchestrator()
+async def test_context_only_echo_preserves_pending_greeting_and_handoff_flags(monkeypatch):
+    from tests.test_voicelive_handoff_transition import dispatch_handoff, handoff_runtime
+
+    orch, conn, _ = handoff_runtime(monkeypatch)
+    for task in await dispatch_handoff(orch):
+        await task
+    transition = orch._handoff_transition
+    orch.agents[orch.active].prompt_template = "Test context instructions."
     orch._pending_greeting = "Hello there"
     orch._pending_greeting_agent = orch.active
-    orch._handoff_response_pending = True
 
     await orch._update_session_context()
     await orch._handle_session_updated(_event())
 
     assert orch._pending_greeting == "Hello there"
-    assert orch._handoff_response_pending is True
-    assert conn.response.creates == 0
+    assert orch._handoff_transition is transition
+    assert transition.acknowledged is False
+    conn.response.create.assert_awaited_once()
+    await orch.cancel_and_join_tasks()
 
 
 @pytest.mark.asyncio
@@ -257,16 +264,27 @@ async def test_bootstrap_echo_after_credits_are_dropped_by_an_agent_apply():
 
 
 @pytest.mark.asyncio
-async def test_bootstrap_echo_keeps_handoff_pending_shortcut():
-    orch, conn, audio, messenger = _make_orchestrator()
-    orch._handoff_response_pending = True
+async def test_bootstrap_echo_keeps_handoff_pending_shortcut(monkeypatch):
+    from tests.test_voicelive_handoff_transition import (
+        dispatch_handoff,
+        handoff_runtime,
+        session_ack,
+    )
 
-    await orch._handle_session_updated(_event())
+    orch, conn, _ = handoff_runtime(monkeypatch)
+    for task in await dispatch_handoff(orch):
+        await task
+    cancels = conn.response.cancel.await_count
+    stops = orch.audio.stop_playback.await_count
 
-    assert orch._handoff_response_pending is False
-    assert audio.calls == ["start_capture"], "handoff response must not be torn down"
-    assert conn.response.cancels == 0
-    assert len(messenger.session_updates) == 1
+    await session_ack(orch)
+
+    assert orch._handoff_transition is None
+    orch.audio.start_capture.assert_awaited_once()
+    assert orch.audio.stop_playback.await_count == stops
+    assert conn.response.cancel.await_count == cancels
+    orch.messenger.send_session_update.assert_awaited_once()
+    await orch.cancel_and_join_tasks()
 
 
 @pytest.mark.asyncio
