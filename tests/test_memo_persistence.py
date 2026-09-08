@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from src.redis import manager as redis_module
 from src.redis.manager import AzureRedisManager
 from src.stateful.state_managment import MemoManager
+from src.tools.latency_helpers import PersistentLatency
 
 
 class ControlledRedis:
@@ -77,7 +78,7 @@ async def storage(monkeypatch):
         yield memo, redis, client
     finally:
         client.closing = True
-        for gate in client.releases.values():
+        for gate in tuple(client.releases.values()):
             gate.set()
         await asyncio.wait_for(memo.flush_pending_persist(), timeout=5)
 
@@ -522,3 +523,215 @@ async def test_async_restoration_propagates_cancellation(storage):
     with pytest.raises(asyncio.CancelledError):
         await restore
     client.release("read")
+
+
+def dtmf_context(memo, redis, tone, sequence_id=None):
+    from apps.artagent.backend.api.v1.events.types import ACSEventTypes, CallEventContext
+    from azure.core.messaging import CloudEvent
+
+    return CallEventContext(
+        event=CloudEvent(
+            source="test",
+            type=ACSEventTypes.DTMF_TONE_RECEIVED,
+            data={"tone": tone, "sequenceId": sequence_id},
+        ),
+        call_connection_id="ordering",
+        event_type=ACSEventTypes.DTMF_TONE_RECEIVED,
+        memo_manager=memo,
+        redis_mgr=redis,
+    )
+
+
+@pytest.mark.parametrize(
+    "tone,sequence_id,initial,expected,validated",
+    [
+        ("5", None, "12", "125", None),
+        ("three", 3, "12", "123", None),
+        ("star", None, "123", "", None),
+        ("pound", None, "1234", "", True),
+        ("pound", None, "123", "", False),
+    ],
+)
+async def test_dtmf_handler_orders_persistence_behind_active_write(
+    storage, tone, sequence_id, initial, expected, validated
+):
+    from apps.artagent.backend.api.v1.events.acs_events import CallEventHandlers
+
+    memo, redis, client = storage
+    memo.set_context("dtmf_sequence", initial)
+    await submit_background(memo, "active")
+    await client.wait_started("active")
+    memo.set_context("revision", "dtmf")
+    handler = asyncio.create_task(
+        CallEventHandlers.handle_dtmf_tone_received(dtmf_context(memo, redis, tone, sequence_id))
+    )
+    await asyncio.sleep(0)
+    assert memo.get_context("dtmf_sequence") == expected
+    assert not handler.done()
+    assert client.completed == []
+    client.release("dtmf")
+    client.release("active")
+
+    await handler
+    assert await memo.flush_pending_persist(raise_on_failure=True)
+    assert client.completed == ["active", "dtmf"]
+    persisted = json.loads(client.store["session:ordering"]["corememory"])
+    assert persisted["dtmf_sequence"] == expected
+    if validated is not None:
+        assert persisted["dtmf_validated"] is validated
+        assert persisted["entered_pin"] == (initial if validated else None)
+
+
+async def test_dtmf_handler_preserves_local_only_and_invalid_tone_behavior(storage):
+    from apps.artagent.backend.api.v1.events.acs_events import CallEventHandlers
+
+    memo, _, client = storage
+    memo.set_context("dtmf_sequence", "12")
+    await CallEventHandlers.handle_dtmf_tone_received(dtmf_context(memo, None, "3"))
+    assert memo.get_context("dtmf_sequence") == "123"
+    await CallEventHandlers.handle_dtmf_tone_received(dtmf_context(memo, None, "invalid"))
+    assert memo.get_context("dtmf_sequence") == "123"
+    assert client.completed == []
+
+
+async def test_dtmf_handler_surfaces_persistence_failure(storage):
+    from apps.artagent.backend.api.v1.events.acs_events import CallEventHandlers
+
+    memo, redis, client = storage
+    await submit_background(memo, "active")
+    await client.wait_started("active")
+    memo.set_context("revision", "dtmf")
+    client.failures.add("dtmf")
+    handler = asyncio.create_task(
+        CallEventHandlers.handle_dtmf_tone_received(dtmf_context(memo, redis, "5"))
+    )
+    await asyncio.sleep(0)
+    client.release("dtmf")
+    client.release("active")
+    with pytest.raises(RuntimeError, match="Redis write returned failure"):
+        await handler
+    assert not await memo.flush_pending_persist()
+    assert memo.get_context("dtmf_sequence") == "5"
+    assert client.completed == ["active"]
+
+
+async def test_dtmf_handler_cancellation_does_not_discard_queued_tone(storage):
+    from apps.artagent.backend.api.v1.events.acs_events import CallEventHandlers
+
+    memo, redis, client = storage
+    await submit_background(memo, "active")
+    await client.wait_started("active")
+    memo.set_context("revision", "dtmf")
+    handler = asyncio.create_task(
+        CallEventHandlers.handle_dtmf_tone_received(dtmf_context(memo, redis, "5"))
+    )
+    await asyncio.sleep(0)
+    handler.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await handler
+    client.release("dtmf")
+    client.release("active")
+    assert await memo.flush_pending_persist(raise_on_failure=True)
+    assert json.loads(client.store["session:ordering"]["corememory"])["dtmf_sequence"] == "5"
+
+
+async def test_latency_stop_submits_before_immediate_flush_with_active_write(storage):
+    memo, redis, client = storage
+    await submit_background(memo, "active")
+    await client.wait_started("active")
+    memo.set_context("revision", "latency")
+    latency = PersistentLatency(memo)
+    latency.start("llm")
+    sample = latency.stop("llm", redis_mgr=redis, meta={"turn": 1})
+    assert sample.stage == "llm"
+    assert sample.dur >= 0
+    assert client.completed == []
+    client.release("latency")
+    client.release("active")
+
+    # No scheduling yield is needed for stop's snapshot to join this boundary.
+    assert await memo.flush_pending_persist(raise_on_failure=True)
+    assert client.completed == ["active", "latency"]
+    restored = await MemoManager.from_redis_async("ordering", redis)
+    persisted = restored.get_context("latency")
+    samples = persisted["runs"][persisted["current_run_id"]]["samples"]
+    assert samples == [
+        {
+            "stage": sample.stage,
+            "start": sample.start,
+            "end": sample.end,
+            "dur": sample.dur,
+            "meta": {"turn": 1},
+        }
+    ]
+
+
+async def test_latency_stop_write_failure_is_visible_to_flush(storage):
+    memo, redis, client = storage
+    await submit_background(memo, "active")
+    await client.wait_started("active")
+    memo.set_context("revision", "latency")
+    client.failures.add("latency")
+    latency = PersistentLatency(memo)
+    latency.start("llm")
+    assert latency.stop("llm", redis_mgr=redis) is not None
+    client.release("latency")
+    client.release("active")
+    with pytest.raises(RuntimeError, match="Redis write returned failure"):
+        await memo.flush_pending_persist(raise_on_failure=True)
+
+
+async def test_latency_stop_submission_errors_propagate(storage):
+    memo, redis, _ = storage
+    memo.set_context("unserializable", object())
+    latency = PersistentLatency(memo)
+    latency.start("llm")
+    with pytest.raises(TypeError):
+        latency.stop("llm", redis_mgr=redis)
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_latency_stop_retains_synchronous_off_loop_path(monkeypatch, failure):
+    client = MagicMock()
+    client.hset.return_value = 0
+    if failure:
+        client.hset.side_effect = ValueError("synchronous write failed")
+    monkeypatch.setattr(redis_module.redis, "Redis", lambda **kwargs: client)
+    redis = AzureRedisManager(
+        host="example.redis.local", access_key="test", credential=object(), ssl=False
+    )
+    memo = MemoManager("sync-latency")
+    latency = PersistentLatency(memo)
+    latency.start("llm")
+    if failure:
+        with pytest.raises(ValueError, match="synchronous write failed"):
+            latency.stop("llm", redis_mgr=redis)
+    else:
+        sample = latency.stop("llm", redis_mgr=redis)
+        assert sample.stage == "llm"
+        snapshot = client.hset.call_args.kwargs["mapping"]
+        assert "latency" in json.loads(snapshot["corememory"])
+    client.hset.assert_called_once()
+    assert memo._pending_persist_task is None
+
+
+def test_schedule_persist_requires_running_loop():
+    memo = MemoManager("no-loop", redis_mgr=MagicMock())
+    with pytest.raises(RuntimeError, match="no running event loop"):
+        memo.schedule_persist()
+    assert not memo._persist_queue
+
+
+async def test_schedule_persist_rejects_foreign_loop_during_active_write(storage):
+    memo, redis, client = storage
+    await submit_background(memo, "active")
+    await client.wait_started("active")
+
+    async def submit_from_foreign_loop():
+        memo.schedule_persist(redis)
+
+    with pytest.raises(RuntimeError, match="owning event loop"):
+        await asyncio.to_thread(asyncio.run, submit_from_foreign_loop())
+    client.release("active")
+    assert await memo.flush_pending_persist(raise_on_failure=True)
+    assert client.completed == ["active"]

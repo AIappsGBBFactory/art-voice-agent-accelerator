@@ -145,11 +145,15 @@ class TestCallEventHandlers:
 
         # Mock current sequence
         mock_context.memo_manager.get_context.return_value = "123"
+        mock_context.memo_manager.persist_to_redis_async = AsyncMock(return_value=True)
 
         await CallEventHandlers.handle_dtmf_tone_received(mock_context)
 
         # Should update DTMF sequence
         mock_context.memo_manager.update_context.assert_called()
+        mock_context.memo_manager.persist_to_redis_async.assert_awaited_once_with(
+            mock_context.redis_mgr, raise_on_failure=True
+        )
 
     async def test_extract_caller_id_phone_number(self):
         """Test caller ID extraction from phone number."""

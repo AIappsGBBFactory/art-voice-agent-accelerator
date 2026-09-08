@@ -493,6 +493,13 @@ class MemoManager:
         *,
         background: bool,
     ) -> _PendingWrite:
+        loop = asyncio.get_running_loop()
+        if (
+            self._pending_persist_task
+            and not self._pending_persist_task.done()
+            and self._pending_persist_task.get_loop() is not loop
+        ):
+            raise RuntimeError("Persistence submissions must use the owning event loop")
         if self._pending_persist_task and self._pending_persist_task.done():
             self._check_persist_writer(self._pending_persist_task)
         if self._persist_writer_error is not None:
@@ -516,7 +523,7 @@ class MemoManager:
             snapshot=snapshot,
             ttl_seconds=ttl_seconds,
             background=background,
-            completion=asyncio.get_running_loop().create_future(),
+            completion=loop.create_future(),
         )
         self._persist_queue.append(request)
         if self._pending_persist_task is None or self._pending_persist_task.done():
@@ -587,6 +594,20 @@ class MemoManager:
         cancelled or superseded. Missing managers and serialization errors
         raise at submission; write errors are logged and surfaced by
         ``flush_pending_persist``.
+        """
+        self.schedule_persist(redis_mgr, ttl_seconds)
+
+    def schedule_persist(
+        self,
+        redis_mgr: AzureRedisManager | None = None,
+        ttl_seconds: int | None = None,
+    ) -> None:
+        """Submit a background snapshot immediately from an owning-loop callback.
+
+        This synchronous submission has the same coalescing/error contract as
+        ``persist_background``. A running event loop is required. Capturing and
+        enqueueing happen before return, so an immediate flush includes this
+        snapshot without needing a separately scheduled submission task.
         """
         mgr = redis_mgr or self._redis_manager
         if not mgr:

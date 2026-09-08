@@ -36,6 +36,7 @@ available and keep their existing manager-retention behavior.
 | Operation | Contract |
 | --- | --- |
 | `await memo.persist_background(redis_mgr=None, ttl_seconds=None)` | Captures both JSON fields immediately, without an intervening await, then schedules persistence. Adjacent pending background requests coalesce only when Redis manager identity and TTL match. Missing manager or unserializable state raises at submission. |
+| `memo.schedule_persist(redis_mgr=None, ttl_seconds=None)` | Same background submission from a synchronous callback running on the owning event loop. Captures and queues before returning, so an immediate flush includes it. Requires a running loop; rejects a foreign loop while the writer is active. |
 | `await memo.persist_to_redis_async(redis_mgr, ttl_seconds=None, *, raise_on_failure=False)` | Captures a direct snapshot and waits for its ordered write and requested expiry. Never coalesces a direct snapshot or coalesces background requests across it. Returns `True`/`False`; strict mode raises the error. |
 | `await memo.flush_pending_persist(*, raise_on_failure=False)` | Waits for the requests submitted before entry and reports their failures. Does not capture currently unsaved state or stop new submissions. Returns `True`/`False`; strict mode raises the first observed failure after the entire boundary finishes. |
 | `memo.cancel_pending_persist()` | Withdraws only not-started background snapshots. Returns whether any were withdrawn. Does not cancel an active write or a direct request. Withdrawal is reported as failure by flush, not as durability. |
@@ -139,18 +140,29 @@ configuration stores. Their owners must integrate the lifecycle and handle
 strict errors explicitly.
 
 The existing registry and unified-orchestrator background callers pass Redis
-explicitly. Remaining synchronous callers needing coordinated adoption are
-`CallEventHandlers._update_dtmf_sequence` and `_validate_sequence` in
-`apps/artagent/backend/api/v1/events/acs_events.py`, and the latency persistence
-call in `src/tools/latency_helpers.py`. They now receive an actionable overlap
-error when the same instance has async writes outstanding; they must use the
-ordered async path rather than bypass the writer or assume the sync call waits.
+explicitly. `CallEventHandlers.handle_dtmf_tone_received` and its private
+`_update_dtmf_sequence` / `_validate_sequence` helpers now await checked ordered
+persistence. Digit ordering, clear, PIN validation, and local-only behavior are
+unchanged. Persistence errors propagate, and cancelling a handler's waiter does
+not discard its queued tone snapshot. The separately registered
+`DTMFValidationLifecycle` handler is unchanged by this migration.
+
+`PersistentLatency.stop` in `src/tools/latency_helpers.py` remains synchronous and
+returns its `StageSample`. On the owning event loop it uses `schedule_persist`:
+submission completes before return, without `create_task` delaying capture past
+an immediate flush. Off-loop standalone callers retain synchronous persistence
+when no async writer is outstanding. Submission/off-loop write errors propagate;
+on-loop write errors surface in the final flush. The method must not be called
+from a foreign thread while the MemoManager is in active use on another loop.
 
 ## Focused regression suite
 
 ```bash
 python -m pytest tests/test_memo_optimization.py tests/test_memo_persistence.py \
-    tests/test_redis_manager.py tests/test_session_agent_redis_roundtrip.py -q
+    tests/test_redis_manager.py tests/test_session_agent_redis_roundtrip.py \
+    tests/test_session_agent_manager.py tests/test_acs_events_handlers.py \
+    tests/test_dtmf_validation.py tests/test_dtmf_validation_failure_cancellation.py \
+    -q -o addopts=-ra
 ```
 
 The controlled Redis client exercises production MemoManager methods, production
@@ -158,4 +170,7 @@ Redis hash operations, and actual executor threads. It releases newer writes
 before older ones to expose forbidden overlap, and covers coalescing, direct
 barriers, waiter/flush cancellation, failure reporting, final-state flush, TTL,
 full-state preservation, restoration parity, and the separate-instance limit.
+Real DTMF and latency callback paths also run behind an outstanding executor
+write, including immediate flush, cancellation/failure handling, and off-loop
+synchronous latency compatibility.
 No live Redis or Azure service is used.
