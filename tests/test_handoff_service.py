@@ -11,13 +11,11 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from apps.artagent.backend.voice.shared.handoff_service import (
     HandoffResolution,
     HandoffService,
     create_handoff_service,
 )
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # FIXTURES
@@ -83,8 +81,8 @@ class TestIsHandoff:
             "apps.artagent.backend.voice.shared.handoff_service.registry_is_handoff_tool"
         ) as mock_check:
             mock_check.return_value = True
-            assert service.is_handoff("handoff_fraud") is True
-            mock_check.assert_called_once_with("handoff_fraud")
+            assert service.is_handoff("external_handoff") is True
+            mock_check.assert_called_once_with("external_handoff")
 
     def test_non_handoff_tool(self, service):
         """Non-handoff tools should return False."""
@@ -149,13 +147,13 @@ class TestResolveHandoff:
 
     def test_discrete_handoff_resolution(self, service):
         """Should respect discrete handoff type from scenario config."""
-        with patch(
-            "apps.artagent.backend.voice.shared.handoff_service.get_handoff_config"
-        ) as mock_config:
+        with patch.object(service, "_get_scenario") as mock_scenario:
+            mock_config = mock_scenario.return_value.get_handoff_config
             mock_config.return_value = MagicMock(
                 type="discrete",
                 share_context=True,
                 greet_on_switch=False,
+                to_agent="FraudAgent",
             )
 
             resolution = service.resolve_handoff(
@@ -426,9 +424,7 @@ class TestGenericHandoff:
             ),
         )
 
-        with patch(
-            "apps.artagent.backend.voice.shared.handoff_service.load_scenario"
-        ) as mock_load:
+        with patch("apps.artagent.backend.voice.shared.handoff_service.load_scenario") as mock_load:
             mock_load.return_value = mock_scenario
 
             service = HandoffService(
@@ -462,9 +458,7 @@ class TestGenericHandoff:
             generic_handoff=GenericHandoffConfig(enabled=False),
         )
 
-        with patch(
-            "apps.artagent.backend.voice.shared.handoff_service.load_scenario"
-        ) as mock_load:
+        with patch("apps.artagent.backend.voice.shared.handoff_service.load_scenario") as mock_load:
             mock_load.return_value = mock_scenario
 
             service = HandoffService(
@@ -499,9 +493,7 @@ class TestGenericHandoff:
             ),
         )
 
-        with patch(
-            "apps.artagent.backend.voice.shared.handoff_service.load_scenario"
-        ) as mock_load:
+        with patch("apps.artagent.backend.voice.shared.handoff_service.load_scenario") as mock_load:
             mock_load.return_value = mock_scenario
 
             service = HandoffService(
@@ -542,9 +534,7 @@ class TestGenericHandoff:
             generic_handoff=GenericHandoffConfig(enabled=True),
         )
 
-        with patch(
-            "apps.artagent.backend.voice.shared.handoff_service.load_scenario"
-        ) as mock_load:
+        with patch("apps.artagent.backend.voice.shared.handoff_service.load_scenario") as mock_load:
             mock_load.return_value = mock_scenario
 
             service = HandoffService(
@@ -576,9 +566,7 @@ class TestGenericHandoff:
             generic_handoff=GenericHandoffConfig(enabled=True),
         )
 
-        with patch(
-            "apps.artagent.backend.voice.shared.handoff_service.load_scenario"
-        ) as mock_load:
+        with patch("apps.artagent.backend.voice.shared.handoff_service.load_scenario") as mock_load:
             mock_load.return_value = mock_scenario
 
             service = HandoffService(
@@ -615,9 +603,7 @@ class TestGenericHandoff:
         assert resolution.success is False
         assert "not allowed" in resolution.error
 
-    def test_generic_handoff_extracts_target_from_tool_result(
-        self, mock_agents_for_generic
-    ):
+    def test_generic_handoff_extracts_target_from_tool_result(self, mock_agents_for_generic):
         """Should extract target from tool_result if not in args."""
         from apps.artagent.backend.registries.scenariostore.loader import (
             GenericHandoffConfig,
@@ -630,9 +616,7 @@ class TestGenericHandoff:
             generic_handoff=GenericHandoffConfig(enabled=True),
         )
 
-        with patch(
-            "apps.artagent.backend.voice.shared.handoff_service.load_scenario"
-        ) as mock_load:
+        with patch("apps.artagent.backend.voice.shared.handoff_service.load_scenario") as mock_load:
             mock_load.return_value = mock_scenario
 
             service = HandoffService(
@@ -670,7 +654,9 @@ class TestGenericHandoffBehavior:
 
         fraud_agent = MagicMock(name="FraudAgent")
         fraud_agent.render_greeting.return_value = "Hi, I'm the fraud specialist."
-        fraud_agent.render_return_greeting.return_value = "Welcome back! Let me continue with fraud."
+        fraud_agent.render_return_greeting.return_value = (
+            "Welcome back! Let me continue with fraud."
+        )
 
         investment = MagicMock(name="InvestmentAdvisor")
         investment.render_greeting.return_value = "Hello, I'm your investment advisor."
@@ -699,9 +685,7 @@ class TestGenericHandoffBehavior:
             ),
         )
 
-        with patch(
-            "apps.artagent.backend.voice.shared.handoff_service.load_scenario"
-        ) as mock_load:
+        with patch("apps.artagent.backend.voice.shared.handoff_service.load_scenario") as mock_load:
             mock_load.return_value = mock_scenario
 
             service = HandoffService(
@@ -750,9 +734,7 @@ class TestGenericHandoffBehavior:
             ),
         )
 
-        with patch(
-            "apps.artagent.backend.voice.shared.handoff_service.load_scenario"
-        ) as mock_load:
+        with patch("apps.artagent.backend.voice.shared.handoff_service.load_scenario") as mock_load:
             mock_load.return_value = mock_scenario
 
             service = HandoffService(
@@ -801,9 +783,7 @@ class TestGenericHandoffBehavior:
             ),
         )
 
-        with patch(
-            "apps.artagent.backend.voice.shared.handoff_service.load_scenario"
-        ) as mock_load:
+        with patch("apps.artagent.backend.voice.shared.handoff_service.load_scenario") as mock_load:
             mock_load.return_value = mock_scenario
 
             service = HandoffService(
@@ -850,9 +830,7 @@ class TestGenericHandoffBehavior:
             ),
         )
 
-        with patch(
-            "apps.artagent.backend.voice.shared.handoff_service.load_scenario"
-        ) as mock_load:
+        with patch("apps.artagent.backend.voice.shared.handoff_service.load_scenario") as mock_load:
             mock_load.return_value = mock_scenario
 
             service = HandoffService(
@@ -888,9 +866,7 @@ class TestGenericHandoffBehavior:
             ),
         )
 
-        with patch(
-            "apps.artagent.backend.voice.shared.handoff_service.load_scenario"
-        ) as mock_load:
+        with patch("apps.artagent.backend.voice.shared.handoff_service.load_scenario") as mock_load:
             mock_load.return_value = mock_scenario
 
             service = HandoffService(
@@ -940,9 +916,7 @@ class TestGenericHandoffBehavior:
             ),
         )
 
-        with patch(
-            "apps.artagent.backend.voice.shared.handoff_service.load_scenario"
-        ) as mock_load:
+        with patch("apps.artagent.backend.voice.shared.handoff_service.load_scenario") as mock_load:
             mock_load.return_value = mock_scenario
 
             service = HandoffService(
@@ -988,9 +962,7 @@ class TestGenericHandoffBehavior:
             ),
         )
 
-        with patch(
-            "apps.artagent.backend.voice.shared.handoff_service.load_scenario"
-        ) as mock_load:
+        with patch("apps.artagent.backend.voice.shared.handoff_service.load_scenario") as mock_load:
             mock_load.return_value = mock_scenario
 
             service = HandoffService(
@@ -1182,5 +1154,3 @@ class TestScenarioConfigGenericHandoff:
         # Agent3 is not allowed
         config = scenario.get_generic_handoff_config("Agent1", "Agent3")
         assert config is None
-
-

@@ -36,7 +36,6 @@ from contextlib import suppress
 from types import SimpleNamespace
 
 import pytest
-
 from apps.artagent.backend.registries.agentstore.base import (
     HandoffConfig,
     ModelConfig,
@@ -171,14 +170,15 @@ def _arm_greeting(orch, greeting: str = "Hi, welcome to Contoso Bank. I'm Bankin
 def _record_triggers(orch, *, fail: bool = False) -> list[str | None]:
     said: list[str | None] = []
 
-    async def _trigger(_conn, say=None, **_kwargs):
+    async def _trigger(event):
+        say = event.response.instructions.split("\n\n", 1)[1][1:-1]
         said.append(say)
         if fail:
             raise RuntimeError("trigger_voicelive_response rejected")
         # Whatever mechanism wins, a response is now genuinely in flight.
         orch._active_response_id = f"resp-{len(said)}"
 
-    orch.agents[orch.active].trigger_voicelive_response = _trigger
+    orch.conn.send = _trigger
     return said
 
 

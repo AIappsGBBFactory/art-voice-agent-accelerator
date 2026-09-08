@@ -26,7 +26,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-
 from apps.artagent.backend.registries.agentstore.base import (
     HandoffConfig,
     ModelConfig,
@@ -34,7 +33,6 @@ from apps.artagent.backend.registries.agentstore.base import (
     VoiceConfig,
 )
 from apps.artagent.backend.voice.voicelive.orchestrator import LiveOrchestrator
-
 
 # =============================================================================
 # Fakes
@@ -279,10 +277,10 @@ async def test_bootstrap_echo_triggers_pending_greeting():
 
     said: list = []
 
-    async def _trigger(_conn, say=None, **_kwargs):
-        said.append(say)
+    async def _trigger(event):
+        said.append(event.response.instructions.split("\n\n", 1)[1][1:-1])
 
-    orch.agents[orch.active].trigger_voicelive_response = _trigger
+    conn.send = _trigger
 
     await orch._handle_session_updated(_event())
 

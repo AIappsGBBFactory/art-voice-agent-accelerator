@@ -42,7 +42,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-
 from apps.artagent.backend.registries.agentstore.base import (
     HandoffConfig,
     ModelConfig,
@@ -50,7 +49,6 @@ from apps.artagent.backend.registries.agentstore.base import (
     VoiceConfig,
 )
 from apps.artagent.backend.voice.voicelive.orchestrator import LiveOrchestrator
-
 
 # =============================================================================
 # Fakes
@@ -310,17 +308,20 @@ def test_recap_carries_restored_turns_but_not_live_ones():
 
 
 @pytest.mark.asyncio
-async def test_agent_switch_pushes_full_session_and_keeps_bootstrap_semantics():
+async def test_agent_switch_pushes_full_session_and_keeps_bootstrap_semantics(monkeypatch):
     first, second = _make_agent("DedupAgent"), _make_agent("SecondAgent")
     orch, conn, audio, messenger = _make_orchestrator(agents=[first, second])
     orch._active_response_id = "resp-1"
 
     applied: list[str] = []
 
-    async def _apply(_conn, **kwargs):
+    async def _apply(agent, _conn, **kwargs):
+        assert agent is second
         applied.append(second.name)
 
-    second.apply_voicelive_session = _apply
+    from apps.artagent.backend.voice.voicelive import session as voicelive_session
+
+    monkeypatch.setattr(voicelive_session, "apply_voicelive_session", _apply)
 
     # A context refresh is outstanding when the switch happens.
     await orch._update_session_context()

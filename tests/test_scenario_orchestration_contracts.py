@@ -309,45 +309,25 @@ class TestVoiceLiveAgentAdapterConstruction:
 
     def test_parses_modalities(self, unified_agent):
         """Should parse modalities from session config."""
-        try:
-            from apps.artagent.backend.voice.voicelive.agent_adapter import (
-                VoiceLiveAgentAdapter,
-            )
-        except ImportError:
-            pytest.skip("VoiceLive SDK not available")
+        from apps.artagent.backend.voice.voicelive.session import get_voicelive_modalities
 
-        adapter = VoiceLiveAgentAdapter(unified_agent)
-
-        # Should have parsed modalities
-        assert len(adapter.modalities) == 2
+        assert len(get_voicelive_modalities(unified_agent)) == 2
 
     def test_passthrough_properties(self, unified_agent):
         """Should passthrough name, description from underlying agent."""
-        try:
-            from apps.artagent.backend.voice.voicelive.agent_adapter import (
-                VoiceLiveAgentAdapter,
-            )
-        except ImportError:
-            pytest.skip("VoiceLive SDK not available")
+        from apps.artagent.backend.registries.definitions import (
+            agent_from_payload,
+            definition_payload,
+        )
 
-        adapter = VoiceLiveAgentAdapter(unified_agent)
-
-        assert adapter.name == unified_agent.name
-        assert adapter.description == unified_agent.description
-        assert adapter.voice_name == unified_agent.voice.name
+        restored = agent_from_payload(definition_payload(unified_agent))
+        assert restored.name == unified_agent.name
+        assert restored.description == unified_agent.description
+        assert restored.voice.name == unified_agent.voice.name
 
     def test_greeting_passthrough(self, unified_agent):
         """render_greeting should delegate to underlying agent."""
-        try:
-            from apps.artagent.backend.voice.voicelive.agent_adapter import (
-                VoiceLiveAgentAdapter,
-            )
-        except ImportError:
-            pytest.skip("VoiceLive SDK not available")
-
-        adapter = VoiceLiveAgentAdapter(unified_agent)
-
-        greeting = adapter.render_greeting({"caller_name": "Test"})
+        greeting = unified_agent.render_greeting({"caller_name": "Test"})
 
         assert greeting is not None
         assert "Test" in greeting
@@ -365,12 +345,9 @@ class TestVoiceLiveAgentAdapterToolBuilding:
 
     def test_builds_function_tools(self, unified_agent):
         """Should build FunctionTool objects from tool schemas."""
-        try:
-            from apps.artagent.backend.voice.voicelive.agent_adapter import (
-                VoiceLiveAgentAdapter,
-            )
-        except ImportError:
-            pytest.skip("VoiceLive SDK not available")
+        from apps.artagent.backend.voice.voicelive.session import (
+            _build_voicelive_tools_with_handoffs,
+        )
 
         with patch.object(
             unified_agent,
@@ -386,8 +363,7 @@ class TestVoiceLiveAgentAdapterToolBuilding:
                 }
             ],
         ):
-            adapter = VoiceLiveAgentAdapter(unified_agent)
-            tools = adapter.tools
+            tools = _build_voicelive_tools_with_handoffs(unified_agent)
 
             assert len(tools) == 1
             assert tools[0].name == "test_tool"
@@ -752,31 +728,19 @@ class TestVoicePayloadContracts:
 
     def test_azure_standard_voice_payload(self, unified_agent):
         """Should build correct payload for azure-standard voice."""
-        try:
-            from apps.artagent.backend.voice.voicelive.agent_adapter import (
-                VoiceLiveAgentAdapter,
-            )
-            from azure.ai.voicelive.models import AzureStandardVoice
-        except ImportError:
-            pytest.skip("VoiceLive SDK not available")
+        from apps.artagent.backend.voice.voicelive.session import build_voicelive_voice
+        from azure.ai.voicelive.models import AzureStandardVoice
 
-        adapter = VoiceLiveAgentAdapter(unified_agent)
-        payload = adapter._build_voice_payload()
+        payload = build_voicelive_voice(unified_agent)
 
         assert isinstance(payload, AzureStandardVoice)
         assert payload.name == "en-US-JennyNeural"
 
     def test_voice_style_applied(self, unified_agent):
         """Voice style from config should be applied."""
-        try:
-            from apps.artagent.backend.voice.voicelive.agent_adapter import (
-                VoiceLiveAgentAdapter,
-            )
-        except ImportError:
-            pytest.skip("VoiceLive SDK not available")
+        from apps.artagent.backend.voice.voicelive.session import build_voicelive_voice
 
-        adapter = VoiceLiveAgentAdapter(unified_agent)
-        payload = adapter._build_voice_payload()
+        payload = build_voicelive_voice(unified_agent)
 
         # Style should be passed to voice payload
         assert payload.style == "friendly"
@@ -795,17 +759,18 @@ class TestToolChoiceContracts:
     3. Passed correctly to session update
     """
 
-    def test_default_tool_choice_is_auto(self, unified_agent):
+    @pytest.mark.asyncio
+    async def test_default_tool_choice_is_auto(self, unified_agent):
         """Default tool_choice should be 'auto'."""
-        try:
-            from apps.artagent.backend.voice.voicelive.agent_adapter import (
-                VoiceLiveAgentAdapter,
-            )
-        except ImportError:
-            pytest.skip("VoiceLive SDK not available")
+        from unittest.mock import AsyncMock, MagicMock
 
-        adapter = VoiceLiveAgentAdapter(unified_agent)
-        assert adapter.tool_choice == "auto"
+        from apps.artagent.backend.voice.voicelive.session import apply_voicelive_session
+
+        conn = MagicMock()
+        conn.session.update = AsyncMock()
+        await apply_voicelive_session(unified_agent, conn)
+        request = conn.session.update.call_args.kwargs["session"]
+        assert request.tool_choice == "auto"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -889,32 +854,20 @@ class TestVADConfigurationContracts:
 
     def test_semantic_vad_default(self, unified_agent):
         """Default VAD type should be semantic."""
-        try:
-            from apps.artagent.backend.voice.voicelive.agent_adapter import (
-                VoiceLiveAgentAdapter,
-            )
-            from azure.ai.voicelive.models import AzureSemanticVad
-        except ImportError:
-            pytest.skip("VoiceLive SDK not available")
+        from apps.artagent.backend.voice.voicelive.session import build_voicelive_vad
+        from azure.ai.voicelive.models import AzureSemanticVad
 
-        adapter = VoiceLiveAgentAdapter(unified_agent)
-
-        assert isinstance(adapter.turn_detection, AzureSemanticVad)
+        assert isinstance(build_voicelive_vad(unified_agent), AzureSemanticVad)
 
     def test_vad_params_passed(self, unified_agent):
         """VAD parameters should be passed correctly."""
-        try:
-            from apps.artagent.backend.voice.voicelive.agent_adapter import (
-                VoiceLiveAgentAdapter,
-            )
-        except ImportError:
-            pytest.skip("VoiceLive SDK not available")
+        from apps.artagent.backend.voice.voicelive.session import build_voicelive_vad
 
-        adapter = VoiceLiveAgentAdapter(unified_agent)
+        vad = build_voicelive_vad(unified_agent)
 
         # From session config
-        assert adapter.turn_detection.threshold == 0.5
-        assert adapter.turn_detection.silence_duration_ms == 500
+        assert vad.threshold == 0.5
+        assert vad.silence_duration_ms == 500
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

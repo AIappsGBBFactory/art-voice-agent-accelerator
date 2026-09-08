@@ -24,7 +24,6 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-
 from apps.artagent.backend.registries.agentstore.base import (
     HandoffConfig,
     ModelConfig,
@@ -32,11 +31,11 @@ from apps.artagent.backend.registries.agentstore.base import (
     VoiceConfig,
     VoiceLiveBYOMConfig,
 )
+from apps.artagent.backend.voice.voicelive import session as voicelive_session
 from apps.artagent.backend.voice.voicelive.orchestrator import (
     LiveOrchestrator,
     verify_voicelive_session_contract,
 )
-
 
 # =============================================================================
 # Fakes
@@ -106,7 +105,7 @@ def test_voice_payload_carries_name_type_and_customizations():
         )
     )
 
-    payload = agent.build_voicelive_voice()
+    payload = voicelive_session.build_voicelive_voice(agent)
 
     assert payload is not None
     assert payload.name == "en-US-EmmaMultilingualNeural"
@@ -122,7 +121,7 @@ def test_voice_payload_omits_neutral_rate_and_pitch():
         voice=VoiceConfig(name="en-US-AvaMultilingualNeural", rate="+0%", pitch="+0%")
     )
 
-    payload = agent.build_voicelive_voice()
+    payload = voicelive_session.build_voicelive_voice(agent)
 
     assert payload.rate is None
     assert payload.pitch is None
@@ -130,7 +129,7 @@ def test_voice_payload_omits_neutral_rate_and_pitch():
 
 def test_voice_payload_is_none_when_name_missing():
     agent = _make_agent(voice=VoiceConfig(name=""))
-    assert agent.build_voicelive_voice() is None
+    assert voicelive_session.build_voicelive_voice(agent) is None
 
 
 # =============================================================================
@@ -151,7 +150,7 @@ async def test_configured_voice_reaches_session_update():
     )
     conn = _FakeConnection()
 
-    await agent.apply_voicelive_session(conn, session_id="sess-1")
+    await voicelive_session.apply_voicelive_session(agent, conn, session_id="sess-1")
 
     sent = conn.last_update
     assert sent.voice is not None, "session.update() was issued without a voice"
@@ -165,7 +164,7 @@ async def test_session_update_omits_voice_when_agent_has_none():
     agent = _make_agent(voice=VoiceConfig(name=""))
     conn = _FakeConnection()
 
-    await agent.apply_voicelive_session(conn, session_id="sess-1")
+    await voicelive_session.apply_voicelive_session(agent, conn, session_id="sess-1")
 
     assert getattr(conn.last_update, "voice", None) is None
 
@@ -190,9 +189,7 @@ async def test_live_push_sends_new_voice_name():
     conn = _FakeConnection()
     orch = _make_orchestrator(agent, conn)
 
-    pushed = await orch.apply_live_session_settings(
-        voice={"name": "en-US-EmmaMultilingualNeural"}
-    )
+    pushed = await orch.apply_live_session_settings(voice={"name": "en-US-EmmaMultilingualNeural"})
 
     assert pushed is True
     assert conn.last_update.voice.name == "en-US-EmmaMultilingualNeural"
@@ -240,10 +237,10 @@ async def test_live_push_noop_without_changes():
 def test_contract_ok_when_echo_matches():
     agent = _make_agent(voice=VoiceConfig(name="en-US-AvaMultilingualNeural"))
     result = verify_voicelive_session_contract(
-        requested_voice=agent.build_voicelive_voice(),
+        requested_voice=voicelive_session.build_voicelive_voice(agent),
         requested_model="gpt-realtime",
         session_obj=_EchoSession(
-            voice=agent.build_voicelive_voice(), model="gpt-realtime"
+            voice=voicelive_session.build_voicelive_voice(agent), model="gpt-realtime"
         ),
     )
 
@@ -257,9 +254,9 @@ def test_contract_detects_voice_substitution():
     other = _make_agent(voice=VoiceConfig(name="en-US-EmmaMultilingualNeural"))
 
     result = verify_voicelive_session_contract(
-        requested_voice=agent.build_voicelive_voice(),
+        requested_voice=voicelive_session.build_voicelive_voice(agent),
         requested_model="gpt-realtime",
-        session_obj=_EchoSession(voice=other.build_voicelive_voice()),
+        session_obj=_EchoSession(voice=voicelive_session.build_voicelive_voice(other)),
     )
 
     assert result["voice_ok"] is False
@@ -438,7 +435,7 @@ def test_orchestrator_does_not_warn_on_sku_suffixed_model():
 
     result = orch._verify_session_contract(
         _EchoSession(
-            voice=agent.build_voicelive_voice(),
+            voice=voicelive_session.build_voicelive_voice(agent),
             model="gpt-realtime-datazone-standard",
         )
     )
@@ -453,7 +450,7 @@ def test_orchestrator_verifies_against_active_agent_voice():
     orch = _make_orchestrator(agent, _FakeConnection())
 
     result = orch._verify_session_contract(
-        _EchoSession(voice=agent.build_voicelive_voice(), model="gpt-realtime")
+        _EchoSession(voice=voicelive_session.build_voicelive_voice(agent), model="gpt-realtime")
     )
 
     assert result is not None and result["ok"] is True
@@ -517,9 +514,7 @@ def warmup_env(monkeypatch):
     monkeypatch.setattr(vh, "get_settings", lambda: _StubSettings())
     monkeypatch.setattr(vh, "resolve_orchestrator_config", lambda **_kw: None)
     monkeypatch.setattr(vh, "discover_agents", dict)
-    monkeypatch.setattr(
-        vh.VoiceLiveSDKHandler, "_build_credential", staticmethod(_fake_credential)
-    )
+    monkeypatch.setattr(vh.VoiceLiveSDKHandler, "_build_credential", staticmethod(_fake_credential))
     return vh, captured, conn
 
 
@@ -566,9 +561,7 @@ async def test_managed_start_agent_sends_no_byom_profile(warmup_env, monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_warmup_applies_start_agent_voice_to_prepared_session(
-    warmup_env, monkeypatch
-):
+async def test_warmup_applies_start_agent_voice_to_prepared_session(warmup_env, monkeypatch):
     """A warm connection must be primed with the agent's voice, not a default."""
     vh, _captured, conn = warmup_env
     agent = _make_agent(voice=VoiceConfig(name="en-US-EmmaMultilingualNeural"))

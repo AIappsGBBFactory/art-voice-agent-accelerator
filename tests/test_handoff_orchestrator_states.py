@@ -14,7 +14,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
+from apps.artagent.backend.registries.agentstore.base import UnifiedAgent
 from apps.artagent.backend.voice.shared.base import OrchestratorContext
 from apps.artagent.backend.voice.shared.handoff_service import HandoffResolution
 from apps.artagent.backend.voice.speech_cascade.orchestrator import (
@@ -42,18 +42,11 @@ class DummyVoiceLiveConnection:
         await AsyncMock()(event)
 
 
-class DummyVoiceLiveAgent:
+class DummyVoiceLiveAgent(UnifiedAgent):
     """Minimal VoiceLive agent stub."""
 
     def __init__(self, name: str) -> None:
-        self.name = name
-        self.description = f"{name} agent"
-
-    async def apply_voicelive_session(self, conn, **kwargs) -> None:
-        await AsyncMock()()
-
-    async def trigger_voicelive_response(self, conn, *, say: str | None = None, cancel_active: bool = True) -> None:
-        await AsyncMock()()
+        super().__init__(name=name, description=f"{name} agent")
 
 
 class DummyCascadeAgent:
@@ -111,7 +104,9 @@ class StubHandoffService:
         return self._greeting
 
 
-def _make_voicelive_orchestrator(resolution: HandoffResolution) -> tuple[LiveOrchestrator, DummyVoiceLiveConnection]:
+def _make_voicelive_orchestrator(
+    resolution: HandoffResolution,
+) -> tuple[LiveOrchestrator, DummyVoiceLiveConnection]:
     conn = DummyVoiceLiveConnection()
     agents = {
         "Concierge": DummyVoiceLiveAgent("Concierge"),
@@ -143,6 +138,7 @@ def _make_cascade_adapter(resolution: HandoffResolution) -> CascadeOrchestratorA
         config=config,
         agents=agents,
         handoff_map={"handoff_to_agent": "Advisor"},
+        async_client=MagicMock(),
     )
     adapter._cached_orchestrator_config = MagicMock(
         scenario=None,
@@ -180,13 +176,12 @@ async def test_voicelive_discrete_handoff_success_state() -> None:
         "apps.artagent.backend.voice.voicelive.orchestrator.execute_tool",
         new=AsyncMock(return_value={"handoff_summary": "summary"}),
     ):
-        result = await orchestrator._execute_tool_call(
+        await orchestrator._dispatch_tool_call(
             call_id="call-1",
             name="handoff_to_agent",
             args_json=json.dumps({"target_agent": "Advisor", "reason": "Card help"}),
         )
 
-    assert result is True
     assert orchestrator.active == "Advisor"
     assert orchestrator._handoff_response_pending is True
 
@@ -225,13 +220,12 @@ async def test_voicelive_announced_handoff_success_state() -> None:
         "apps.artagent.backend.voice.voicelive.orchestrator.execute_tool",
         new=AsyncMock(return_value={"handoff_summary": "summary"}),
     ):
-        result = await orchestrator._execute_tool_call(
+        await orchestrator._dispatch_tool_call(
             call_id="call-2",
             name="handoff_to_agent",
             args_json=json.dumps({"target_agent": "Advisor", "reason": "Policy help"}),
         )
 
-    assert result is True
     assert orchestrator.active == "Advisor"
     assert orchestrator._handoff_response_pending is True
 

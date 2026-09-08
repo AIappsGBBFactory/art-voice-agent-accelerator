@@ -43,24 +43,23 @@ from apps.artagent.backend.src.orchestration.session_scenarios import (
 from apps.artagent.backend.src.utils.tracing import (
     create_service_handler_attrs,
 )
-from apps.artagent.backend.voice.shared.config_resolver import resolve_orchestrator_config
-from apps.artagent.backend.voice.shared.session_state import sync_state_to_memo
-from src.stateful.state_managment import MemoManager
 from apps.artagent.backend.voice import (
     CascadeOrchestratorAdapter,
     CascadeSessionScope,
     OrchestratorContext,
-    get_cascade_orchestrator,
     make_assistant_streaming_envelope,
     make_envelope,
     send_session_envelope,
 )
+from apps.artagent.backend.voice.shared.config_resolver import resolve_orchestrator_config
+from apps.artagent.backend.voice.shared.session_state import sync_state_to_memo
 from apps.artagent.backend.voice.voicelive.tool_helpers import (
     push_tool_end,
     push_tool_start,
 )
 from fastapi import WebSocket
 from opentelemetry import trace
+from src.stateful.state_managment import MemoManager
 from utils.ml_logging import get_logger
 
 logger = get_logger(__name__)
@@ -149,13 +148,21 @@ def _get_or_create_adapter(
     # Get scenario from MemoManager using centralized utility
     scenario_name = get_scenario_from_corememory(memo_manager)
 
-    # Create adapter using app.state config
-    adapter = get_cascade_orchestrator(
-        app_state=app_state,
+    if scenario_name or app_state is None:
+        config = resolve_orchestrator_config(session_id=session_id, scenario_name=scenario_name)
+    else:
+        from apps.artagent.backend.voice.shared.config_resolver import resolve_from_app_state
+
+        config = resolve_from_app_state(app_state)
+    adapter = CascadeOrchestratorAdapter.create(
+        start_agent=config.start_agent,
+        agents=config.agents,
+        handoff_map=config.handoff_map,
         call_connection_id=call_connection_id,
         session_id=session_id,
-        scenario_name=scenario_name,
+        streaming=True,
     )
+    adapter._current_memo_manager = memo_manager
 
     _adapters[session_id] = adapter
 
@@ -285,54 +292,20 @@ def update_session_scenario(session_id: str, scenario) -> bool:
         scenario_name=scenario.name,
     )
 
-    # Update system prompts with handoff instructions in MemoManager
-    # This ensures agents have handoff instructions immediately, not just on next turn
-    try:
-        from apps.artagent.backend.src.orchestration.session_scenarios import _redis_manager
-        if _redis_manager:
-            memo = MemoManager.from_redis(session_id, _redis_manager)
-            
-            # For each agent in the scenario, update their system prompt with handoff instructions
-            for agent_name in scenario.agents:
-                agent = config.agents.get(agent_name)
-                if agent:
-                    # Build the base system prompt from the agent
-                    base_prompt = agent.render_prompt({}) or ""
-                    
-                    # Build handoff instructions from the scenario
-                    handoff_instructions = scenario.build_handoff_instructions(agent_name)
-                    
-                    if handoff_instructions:
-                        full_prompt = f"{base_prompt}\n\n{handoff_instructions}" if base_prompt else handoff_instructions
-                    else:
-                        full_prompt = base_prompt
-                    
-                    # Update the agent's system prompt in MemoManager
-                    if full_prompt:
-                        memo.ensure_system_prompt(agent_name, full_prompt)
-                        logger.debug(
-                            "Updated system prompt with handoff instructions | agent=%s handoff_len=%d",
-                            agent_name,
-                            len(handoff_instructions) if handoff_instructions else 0,
-                        )
-            
-            # Persist updates to Redis
-            import asyncio
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(memo.persist_to_redis_async(_redis_manager))
-            except RuntimeError:
-                # No running loop - use sync persist
-                pass
-            
-            updated_memo = True
-            logger.info(
-                "🔄 Updated system prompts with handoff instructions | session=%s agents=%s",
-                session_id,
-                scenario.agents,
-            )
-    except Exception as e:
-        logger.warning("Failed to update system prompts in MemoManager: %s", e)
+    from apps.artagent.backend.src.orchestration.session_memory import live_memo
+
+    memo = live_memo(session_id)
+    if memo is not None:
+        for agent_name in scenario.agents:
+            agent = config.agents.get(agent_name)
+            if agent is not None:
+                prompt = agent.render_prompt({})
+                instructions = scenario.build_handoff_instructions(agent_name)
+                memo.ensure_system_prompt(
+                    agent_name, "\n\n".join(part for part in (prompt, instructions) if part)
+                )
+        # The caller persists this same memo with the scenario mutation.
+        updated_memo = True
 
     # Update CascadeOrchestratorAdapter if present
     if session_id in _adapters:
@@ -608,7 +581,9 @@ async def route_turn(
                         try:
                             speech_cascade.record_tts_first_audio()
                         except Exception:
-                            logger.debug("Failed to record tts_first_audio on turn span", exc_info=True)
+                            logger.debug(
+                                "Failed to record tts_first_audio on turn span", exc_info=True
+                            )
 
                 normalized = ui_text.strip()
                 stream_cache = _ensure_stream_cache(ws)
@@ -652,19 +627,15 @@ async def route_turn(
                 )
                 payload = envelope.setdefault("payload", {})
                 payload.setdefault("message", ui_text)
-                
+
                 # Keep one canonical turn ID for the whole user→assistant flow.
                 # Post-tool phases retain a separate segment ID for diagnostics.
                 session_scope = CascadeSessionScope.get_current()
                 root_turn_id = (
-                    session_scope.get_root_turn_id()
-                    if session_scope
-                    else canonical_turn_id
+                    session_scope.get_root_turn_id() if session_scope else canonical_turn_id
                 )
                 segment_id = (
-                    session_scope.get_effective_turn_id()
-                    if session_scope
-                    else canonical_turn_id
+                    session_scope.get_effective_turn_id() if session_scope else canonical_turn_id
                 )
                 payload["turn_id"] = root_turn_id
                 payload["segment_id"] = segment_id
@@ -702,9 +673,7 @@ async def route_turn(
                     }
                     session_scope = CascadeSessionScope.get_current()
                     root_turn_id = (
-                        session_scope.get_root_turn_id()
-                        if session_scope
-                        else canonical_turn_id
+                        session_scope.get_root_turn_id() if session_scope else canonical_turn_id
                     )
                     segment_id = (
                         session_scope.get_effective_turn_id()
@@ -735,9 +704,7 @@ async def route_turn(
                         duration_ms = (time.perf_counter() - info["started"]) * 1000.0
                     session_scope = CascadeSessionScope.get_current()
                     root_turn_id = (
-                        session_scope.get_root_turn_id()
-                        if session_scope
-                        else canonical_turn_id
+                        session_scope.get_root_turn_id() if session_scope else canonical_turn_id
                     )
                     segment_id = (
                         session_scope.get_effective_turn_id()
@@ -817,21 +784,17 @@ async def route_turn(
                     result.agent_name or adapter.current_agent or memo_agent or "Assistant"
                 )
                 final_label = _resolve_agent_label(final_agent)
-                
+
                 # Finalize the canonical turn bubble. The segment ID still shows
                 # which post-tool phase produced the final response.
                 session_scope = CascadeSessionScope.get_current()
                 root_turn_id = (
-                    session_scope.get_root_turn_id()
-                    if session_scope
-                    else canonical_turn_id
+                    session_scope.get_root_turn_id() if session_scope else canonical_turn_id
                 )
                 segment_id = (
-                    session_scope.get_effective_turn_id()
-                    if session_scope
-                    else canonical_turn_id
+                    session_scope.get_effective_turn_id() if session_scope else canonical_turn_id
                 )
-                
+
                 payload = {
                     "type": "assistant",
                     "message": result.response_text,
@@ -894,10 +857,7 @@ async def route_turn(
         finally:
             # Persist conversation state
             try:
-                if hasattr(cm, "persist_to_redis_async"):
-                    await cm.persist_to_redis_async(redis_mgr)
-                elif hasattr(cm, "persist_background"):
-                    await cm.persist_background(redis_mgr)
+                await cm.persist_to_redis_async(redis_mgr, raise_on_failure=True)
             except Exception as persist_exc:
                 logger.warning(
                     "Failed to persist orchestrator memory for session %s: %s",
@@ -947,7 +907,9 @@ def _emit_turn_kpis(
 
     first_audio_perf = tts_ttfb_holder[0] if tts_ttfb_holder else None
     # Legacy turn-start-anchored TTFB (kept for span back-compat + record_turn_kpis).
-    tts_ttfb_ms = (first_audio_perf - turn_start_ts) * 1000 if first_audio_perf is not None else None
+    tts_ttfb_ms = (
+        (first_audio_perf - turn_start_ts) * 1000 if first_audio_perf is not None else None
+    )
 
     # End of recognition → first streamed LLM token. The adapter anchors
     # recog_to_llm_first_ms at recog_end_perf when it was provided, so this is the

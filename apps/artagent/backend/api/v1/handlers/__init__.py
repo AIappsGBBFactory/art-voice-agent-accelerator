@@ -16,23 +16,22 @@ Voice channel handlers live in:
 
 # Voice channel imports - all from unified voice module
 from apps.artagent.backend.voice import (
-    ACSMessageKind,
     BROWSER_PCM_SAMPLE_RATE,
     BROWSER_SILENCE_GAP_SECONDS,
     BROWSER_SPEECH_RMS_THRESHOLD,
-    BargeInController,
     RMS_SILENCE_THRESHOLD,
-    RouteTurnThread,
     SILENCE_GAP_MS,
-    SpeechCascadeHandler,
+    VOICE_LIVE_PCM_SAMPLE_RATE,
+    VOICE_LIVE_SILENCE_GAP_SECONDS,
+    VOICE_LIVE_SPEECH_RMS_THRESHOLD,
+    ACSMessageKind,
+    BargeInController,
+    RouteTurnThread,
     SpeechEvent,
     SpeechEventType,
     SpeechSDKThread,
     ThreadBridge,
     TransportType,
-    VOICE_LIVE_PCM_SAMPLE_RATE,
-    VOICE_LIVE_SILENCE_GAP_SECONDS,
-    VOICE_LIVE_SPEECH_RMS_THRESHOLD,
     VoiceHandler,
     VoiceHandlerConfig,
     VoiceLiveSDKHandler,
@@ -45,7 +44,6 @@ from apps.artagent.backend.voice import (
 
 __all__ = [
     # Speech processing (generic)
-    "SpeechCascadeHandler",
     "SpeechEvent",
     "SpeechEventType",
     "ThreadBridge",

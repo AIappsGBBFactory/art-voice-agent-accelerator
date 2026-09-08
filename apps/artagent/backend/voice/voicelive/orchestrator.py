@@ -51,18 +51,26 @@ from apps.artagent.backend.registries.toolstore import (
 )
 from apps.artagent.backend.src.services.session_loader import load_user_profile_by_client_id
 from apps.artagent.backend.voice.handoffs import sanitize_handoff_context
-from apps.artagent.backend.voice.shared.handoff_service import HandoffService
+from apps.artagent.backend.voice.shared.close import cancel_and_join
 from apps.artagent.backend.voice.shared.errors import (
     BENIGN_VOICELIVE_ERROR_CODES,
     classify_voice_error,
     classify_voicelive_server_error,
     emit_voice_error,
 )
+from apps.artagent.backend.voice.shared.handoff_service import HandoffService
 from apps.artagent.backend.voice.shared.metrics import OrchestratorMetrics
 from apps.artagent.backend.voice.shared.session_state import (
     sync_state_from_memo,
     sync_state_to_memo,
 )
+from apps.artagent.backend.voice.shared.tool_policy import (
+    apply_tool_result,
+    normalize_tool_result,
+    tool_arguments,
+    tool_succeeded,
+)
+from apps.artagent.backend.voice.voicelive import session as voicelive_session
 from azure.ai.voicelive.models import (
     AssistantMessageItem,
     FunctionCallOutputItem,
@@ -79,7 +87,6 @@ if TYPE_CHECKING:
 
 from apps.artagent.backend.registries.agentstore.base import UnifiedAgent
 from apps.artagent.backend.src.orchestration.naming import agent_key, find_agent_by_name
-
 from apps.artagent.backend.src.utils.tracing import (
     create_service_dependency_attrs,
     create_service_handler_attrs,
@@ -496,9 +503,6 @@ class LiveOrchestrator:
         # self.active with stale MemoManager data after an explicit scenario switch
         self._scenario_switch_pending: bool = False
 
-        # Track pending tool outputs to batch them before calling response.create()
-        # When model makes multiple tool calls, we queue results and trigger ONE response
-        self._pending_tool_outputs: list[tuple[str, str]] = []  # [(call_id, output_json), ...]
         self._response_had_tool_calls: bool = False
 
         # ── Response epoch + off-reader tool batching (F12) ──────────────────
@@ -513,7 +517,7 @@ class LiveOrchestrator:
         # response, or None between responses. Detached (set to None) the moment
         # response.done schedules its finalizer, so overlapping responses never
         # mix outputs.
-        self._active_tool_batch: _ToolBatch | None = None
+        self._tool_batches: dict[str | None, _ToolBatch] = {}
         # Every task this orchestrator owns (business-tool tasks, batch
         # finalizers, throttled context updates). Cancelled/joined on cleanup so
         # nothing keeps touching the connection after teardown begins.
@@ -912,7 +916,7 @@ class LiveOrchestrator:
         for task in list(self._owned_tasks):
             task.cancel()
         self._owned_tasks.clear()
-        self._active_tool_batch = None
+        self._tool_batches.clear()
 
         # Clear agents registry reference
         self.agents = {}
@@ -1097,7 +1101,8 @@ class LiveOrchestrator:
                 # apply_voicelive_session pushes its own instructions, so whatever
                 # we last fingerprinted no longer describes the live session.
                 self._last_pushed_instructions = None
-                await agent.apply_voicelive_session(
+                await voicelive_session.apply_voicelive_session(
+                    agent,
                     self.conn,
                     system_vars=system_vars,
                     say=None,  # Don't trigger a greeting on scenario switch
@@ -1127,7 +1132,7 @@ class LiveOrchestrator:
         except RuntimeError:
             # No running loop - try create_task if we're in an async context
             try:
-                asyncio.create_task(_do_update())
+                self._track_owned(_do_update())
             except RuntimeError:
                 logger.warning("Cannot schedule session update - no event loop available")
 
@@ -1434,11 +1439,11 @@ class LiveOrchestrator:
 
         kwargs: dict[str, Any] = {}
         if turn_detection:
-            vad = ua.build_voicelive_vad()
+            vad = voicelive_session.build_voicelive_vad(ua)
             if vad is not None:
                 kwargs["turn_detection"] = vad
         if voice:
-            voice_payload = ua.build_voicelive_voice()
+            voice_payload = voicelive_session.build_voicelive_voice(ua)
             if voice_payload is not None:
                 kwargs["voice"] = voice_payload
 
@@ -1756,6 +1761,12 @@ class LiveOrchestrator:
         elif et == ServerEventType.RESPONSE_AUDIO_TRANSCRIPT_DONE:
             await self._handle_transcript_done(event)
 
+        elif et == ServerEventType.RESPONSE_CREATED:
+            response_id = self._response_id_from_event(event)
+            if response_id and response_id != self._active_response_id:
+                self._bump_response_epoch("response_created")
+                self._active_response_id = response_id
+
         elif et == ServerEventType.RESPONSE_FUNCTION_CALL_ARGUMENTS_DONE:
             # Route through the dispatcher, NOT inline execution: business tools
             # are offloaded to owned tasks so a slow tool cannot block intake of
@@ -1766,6 +1777,7 @@ class LiveOrchestrator:
                 call_id=getattr(event, "call_id", None),
                 name=getattr(event, "name", None),
                 args_json=getattr(event, "arguments", None),
+                response_id=self._response_id_from_event(event),
             )
 
         elif et == ServerEventType.RESPONSE_DONE:
@@ -1850,7 +1862,7 @@ class LiveOrchestrator:
         ua = getattr(agent, "_agent", agent)
 
         try:
-            requested_voice = ua.build_voicelive_voice()
+            requested_voice = voicelive_session.build_voicelive_voice(ua)
         except Exception:  # pragma: no cover - defensive
             logger.debug("Failed to build requested voice for verification", exc_info=True)
             return None
@@ -1889,7 +1901,7 @@ class LiveOrchestrator:
             if bound is not None:
                 try:
                     tuned_voice = _voice_identity(
-                        getattr(bound, "_agent", bound).build_voicelive_voice()
+                        voicelive_session.build_voicelive_voice(getattr(bound, "_agent", bound))
                     )
                 except Exception:  # pragma: no cover - defensive
                     logger.debug("Failed to resolve tuned voice for verification", exc_info=True)
@@ -2050,9 +2062,11 @@ class LiveOrchestrator:
         if self._pending_greeting and self._pending_greeting_agent == self.active:
             self._cancel_pending_greeting_tasks()
             try:
-                await self.agents[self.active].trigger_voicelive_response(
+                await voicelive_session.trigger_voicelive_response(
+                    self.agents[self.active],
                     self.conn,
                     say=self._pending_greeting,
+                    cancel_active=False,
                 )
             except asyncio.CancelledError:
                 raise
@@ -2260,16 +2274,18 @@ class LiveOrchestrator:
         socket close. Safe to call from a synchronous ``cleanup()`` as well,
         which cancels without awaiting.
         """
-        tasks = list(self._owned_tasks)
-        for task in tasks:
-            task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        self._bump_response_epoch("close")
+        await cancel_and_join(self._owned_tasks | self._greeting_tasks)
+        self._greeting_tasks.clear()
         self._owned_tasks.clear()
-        self._active_tool_batch = None
+        self._tool_batches.clear()
 
     async def _dispatch_tool_call(
-        self, call_id: str | None, name: str | None, args_json: str | None
+        self,
+        call_id: str | None,
+        name: str | None,
+        args_json: str | None,
+        response_id: str | None = None,
     ) -> None:
         """Route a completed function call, keeping the SDK reader responsive.
 
@@ -2289,16 +2305,19 @@ class LiveOrchestrator:
             logger.warning("Missing call_id or name for function call")
             return
 
-        is_control = self.handoff_service.is_handoff(name) or name in TRANSFER_TOOL_NAMES
-        if is_control:
-            await self._execute_tool_call(call_id=call_id, name=name, args_json=args_json)
-            return
-
-        batch = self._active_tool_batch
+        response_id = response_id or self._active_response_id
+        batch = self._tool_batches.get(response_id)
         if batch is None:
-            batch = _ToolBatch(epoch=self._response_epoch, response_id=self._active_response_id)
-            self._active_tool_batch = batch
+            batch = _ToolBatch(epoch=self._response_epoch, response_id=response_id)
+            self._tool_batches[response_id] = batch
         batch.had_tool_calls = True
+        if self.handoff_service.is_handoff(name) or name in TRANSFER_TOOL_NAMES:
+            if batch.tasks:
+                await asyncio.gather(*batch.tasks)
+            await self._execute_tool_call(
+                call_id=call_id, name=name, args_json=args_json, batch=batch
+            )
+            return
         batch.tasks.add(
             self._track_owned(self._business_tool_task(batch, call_id, name, args_json))
         )
@@ -2345,7 +2364,8 @@ class LiveOrchestrator:
                 )
                 return
 
-            await self._flush_tool_outputs_and_continue(batch.outputs)
+            if batch.outputs:
+                await self._flush_tool_outputs_and_continue(batch)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -2353,26 +2373,20 @@ class LiveOrchestrator:
         finally:
             batch.finalized = True
 
-    async def _flush_tool_outputs_and_continue(self, outputs: list[tuple[str, str]]) -> None:
-        """Create tool-output items, refresh context, and trigger ONE response.
-
-        Shared by the off-reader batch finalizer and the legacy inline path in
-        :meth:`_handle_response_done` (which serves direct-call tests). Emitting a
-        single ``response.create()`` for the whole batch is what prevents the
-        duplicate assistant turns a per-tool continuation would produce.
-        """
-        for call_id, output_json in outputs:
-            try:
-                output_item = FunctionCallOutputItem(call_id=call_id, output=output_json)
-                await self.conn.conversation.item.create(item=output_item)
-                logger.debug("Created function_call_output item for call_id=%s", call_id)
-            except Exception:
-                logger.warning(
-                    "Failed to create tool output item for call_id=%s", call_id, exc_info=True
-                )
+    async def _flush_tool_outputs_and_continue(self, batch: _ToolBatch) -> None:
+        """Publish one response batch; recheck cancellation across every await."""
+        for call_id, output_json in batch.outputs:
+            if batch.epoch != self._response_epoch:
+                return
+            output_item = FunctionCallOutputItem(call_id=call_id, output=output_json)
+            await self.conn.conversation.item.create(item=output_item)
 
         # Update session context with collected information BEFORE response
+        if batch.epoch != self._response_epoch:
+            return
         await self._update_session_context()
+        if batch.epoch != self._response_epoch:
+            return
 
         # Advance turn_id once for all tool calls combined
         if self.messenger:
@@ -2394,28 +2408,13 @@ class LiveOrchestrator:
         logger.info("[Response Done] Triggered single response for batched tool outputs")
 
     async def _handle_response_done(self, event) -> None:
-        """Handle response complete.
-
-        Two continuation paths converge here:
-
-        * **Off-reader batch (production):** business tools of this response were
-          offloaded to owned tasks and their outputs collect on
-          ``self._active_tool_batch``. We do NOT await them here — awaiting on the
-          SDK reader is exactly the head-of-line blocking F12 removes. Instead we
-          mark the batch done, bump the epoch if the service reported the response
-          CANCELLED (so the finalizer drops a stale continuation), schedule ONE
-          owned finalizer, detach the batch, and return immediately.
-        * **Legacy inline (direct-call tests):** when no batch exists but
-          ``_pending_tool_outputs`` were appended synchronously, flush them inline
-          exactly as before so the existing unit tests keep exercising the same
-          contract.
-        """
+        """Detach the response's batch and finalize it without blocking intake."""
         logger.debug("Response complete")
         response_id = self._response_id_from_event(event)
-        if response_id and response_id == self._active_response_id:
+        current_response = response_id is None or response_id == self._active_response_id
+        if current_response:
             self._active_response_id = None
-        # New response starts a fresh transcript stream — reset the dedup guard.
-        self._seen_transcript_delta_ids.clear()
+            self._seen_transcript_delta_ids.clear()
 
         self._emit_model_metrics(event)
 
@@ -2429,27 +2428,19 @@ class LiveOrchestrator:
             isinstance(status, str) and status.lower() == ResponseStatus.CANCELLED.value
         )
 
-        batch = self._active_tool_batch
+        batch = self._tool_batches.pop(response_id, None)
+        if batch is None and response_id is not None:
+            batch = self._tool_batches.pop(None, None)
         if batch is not None:
             # Off-reader path: hand the batch to a finalizer and return; never
             # await tools on the reader.
-            self._active_tool_batch = None
             batch.response_done = True
             if response_cancelled:
-                self._bump_response_epoch("response_done_cancelled")
+                batch.epoch = -1
             self._track_owned(self._finalize_tool_batch(batch))
-        elif self._pending_tool_outputs:
-            # Legacy inline path (direct-call tests): flush synchronously.
-            logger.debug(
-                "[Response Done] Flushing %d pending tool outputs (inline)",
-                len(self._pending_tool_outputs),
-            )
-            outputs = self._pending_tool_outputs
-            self._pending_tool_outputs = []
-            await self._flush_tool_outputs_and_continue(outputs)
 
-        # Reset the tool calls flag
-        self._response_had_tool_calls = False
+        if current_response:
+            self._response_had_tool_calls = False
 
         # Sync state to MemoManager in background to avoid hot path latency
         self._schedule_background_sync()
@@ -2626,7 +2617,8 @@ class LiveOrchestrator:
                     self._pending_context_session_updates = 0
                     # The new agent's instructions replace the ones we fingerprinted.
                     self._last_pushed_instructions = None
-                    await agent.apply_voicelive_session(
+                    await voicelive_session.apply_voicelive_session(
+                        agent,
                         self.conn,
                         system_vars=system_vars,
                         say=None,
@@ -2683,30 +2675,26 @@ class LiveOrchestrator:
         name: str | None,
         args_json: str | None,
         *,
-        batch: _ToolBatch | None = None,
+        batch: _ToolBatch,
     ) -> bool:
         """
         Execute tool call via shared tool registry and send result back to model.
 
         Returns True if this was a handoff (agent switch), False otherwise.
 
-        ``batch`` is supplied when the caller offloaded a *business* tool to an
-        owned task (the production F12 path): the tool's output is appended to
-        ``batch.outputs`` instead of ``self._pending_tool_outputs``, so the batch
-        finalizer emits one continuation for the whole response. When ``batch`` is
-        None (direct-call tests, and the inline handoff/transfer control path) the
-        legacy ``_pending_tool_outputs`` list is used and remains flushed inline by
-        :meth:`_handle_response_done`.
+        Every call belongs to the dispatcher's response batch. Control operations
+        run inline; business calls run off-reader. Only its finalizer continues.
         """
         if not name or not call_id:
             logger.warning("Missing call_id or name for function call")
             return False
 
         try:
-            args = json.loads(args_json) if args_json else {}
-        except Exception:
-            logger.warning("Could not parse tool arguments for '%s'; using empty dict", name)
-            args = {}
+            args = tool_arguments(args_json, self._memo_manager)
+        except (ValueError, TypeError) as exc:
+            logger.warning("Invalid tool arguments for '%s': %s", name, exc)
+            batch.outputs.append((call_id, json.dumps({"success": False, "error": str(exc)})))
+            return False
 
         session_id = getattr(self.messenger, "session_id", None) if self.messenger else None
         with tracer.start_as_current_span(
@@ -2757,19 +2745,7 @@ class LiveOrchestrator:
                     if sess_id:
                         args.setdefault("session_id", sess_id)
 
-            # Inject session context into tool args (same pattern as SpeechCascade)
-            # This allows tools to use already-loaded session data
-            if self._memo_manager:
-                session_profile = self._memo_manager.get_value_from_corememory("session_profile")
-                if session_profile:
-                    args["_session_profile"] = session_profile
-                # Always inject _client_id so tools can use the verified value
-                # Tools should prefer _client_id over client_id when present
-                client_id = self._memo_manager.get_value_from_corememory("client_id")
-                if client_id:
-                    args["_client_id"] = client_id
-
-            logger.info("Executing tool: %s with args: %s", name, args)
+            logger.info("Executing tool: %s", name)
 
             notify_status = "success"
             notify_error: str | None = None
@@ -2831,7 +2807,8 @@ class LiveOrchestrator:
                 # Tool execution runs under the enclosing `execute_tool {name}`
                 # span, which already carries the tool name, args, and timing — no
                 # separate child span is needed.
-                result = await execute_tool(name, args)
+                result = normalize_tool_result(await execute_tool(name, args))
+                self._system_vars.update(apply_tool_result(self._memo_manager, name, result))
             except (asyncio.CancelledError, KeyboardInterrupt):
                 raise
             except Exception as exc:
@@ -2869,100 +2846,16 @@ class LiveOrchestrator:
             tool_span.set_attribute("voicelive.tool.elapsed_ms", elapsed_ms)
 
             error_payload: str | None = None
-            execution_success = True
-            if isinstance(result, dict):
-                for key in ("success", "ok", "authenticated"):
-                    if key in result and not result[key]:
-                        notify_status = "error"
-                        execution_success = False
-                        break
-                if notify_status == "error":
-                    err_val = result.get("message") or result.get("error")
-                    if err_val:
-                        error_payload = str(err_val)
+            execution_success = tool_succeeded(result)
+            if not execution_success:
+                notify_status = "error"
+                err_val = result.get("message") or result.get("error")
+                if err_val:
+                    error_payload = str(err_val)
 
             tool_span.set_attribute("execution.success", execution_success)
             tool_span.set_attribute("result.type", type(result).__name__ if result else "None")
             tool_span.set_attribute("voicelive.tool.status", notify_status)
-
-            # Persist slots and tool outputs from result to MemoManager
-            # This ensures collected information is available in subsequent turns
-            if isinstance(result, dict) and self._memo_manager:
-                try:
-                    # Update slots if tool returned any
-                    if "slots" in result and isinstance(result["slots"], dict):
-                        current_slots = self._memo_manager.get_context("slots", {})
-                        current_slots.update(result["slots"])
-                        self._memo_manager.set_context("slots", current_slots)
-                        self._system_vars["slots"] = current_slots
-                        self._system_vars["collected_information"] = current_slots
-                        logger.info(
-                            "[Tool] Updated slots from %s: %s",
-                            name,
-                            list(result["slots"].keys()),
-                        )
-
-                    # Store tool output for context continuity
-                    tool_outputs = self._memo_manager.get_context("tool_outputs", {})
-                    # Store a summary of the result, not the full payload
-                    output_summary = {
-                        k: v
-                        for k, v in result.items()
-                        if k not in ("slots", "raw_response") and not k.startswith("_")
-                    }
-                    if output_summary:
-                        tool_outputs[name] = output_summary
-                        self._memo_manager.set_context("tool_outputs", tool_outputs)
-                        self._system_vars["tool_outputs"] = tool_outputs
-
-                    # Persist authenticated identity to corememory so handoff targets
-                    # can inject _client_id and render session_profile in their prompts
-                    if result.get("authenticated") and result.get("client_id"):
-                        cid = result["client_id"]
-                        self._memo_manager.set_corememory("client_id", cid)
-                        self._system_vars["client_id"] = cid
-                        if result.get("caller_name"):
-                            self._memo_manager.set_corememory("caller_name", result["caller_name"])
-                            self._system_vars["caller_name"] = result["caller_name"]
-                        logger.info(
-                            "🔐 Persisted authenticated identity to corememory | client_id=%s",
-                            cid[:8] + "..." if len(cid) > 8 else cid,
-                        )
-
-                    # Persist loaded profile to corememory for cross-agent availability
-                    if (
-                        result.get("success")
-                        and result.get("profile")
-                        and isinstance(result["profile"], dict)
-                    ):
-                        profile = result["profile"]
-                        self._memo_manager.set_corememory("session_profile", profile)
-                        self._system_vars["session_profile"] = profile
-                        if profile.get("client_id"):
-                            self._memo_manager.set_corememory("client_id", profile["client_id"])
-                            self._system_vars["client_id"] = profile["client_id"]
-                        if profile.get("full_name"):
-                            self._memo_manager.set_corememory("caller_name", profile["full_name"])
-                            self._system_vars["caller_name"] = profile["full_name"]
-                        if profile.get("customer_intelligence"):
-                            self._memo_manager.set_corememory(
-                                "customer_intelligence", profile["customer_intelligence"]
-                            )
-                            self._system_vars["customer_intelligence"] = profile[
-                                "customer_intelligence"
-                            ]
-                        if profile.get("institution_name"):
-                            self._memo_manager.set_corememory(
-                                "institution_name", profile["institution_name"]
-                            )
-                            self._system_vars["institution_name"] = profile["institution_name"]
-                        logger.info(
-                            "📋 Persisted user profile to corememory | client=%s name=%s",
-                            profile.get("client_id", "?")[:8],
-                            profile.get("full_name", "?"),
-                        )
-                except Exception:
-                    logger.debug("Failed to persist tool results to MemoManager", exc_info=True)
 
             # Handle transfer tools
             if (
@@ -3235,22 +3128,9 @@ class LiveOrchestrator:
                 return True
 
             else:
-                # Business tool - queue output for batched response at RESPONSE_DONE
-                # This prevents duplicate messages when model makes multiple tool calls
-                #
-                # CRITICAL: Do NOT call response.create() here! The model may have
-                # multiple tool calls in a single response. We queue all outputs and
-                # trigger ONE response via the batch finalizer (production) or
-                # _handle_response_done's inline flush (direct-call tests).
                 output_json = json.dumps(result)
-                if batch is not None:
-                    # Offloaded path: append to the response-scoped batch so the
-                    # finalizer (which re-checks epoch) owns the continuation.
-                    batch.outputs.append((call_id, output_json))
-                    pending_count = len(batch.outputs)
-                else:
-                    self._pending_tool_outputs.append((call_id, output_json))
-                    pending_count = len(self._pending_tool_outputs)
+                batch.outputs.append((call_id, output_json))
+                pending_count = len(batch.outputs)
                 self._response_had_tool_calls = True
                 logger.debug(
                     "[Business Tool] Queued output for call_id=%s | pending_count=%d",
@@ -3331,7 +3211,6 @@ class LiveOrchestrator:
             return
         for task in list(self._greeting_tasks):
             task.cancel()
-        self._greeting_tasks.clear()
 
     def _schedule_greeting_fallback(self, agent_name: str) -> None:
         if not self._pending_greeting or not self._pending_greeting_agent:
@@ -3348,9 +3227,11 @@ class LiveOrchestrator:
                     # land while this coroutine is suspended inside response.create().
                     self._greeting_response_pending = True
                     try:
-                        await self.agents[agent_name].trigger_voicelive_response(
+                        await voicelive_session.trigger_voicelive_response(
+                            self.agents[agent_name],
                             self.conn,
                             say=self._pending_greeting,
+                            cancel_active=False,
                         )
                     except asyncio.CancelledError:
                         self._greeting_response_pending = False

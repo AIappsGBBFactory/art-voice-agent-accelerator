@@ -114,13 +114,13 @@ async def test_blocked_business_tool_does_not_stall_intake():
     ):
         # Tool call is dispatched to an owned task and returns immediately.
         await orch.handle_event(_fn_args_done("call-1", "lookup_account", {"id": 1}))
-        assert orch._active_tool_batch is not None
-        assert len(orch._active_tool_batch.tasks) == 1
+        assert len(orch._tool_batches) == 1
+        assert len(next(iter(orch._tool_batches.values())).tasks) == 1
         await asyncio.sleep(0)  # let the task start and block on the gate
 
         # response.done schedules the finalizer (which now awaits the blocked tool).
         await orch.handle_event(_response_done("r1", ResponseStatus.COMPLETED))
-        assert orch._active_tool_batch is None
+        assert not orch._tool_batches
 
         # The reader is still responsive: a barge-in is processed even though the
         # tool has not released. This is the head-of-line-blocking fix.
@@ -150,7 +150,7 @@ async def test_multi_tool_batch_emits_exactly_one_continuation():
     ):
         await orch.handle_event(_fn_args_done("call-1", "lookup_account", {"id": 1}))
         await orch.handle_event(_fn_args_done("call-2", "lookup_balance", {"id": 1}))
-        assert len(orch._active_tool_batch.tasks) == 2
+        assert len(next(iter(orch._tool_batches.values())).tasks) == 2
         await orch.handle_event(_response_done("r1", ResponseStatus.COMPLETED))
         await _drain(orch)
 
@@ -250,4 +250,4 @@ async def test_cancel_and_join_tasks_tears_down_inflight_tool():
         await orch.cancel_and_join_tasks()
 
     assert orch._owned_tasks == set()
-    assert orch._active_tool_batch is None
+    assert not orch._tool_batches

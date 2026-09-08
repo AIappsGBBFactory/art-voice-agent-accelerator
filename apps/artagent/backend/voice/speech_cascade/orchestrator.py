@@ -2,41 +2,11 @@
 Cascade Orchestrator Adapter
 ==============================
 
-Adapter that integrates the unified agent structure (apps/artagent/agents/)
-with the SpeechCascade handler for multi-agent voice orchestration.
-
-This adapter:
-- Uses UnifiedAgent from the new modular agent structure
-- Provides multi-agent handoffs via state-based transitions
-- Integrates with the shared tool registry
-- Processes turns synchronously via process_gpt_response pattern
-
-Architecture:
-    SpeechCascadeHandler
-           │
-           ▼
-    CascadeOrchestratorAdapter ─► UnifiedAgent registry
-           │                           │
-           ├─► process_turn()          └─► get_tools()
-           │                               render_prompt()
-           └─► HandoffManager ─────────► build_handoff_map()
-
-Usage:
-    from apps.artagent.backend.voice.speech_cascade import CascadeOrchestratorAdapter
-
-    # Create with unified agents
-    adapter = CascadeOrchestratorAdapter.create(
-        start_agent="Concierge",
-        call_connection_id="call_123",
-        session_id="session_456",
-    )
-
-    # Use as orchestrator_func in SpeechCascadeHandler
-    async def orchestrator_func(cm, transcript):
-        await adapter.process_user_input(transcript, cm)
-
-    # Or wrap for legacy gpt_flow interface
-    func = adapter.as_orchestrator_func()
+Native async turn execution over UnifiedAgent definitions. VoiceHandler's
+serialized turn worker enters through unified.route_turn and process_turn.
+Model/TTS sequencing stays here; scenario routing, tool effects and definition
+conversion delegate to their shared contracts. Standalone callers may construct
+an adapter with create() and pass an OrchestratorContext to process_turn().
 """
 
 from __future__ import annotations
@@ -59,7 +29,6 @@ from apps.artagent.backend.voice.shared.base import (
 )
 from apps.artagent.backend.voice.shared.config_resolver import (
     DEFAULT_START_AGENT,
-    resolve_from_app_state,
     resolve_orchestrator_config,
 )
 from apps.artagent.backend.voice.shared.errors import (
@@ -73,6 +42,11 @@ from apps.artagent.backend.voice.shared.session_state import (
     SessionStateKeys,
     sync_state_from_memo,
     sync_state_to_memo,
+)
+from apps.artagent.backend.voice.shared.tool_policy import (
+    apply_tool_result,
+    normalize_tool_result,
+    tool_arguments,
 )
 from apps.artagent.backend.voice.speech_cascade.tts_processor import TTSTextProcessor
 from opentelemetry import trace
@@ -249,8 +223,7 @@ class CascadeOrchestratorAdapter:
     """
     Adapter for SpeechCascade multi-agent orchestration using unified agents.
 
-    This adapter integrates the modular agent structure (apps/artagent/agents/)
-    with the SpeechCascadeHandler, providing:
+    This adapter integrates neutral agent definitions with VoiceHandler, providing:
 
     - State-based handoffs via MemoManager
     - Tool execution via shared registry
@@ -258,9 +231,9 @@ class CascadeOrchestratorAdapter:
     - OpenTelemetry instrumentation
 
     Design:
-    - Synchronous turn processing (not event-driven)
-    - State-based handoffs (not tool-based)
-    - Uses gpt_flow pattern for LLM streaming
+    - Serialized async turns with owned model/TTS producers
+    - Scenario-authoritative handoffs
+    - Shared tool effects with native streaming and continuation
 
     Attributes:
         config: Orchestrator configuration
@@ -292,8 +265,7 @@ class CascadeOrchestratorAdapter:
     # Unified metrics tracking (replaces individual token/timing fields)
     _metrics: OrchestratorMetrics = field(default=None, init=False)  # type: ignore
 
-    # Callbacks for integration with SpeechCascadeHandler
-    _on_tts_chunk: Callable[[str], Awaitable[None]] | None = field(default=None, init=False)
+    # Native runtime and evaluation agent-switch notification.
     _on_agent_switch: Callable[[str, str], Awaitable[None]] | None = field(default=None, init=False)
 
     def __post_init__(self):
@@ -611,180 +583,6 @@ class CascadeOrchestratorAdapter:
                 exc,
             )
 
-    def _get_tools_with_handoffs(self, agent: UnifiedAgent) -> list[dict[str, Any]]:
-        """
-        Get agent tools with centralized handoff tool injection.
-
-        This method:
-        1. Filters OUT explicit handoff tools (e.g., handoff_concierge)
-        2. Auto-injects the generic `handoff_to_agent` tool when needed
-
-        The scenario edges define handoff routing and conditions, so we only
-        need the single centralized `handoff_to_agent` tool. Agents call it
-        with `target_agent` parameter based on system prompt instructions.
-
-        Args:
-            agent: The agent to get tools for
-
-        Returns:
-            List of tool schemas with only the generic handoff_to_agent tool
-        """
-        tools = agent.get_tools()
-
-        # Filter out explicit handoff tools - we use handoff_to_agent exclusively
-        filtered_tools = []
-        for tool in tools:
-            func_name = tool.get("function", {}).get("name", "")
-            # Keep handoff_to_agent, filter out other handoff_* patterns
-            if func_name == "handoff_to_agent":
-                filtered_tools.append(tool)
-            elif self.handoff_service.is_handoff(func_name):
-                logger.debug(
-                    "Filtering explicit handoff tool | tool=%s agent=%s reason=using_centralized_handoff",
-                    func_name,
-                    agent.name,
-                )
-            else:
-                filtered_tools.append(tool)
-
-        tools = filtered_tools
-        tool_names = {t.get("function", {}).get("name") for t in tools}
-
-        # Check if handoff_to_agent is already present
-        if "handoff_to_agent" in tool_names:
-            return tools
-
-        # Check scenario configuration for automatic handoff tool injection
-        # Use cached orchestrator config (supports both file-based and session-scoped)
-        config = self._orchestrator_config
-        scenario = config.scenario
-        if not scenario:
-            logger.warning(
-                "No scenario loaded for handoff tool injection | agent=%s scenario_name=%s",
-                agent.name,
-                config.scenario_name,
-            )
-            # Fallback: still add handoff_to_agent if agent has explicit handoff tools defined
-            # This ensures basic handoff capability even without scenario config
-            agent_tools = agent.get_tools()
-            has_handoff_tools = any(
-                self.handoff_service.is_handoff(t.get("function", {}).get("name", ""))
-                for t in agent_tools
-            )
-            if has_handoff_tools:
-                from apps.artagent.backend.registries.toolstore import (
-                    get_tools_for_agent,
-                    initialize_tools,
-                )
-
-                initialize_tools()
-                handoff_tools = get_tools_for_agent(["handoff_to_agent"])
-                if handoff_tools:
-                    # Enhance with available agent names
-                    handoff_tools = self._enhance_handoff_tool_with_agents(
-                        handoff_tools, agent.name
-                    )
-                    tools = list(tools) + handoff_tools
-                    logger.info(
-                        "Added handoff_to_agent (fallback) | agent=%s reason=agent_has_handoff_tools",
-                        agent.name,
-                    )
-            return tools
-
-        # Add handoff_to_agent if generic handoffs enabled or agent has outgoing edges
-        should_add_handoff_tool = False
-
-        if scenario.generic_handoff.enabled:
-            should_add_handoff_tool = True
-            logger.debug(
-                "Auto-adding handoff_to_agent | agent=%s reason=generic_handoff_enabled",
-                agent.name,
-            )
-        else:
-            # Check if agent has outgoing handoffs in the scenario
-            outgoing = scenario.get_outgoing_handoffs(agent.name)
-            if outgoing:
-                should_add_handoff_tool = True
-                logger.debug(
-                    "Auto-adding handoff_to_agent | agent=%s reason=has_outgoing_handoffs count=%d targets=%s",
-                    agent.name,
-                    len(outgoing),
-                    [h.to_agent for h in outgoing],
-                )
-
-        if should_add_handoff_tool:
-            from apps.artagent.backend.registries.toolstore import (
-                get_tools_for_agent,
-                initialize_tools,
-            )
-
-            initialize_tools()
-            handoff_tools = get_tools_for_agent(["handoff_to_agent"])
-            if handoff_tools:
-                # Enhance with available agent names
-                handoff_tools = self._enhance_handoff_tool_with_agents(handoff_tools, agent.name)
-                tools = list(tools) + handoff_tools
-                logger.info(
-                    "Added handoff_to_agent tool | agent=%s scenario=%s",
-                    agent.name,
-                    config.scenario_name,
-                )
-
-        return tools
-
-    def _enhance_handoff_tool_with_agents(
-        self, handoff_tools: list[dict[str, Any]], current_agent: str
-    ) -> list[dict[str, Any]]:
-        """
-        Enhance handoff_to_agent tool description with available agent names.
-
-        This helps the LLM know exactly which agents it can hand off to,
-        preventing hallucinated agent names like "CardSpecialist" instead
-        of the correct "CardRecommendation".
-
-        Args:
-            handoff_tools: List of handoff tool schemas
-            current_agent: The current agent name (to exclude from targets)
-
-        Returns:
-            Modified tool schemas with agent names in description
-        """
-        import copy
-
-        # Get available agents (excluding current agent)
-        available_agents = [name for name in self.agents.keys() if name != current_agent]
-
-        if not available_agents:
-            return handoff_tools
-
-        enhanced_tools = []
-        for tool in handoff_tools:
-            tool_copy = copy.deepcopy(tool)
-            func = tool_copy.get("function", {})
-            if func.get("name") == "handoff_to_agent":
-                # Update description to include available agents
-                original_desc = func.get("description", "")
-                agent_list = ", ".join(sorted(available_agents))
-                enhanced_desc = (
-                    f"{original_desc}\n\n"
-                    f"AVAILABLE AGENTS: {agent_list}\n"
-                    f"You MUST use one of these exact agent names as the target_agent parameter."
-                )
-                func["description"] = enhanced_desc
-
-                # Also update the target_agent parameter with enum
-                params = func.get("parameters", {})
-                props = params.get("properties", {})
-                if "target_agent" in props:
-                    props["target_agent"]["enum"] = sorted(available_agents)
-                    props["target_agent"][
-                        "description"
-                    ] = f"The name of the agent to transfer to. Must be one of: {agent_list}"
-
-            enhanced_tools.append(tool_copy)
-
-        return enhanced_tools
-
     def set_on_agent_switch(self, callback: Callable[[str, str], Awaitable[None]] | None) -> None:
         """
         Set callback for agent switch notifications.
@@ -796,6 +594,16 @@ class CascadeOrchestratorAdapter:
             callback: Async function(previous_agent, new_agent) -> None
         """
         self._on_agent_switch = callback
+
+    def _get_tools_with_handoffs(self, agent: UnifiedAgent) -> list[dict[str, Any]]:
+        from apps.artagent.backend.voice.shared.tool_policy import agent_tool_schemas
+
+        return agent_tool_schemas(
+            agent,
+            scenario=self._orchestrator_config.scenario,
+            agents=self.agents,
+            is_handoff=self.handoff_service.is_handoff,
+        )
 
     def update_scenario(
         self,
@@ -1208,32 +1016,6 @@ class CascadeOrchestratorAdapter:
                             else:
                                 parsed_args = raw_args if isinstance(raw_args, dict) else {}
 
-                            # For handoff_to_agent, get target from arguments
-                            # For other handoff tools (legacy), use handoff_map
-                            if tool_name == "handoff_to_agent":
-                                target_agent = parsed_args.get("target_agent", "")
-                                if not target_agent:
-                                    logger.warning(
-                                        "handoff_to_agent called without target_agent | args=%s",
-                                        parsed_args,
-                                    )
-                                    continue
-                                # Validate target exists
-                                if target_agent not in self.agents:
-                                    logger.warning(
-                                        "handoff_to_agent target not found | target=%s available=%s",
-                                        target_agent,
-                                        list(self.agents.keys()),
-                                    )
-                                    continue
-                            else:
-                                target_agent = self.get_handoff_target(tool_name)
-                                if not target_agent:
-                                    logger.warning(
-                                        "Handoff tool '%s' not in handoff_map", tool_name
-                                    )
-                                    continue
-
                             # Emit tool_start for handoff tool (before execution)
                             if on_tool_start:
                                 try:
@@ -1242,10 +1024,10 @@ class CascadeOrchestratorAdapter:
                                     logger.debug("Failed to emit handoff tool_start", exc_info=True)
 
                             handoff_result = await self._execute_handoff(
-                                target_agent=target_agent,
                                 tool_name=tool_name,
                                 args=parsed_args,
                             )
+                            target_agent = handoff_result.target_agent
 
                             # Emit tool_end for handoff tool (after execution)
                             if on_tool_end:
@@ -1602,18 +1384,6 @@ class CascadeOrchestratorAdapter:
 
         return messages
 
-    def _sanitize_tts_text(self, text: str) -> str:
-        """Remove markdown so TTS only speaks plain text. DEPRECATED: Use TTSTextProcessor."""
-        return TTSTextProcessor.sanitize_tts_text(text)
-
-    def _find_tts_boundary(self, text: str, terms: str, min_index: int) -> int:
-        """Return first punctuation boundary that is safe to split on. DEPRECATED: Use TTSTextProcessor."""
-        return TTSTextProcessor.find_tts_boundary(text, terms, min_index)
-
-    def _split_tts_buffer(self, text: str, end_index: int) -> tuple[str, str]:
-        """Split text at end_index, keeping trailing whitespace with the left chunk. DEPRECATED: Use TTSTextProcessor."""
-        return TTSTextProcessor.split_tts_buffer(text, end_index)
-
     async def _process_llm(
         self,
         messages: list[dict[str, Any]],
@@ -1938,18 +1708,20 @@ class CascadeOrchestratorAdapter:
                                 if getattr(delta, "content", None):
                                     text = delta.content
                                     collected_text.append(text)
-                                    sentence_buffer += self._sanitize_tts_text(text)
+                                    sentence_buffer += TTSTextProcessor.sanitize_tts_text(text)
                                     raw_sentence_buffer += text
 
                                     # Dispatch only on sentence boundaries.
                                     while True:
-                                        term_idx = self._find_tts_boundary(
+                                        term_idx = TTSTextProcessor.find_tts_boundary(
                                             sentence_buffer, primary_terms, 0
                                         )
                                         if term_idx < 0:
                                             break
-                                        dispatch, sentence_buffer = self._split_tts_buffer(
-                                            sentence_buffer, term_idx + 1
+                                        dispatch, sentence_buffer = (
+                                            TTSTextProcessor.split_tts_buffer(
+                                                sentence_buffer, term_idx + 1
+                                            )
                                         )
                                         # Split raw buffer at the same character ratio
                                         ratio = len(dispatch) / max(
@@ -2115,11 +1887,9 @@ class CascadeOrchestratorAdapter:
 
                 all_tool_calls.extend(tool_calls)
 
-                # If we have handoff tools, return immediately (handoffs handled by caller)
+                # Commit business calls in the same batch before changing agents.
                 if handoff_tools:
                     span.set_attribute("cascade.handoff_detected", True)
-                    span.set_status(Status(StatusCode.OK))
-                    return response_text, all_tool_calls
 
                 # Execute non-handoff tools and loop back to LLM
                 if non_handoff_tools:
@@ -2169,8 +1939,6 @@ class CascadeOrchestratorAdapter:
                                 exc_info=True,
                             )
 
-                    tool_results_for_history: list[dict[str, Any]] = []
-
                     for tool_call in non_handoff_tools:
                         tool_name = tool_call.get("name", "")
                         tool_id = tool_call.get("id", "")
@@ -2196,25 +1964,13 @@ class CascadeOrchestratorAdapter:
                             result: dict[str, Any] = {"error": "Tool execution failed"}
                             if agent:
                                 try:
-                                    args = (
-                                        json.loads(raw_args)
-                                        if isinstance(raw_args, str)
-                                        else raw_args
+                                    args = tool_arguments(raw_args, cm)
+                                    result = normalize_tool_result(
+                                        await agent.execute_tool(tool_name, args)
                                     )
-                                    # Inject session context into tool args for profile-aware tools
-                                    # This allows tools to use already-loaded session data
-                                    if cm:
-                                        session_profile = cm.get_value_from_corememory(
-                                            "session_profile"
-                                        )
-                                        if session_profile:
-                                            args["_session_profile"] = session_profile
-                                        # Always inject _client_id so tools can use the verified value
-                                        # Tools should prefer _client_id over client_id when present
-                                        client_id = cm.get_value_from_corememory("client_id")
-                                        if client_id:
-                                            args["_client_id"] = client_id
-                                    result = await agent.execute_tool(tool_name, args)
+                                    self._session_vars.update(
+                                        apply_tool_result(cm, tool_name, result)
+                                    )
                                     logger.info(
                                         "Tool executed | name=%s result_keys=%s",
                                         tool_name,
@@ -2224,69 +1980,6 @@ class CascadeOrchestratorAdapter:
                                             else type(result).__name__
                                         ),
                                     )
-
-                                    # Persist tool output to MemoManager for context continuity
-                                    if cm:
-                                        try:
-                                            cm.persist_tool_output(tool_name, result)
-                                            # Update any slots returned by the tool
-                                            if isinstance(result, dict) and "slots" in result:
-                                                cm.update_slots(result["slots"])
-                                            # Persist authenticated identity to corememory so handoff targets
-                                            # can inject _client_id and render session_profile in their prompts
-                                            if (
-                                                isinstance(result, dict)
-                                                and result.get("authenticated")
-                                                and result.get("client_id")
-                                            ):
-                                                cm.set_corememory("client_id", result["client_id"])
-                                                if result.get("caller_name"):
-                                                    cm.set_corememory(
-                                                        "caller_name", result["caller_name"]
-                                                    )
-                                                logger.info(
-                                                    "🔐 Persisted authenticated identity | client_id=%s",
-                                                    (
-                                                        result["client_id"][:8] + "..."
-                                                        if len(result["client_id"]) > 8
-                                                        else result["client_id"]
-                                                    ),
-                                                )
-                                            # Persist loaded profile to corememory for cross-agent availability
-                                            if (
-                                                isinstance(result, dict)
-                                                and result.get("success")
-                                                and result.get("profile")
-                                                and isinstance(result["profile"], dict)
-                                            ):
-                                                profile = result["profile"]
-                                                cm.set_corememory("session_profile", profile)
-                                                if profile.get("client_id"):
-                                                    cm.set_corememory(
-                                                        "client_id", profile["client_id"]
-                                                    )
-                                                if profile.get("full_name"):
-                                                    cm.set_corememory(
-                                                        "caller_name", profile["full_name"]
-                                                    )
-                                                if profile.get("customer_intelligence"):
-                                                    cm.set_corememory(
-                                                        "customer_intelligence",
-                                                        profile["customer_intelligence"],
-                                                    )
-                                                if profile.get("institution_name"):
-                                                    cm.set_corememory(
-                                                        "institution_name",
-                                                        profile["institution_name"],
-                                                    )
-                                                logger.info(
-                                                    "📋 Persisted user profile to corememory | client=%s",
-                                                    profile.get("client_id", "?")[:8],
-                                                )
-                                        except Exception as persist_err:
-                                            logger.debug(
-                                                "Failed to persist tool output: %s", persist_err
-                                            )
 
                                     # Mark tool span as successful
                                     tool_span.set_status(Status(StatusCode.OK))
@@ -2306,9 +1999,6 @@ class CascadeOrchestratorAdapter:
                                         },
                                     )
 
-                            if on_tool_end:
-                                await on_tool_end(tool_name, result)
-
                             # Append tool result message
                             tool_result_msg = {
                                 "tool_call_id": tool_id,
@@ -2319,17 +2009,16 @@ class CascadeOrchestratorAdapter:
                                 ),
                             }
                             messages.append(tool_result_msg)
-                            tool_results_for_history.append(tool_result_msg)
-
-                    # Persist tool results to MemoManager for history continuity
-                    if cm and tool_results_for_history:
-                        try:
-                            for tool_msg in tool_results_for_history:
+                            if cm:
                                 cm.append_to_history(
-                                    self._active_agent, "tool", json.dumps(tool_msg)
+                                    self._active_agent, "tool", json.dumps(tool_result_msg)
                                 )
-                        except Exception:
-                            logger.debug("Failed to persist tool results to history", exc_info=True)
+                            if on_tool_end:
+                                await on_tool_end(tool_name, result)
+
+                    if handoff_tools:
+                        span.set_status(Status(StatusCode.OK))
+                        return response_text, all_tool_calls
 
                     # Advance turn_id to create a new message segment for post-tool response
                     # This prevents the UI from overwriting pre-tool assistant content
@@ -2404,7 +2093,7 @@ class CascadeOrchestratorAdapter:
         the UI can render markdown while TTS receives plain text.
         """
         try:
-            sanitized = self._sanitize_tts_text(text).strip()
+            sanitized = TTSTextProcessor.sanitize_tts_text(text).strip()
             if not sanitized:
                 return
 
@@ -2413,10 +2102,10 @@ class CascadeOrchestratorAdapter:
             raw_buffer = text
             primary_terms = ".!?"
             while True:
-                term_idx = self._find_tts_boundary(buffer, primary_terms, 0)
+                term_idx = TTSTextProcessor.find_tts_boundary(buffer, primary_terms, 0)
                 if term_idx < 0:
                     break
-                segment, buffer = self._split_tts_buffer(buffer, term_idx + 1)
+                segment, buffer = TTSTextProcessor.split_tts_buffer(buffer, term_idx + 1)
                 if segment.strip():
                     ratio = len(segment) / max(len(segment) + len(buffer), 1)
                     raw_split = max(1, round(len(raw_buffer) * ratio))
@@ -2567,7 +2256,6 @@ class CascadeOrchestratorAdapter:
 
     async def _execute_handoff(
         self,
-        target_agent: str,
         tool_name: str,
         args: dict[str, Any],
         system_vars: dict[str, Any] | None = None,
@@ -2579,7 +2267,6 @@ class CascadeOrchestratorAdapter:
         across both Cascade and VoiceLive orchestrators.
 
         Args:
-            target_agent: Target agent name
             tool_name: Handoff tool that triggered the switch
             args: Tool arguments (may contain context)
             system_vars: Optional system variables for greeting selection
@@ -2588,16 +2275,13 @@ class CascadeOrchestratorAdapter:
             HandoffResult with success status, handoff_type, greeting, etc.
         """
         previous_agent = self._active_agent
-        is_first_visit = target_agent not in self._visited_agents
 
         with tracer.start_as_current_span(
             "cascade.handoff",
             kind=SpanKind.INTERNAL,
             attributes={
                 "cascade.source_agent": previous_agent,
-                "cascade.target_agent": target_agent,
                 "cascade.tool_name": tool_name,
-                "cascade.is_first_visit": is_first_visit,
             },
         ) as span:
             # Use HandoffService for consistent resolution
@@ -2618,11 +2302,15 @@ class CascadeOrchestratorAdapter:
                 span.set_status(Status(StatusCode.ERROR, resolution.error or "Handoff failed"))
                 return HandoffResult(
                     success=False,
-                    target_agent=target_agent,
+                    target_agent=resolution.target_agent or "",
                     handoff_type=resolution.handoff_type,
                     error=resolution.error,
                 )
 
+            target_agent = resolution.target_agent
+            is_first_visit = target_agent not in self._visited_agents
+            span.set_attribute("cascade.target_agent", target_agent)
+            span.set_attribute("cascade.is_first_visit", is_first_visit)
             # Update state
             self._visited_agents.add(target_agent)
             self._active_agent = target_agent
@@ -2667,58 +2355,6 @@ class CascadeOrchestratorAdapter:
     # ─────────────────────────────────────────────────────────────────
     # Greeting Selection (delegates to HandoffService)
     # ─────────────────────────────────────────────────────────────────
-
-    def _select_greeting(
-        self,
-        agent: UnifiedAgent,
-        agent_name: str,
-        system_vars: dict[str, Any],
-        is_first_visit: bool,
-        greet_on_switch: bool = True,
-    ) -> str | None:
-        """
-        Select appropriate greeting for agent activation.
-
-        Delegates to HandoffService for consistent behavior across orchestrators.
-
-        Args:
-            agent: The agent to get greeting for
-            agent_name: Name of the agent (unused, kept for backward compat)
-            system_vars: System variables for template rendering
-            is_first_visit: Whether this is first visit to agent
-            greet_on_switch: Whether to greet (from scenario config)
-
-        Returns:
-            Greeting text or None
-        """
-        return self.handoff_service.select_greeting(
-            agent=agent,
-            is_first_visit=is_first_visit,
-            greet_on_switch=greet_on_switch,
-            system_vars=system_vars,
-        )
-
-    async def switch_agent(
-        self,
-        agent_name: str,
-        context: dict[str, Any] | None = None,
-    ) -> bool:
-        """
-        Programmatically switch to a different agent.
-
-        Args:
-            agent_name: Target agent name
-            context: Optional handoff context
-
-        Returns:
-            True if switch succeeded
-        """
-        result = await self._execute_handoff(
-            target_agent=agent_name,
-            tool_name=f"manual_switch_{agent_name}",
-            args=context or {},
-        )
-        return result.success
 
     # ─────────────────────────────────────────────────────────────────
     # MemoManager Integration
@@ -2811,227 +2447,10 @@ class CascadeOrchestratorAdapter:
             cm.set_corememory("cascade_turn_count", self._metrics.turn_count)
             cm.set_corememory("cascade_tokens", self._metrics.to_memo_state())
 
-    # ─────────────────────────────────────────────────────────────────
-    # Legacy Interface for SpeechCascadeHandler
-    # ─────────────────────────────────────────────────────────────────
-
-    async def process_user_input(
-        self,
-        transcript: str,
-        cm: MemoManager,
-        *,
-        on_tts_chunk: Callable[[str], Awaitable[None]] | None = None,
-    ) -> str | None:
-        """
-        DEPRECATED: Process user input in cascade pattern.
-
-        This method is deprecated and will be removed in a future version.
-        Use process_turn() directly instead:
-
-            result = await adapter.process_turn(
-                user_text=transcript,
-                memo_manager=cm,
-                on_tts_chunk=on_tts_chunk
-            )
-            return result.response_text
-
-        This is now a thin compatibility shim that calls process_turn().
-
-        Args:
-            transcript: User's transcribed speech
-            cm: MemoManager for conversation state
-            on_tts_chunk: Optional callback for streaming TTS
-
-        Returns:
-            Full response text (or None if cancelled/error)
-        """
-        # Call unified process_turn with Pattern 2 (direct MemoManager)
-        result = await self.process_turn(
-            user_text=transcript,
-            memo_manager=cm,
-            on_tts_chunk=on_tts_chunk,
-        )
-
-        # Return text response. An error still returns its spoken fallback so
-        # the caller hears something; only interrupts return None.
-        if result.interrupted:
-            return None
-        return result.response_text or None
-
-    async def _persist_to_redis_background(self, cm: MemoManager) -> None:
-        """Background task to persist session state to Redis."""
-        try:
-            await cm.persist_to_redis_async(cm._redis_manager)
-        except Exception as e:
-            logger.warning("Redis persist failed: %s", e)
-
-    def as_orchestrator_func(
-        self,
-    ) -> Callable[[MemoManager, str], Awaitable[str | None]]:
-        """
-        DEPRECATED: Return a function compatible with SpeechCascadeHandler.
-
-        This method is deprecated and will be removed in a future version.
-        Use the adapter instance directly with process_turn():
-
-            # Instead of:
-            handler = SpeechCascadeHandler(
-                orchestrator_func=adapter.as_orchestrator_func(),
-            )
-
-            # Use:
-            async def orchestrator_func(cm, transcript):
-                result = await adapter.process_turn(
-                    user_text=transcript,
-                    memo_manager=cm
-                )
-                return result.response_text
-
-        Returns:
-            Callable matching the legacy orchestrator signature
-        """
-
-        async def orchestrator_func(
-            cm: MemoManager,
-            transcript: str,
-        ) -> str | None:
-            return await self.process_user_input(transcript, cm)
-
-        return orchestrator_func
-
-
-# ─────────────────────────────────────────────────────────────────────
-# Factory Functions (DEPRECATED - Use CascadeOrchestratorAdapter.create())
-# ─────────────────────────────────────────────────────────────────────
-
-
-def get_cascade_orchestrator(
-    *,
-    start_agent: str | None = None,
-    model_name: str | None = None,
-    call_connection_id: str | None = None,
-    session_id: str | None = None,
-    scenario_name: str | None = None,
-    app_state: Any | None = None,
-    **kwargs,
-) -> CascadeOrchestratorAdapter:
-    """
-    DEPRECATED: Create a CascadeOrchestratorAdapter instance with scenario support.
-
-    This function is deprecated. Use CascadeOrchestratorAdapter.create() directly:
-
-        adapter = CascadeOrchestratorAdapter.create(
-            start_agent="MyAgent",
-            session_id="session_123",
-            call_connection_id="call_456",
-        )
-
-    Resolution order for start_agent and agents:
-    1. Explicit start_agent parameter
-    2. app_state (if provided)
-    3. Scenario configuration (AGENT_SCENARIO env var or scenario_name param)
-    4. Default values
-
-    Args:
-        start_agent: Override initial agent name (None = auto-resolve)
-        model_name: LLM deployment name (defaults to AZURE_OPENAI_DEPLOYMENT)
-        call_connection_id: ACS call ID for tracing
-        session_id: Session ID for tracing
-        scenario_name: Override scenario name
-        app_state: FastAPI app.state for pre-loaded config
-        **kwargs: Additional configuration
-
-    Returns:
-        Configured CascadeOrchestratorAdapter
-    """
-    # Resolve configuration
-    # Priority: explicit scenario_name overrides app_state preloads so per-session
-    # scenarios (stored in MemoManager) take effect for cascade mode.
-    if scenario_name:
-        config = resolve_orchestrator_config(
-            session_id=session_id,
-            scenario_name=scenario_name,
-            start_agent=start_agent,
-        )
-    elif app_state is not None:
-        config = resolve_from_app_state(app_state)
-    else:
-        config = resolve_orchestrator_config(
-            session_id=session_id,
-            start_agent=start_agent,
-        )
-
-    # Use resolved start_agent unless explicitly overridden
-    effective_start_agent = start_agent or config.start_agent
-
-    return CascadeOrchestratorAdapter.create(
-        start_agent=effective_start_agent,
-        model_name=model_name,
-        call_connection_id=call_connection_id,
-        session_id=session_id,
-        agents=config.agents,
-        handoff_map=config.handoff_map,
-        streaming=True,  # Explicitly disable streaming for cascade
-        **kwargs,
-    )
-
-
-def create_cascade_orchestrator_func(
-    *,
-    start_agent: str | None = None,
-    call_connection_id: str | None = None,
-    session_id: str | None = None,
-    scenario_name: str | None = None,
-    app_state: Any | None = None,
-) -> Callable[[MemoManager, str], Awaitable[str | None]]:
-    """
-    DEPRECATED: Create an orchestrator function for SpeechCascadeHandler.
-
-    This function is deprecated. Use CascadeOrchestratorAdapter.create() and
-    process_turn() directly:
-
-        adapter = CascadeOrchestratorAdapter.create(start_agent="MyAgent")
-
-        async def orchestrator_func(cm, transcript):
-            result = await adapter.process_turn(
-                user_text=transcript,
-                memo_manager=cm,
-            )
-            return result.response_text
-
-    Usage (legacy):
-        handler = SpeechCascadeHandler(
-            orchestrator_func=create_cascade_orchestrator_func(
-                # Let scenario determine start_agent
-            ),
-            ...
-        )
-
-    Args:
-        start_agent: Override initial agent name (None = auto-resolve from scenario)
-        call_connection_id: ACS call ID for tracing
-        session_id: Session ID for tracing
-        scenario_name: Override scenario name
-        app_state: FastAPI app.state for pre-loaded config
-
-    Returns:
-        Orchestrator function compatible with SpeechCascadeHandler
-    """
-    adapter = get_cascade_orchestrator(
-        start_agent=start_agent,
-        call_connection_id=call_connection_id,
-        session_id=session_id,
-        scenario_name=scenario_name,
-        app_state=app_state,
-    )
-    return adapter.as_orchestrator_func()
-
 
 __all__ = [
     "CascadeOrchestratorAdapter",
     "CascadeConfig",
-    "CascadeHandoffContext",
+    "CascadeSessionScope",
     "StateKeys",
-    "get_cascade_orchestrator",
-    "create_cascade_orchestrator_func",
 ]

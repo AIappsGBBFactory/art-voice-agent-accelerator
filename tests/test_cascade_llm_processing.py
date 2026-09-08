@@ -391,6 +391,7 @@ class TestProcessLLMBaseline:
 
             # First call returns tool call, second call returns followup
             call_count = [0]
+
             def create_stream(**kwargs):
                 call_count[0] += 1
                 if call_count[0] == 1:
@@ -523,34 +524,40 @@ class TestTTSTextProcessing:
     Test TTS text processing utilities that will be extracted.
     """
 
-    def test_sanitize_tts_text_removes_markdown(self, cascade_adapter):
+    def test_sanitize_tts_text_removes_markdown(self):
         """
         Test that _sanitize_tts_text removes markdown formatting.
         """
         text = "Here's a [link](http://example.com) and `code` block."
-        result = cascade_adapter._sanitize_tts_text(text)
+        from apps.artagent.backend.voice.speech_cascade.tts_processor import TTSTextProcessor
+
+        result = TTSTextProcessor.sanitize_tts_text(text)
 
         assert "[" not in result
         assert "`" not in result
         assert "link" in result
         assert "code" in result
 
-    def test_find_tts_boundary_detects_sentences(self, cascade_adapter):
+    def test_find_tts_boundary_detects_sentences(self):
         """
         Test that _find_tts_boundary finds sentence endings.
         """
         text = "Hello there. How are you?"
-        boundary = cascade_adapter._find_tts_boundary(text, ".!?", 0)
+        from apps.artagent.backend.voice.speech_cascade.tts_processor import TTSTextProcessor
+
+        boundary = TTSTextProcessor.find_tts_boundary(text, ".!?", 0)
 
         assert boundary > 0
         assert text[boundary] == "."
 
-    def test_split_tts_buffer_splits_correctly(self, cascade_adapter):
+    def test_split_tts_buffer_splits_correctly(self):
         """
         Test that _split_tts_buffer splits at the right position.
         """
         text = "First sentence. Second sentence."
-        left, right = cascade_adapter._split_tts_buffer(text, 15)
+        from apps.artagent.backend.voice.speech_cascade.tts_processor import TTSTextProcessor
+
+        left, right = TTSTextProcessor.split_tts_buffer(text, 15)
 
         assert "First sentence." in left
         assert "Second" in right
@@ -611,6 +618,7 @@ class TestLLMProcessingIntegration:
         with patch.object(cascade_adapter, "async_client") as mock_client:
 
             call_count = [0]
+
             def create_stream(**kwargs):
                 call_count[0] += 1
                 if call_count[0] == 1:

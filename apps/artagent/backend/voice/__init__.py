@@ -26,7 +26,7 @@ Architecture:
 Structure:
     voice/
     ├── speech_cascade/
-    │   ├── handler.py      # SpeechCascadeHandler (three-thread architecture)
+    │   ├── handler.py      # Callback bridge and native speech/turn workers
     │   ├── orchestrator.py # CascadeOrchestratorAdapter (unified agents)
     │   └── metrics.py      # STT/turn/barge-in metrics
     ├── voicelive/
@@ -64,20 +64,18 @@ from .shared import (
     resolve_orchestrator_config,
 )
 
-# Cascade orchestrator (lightweight - no ACS/Speech SDK dependencies)
-from .speech_cascade.orchestrator import (
-    CascadeConfig,
-    CascadeOrchestratorAdapter,
-    CascadeSessionScope,
-    create_cascade_orchestrator_func,
-    get_cascade_orchestrator,
-)
-
 # Metrics (lightweight)
 from .speech_cascade.metrics import (
     record_barge_in,
     record_stt_recognition,
     record_turn_processing,
+)
+
+# Cascade orchestrator (lightweight - no ACS/Speech SDK dependencies)
+from .speech_cascade.orchestrator import (
+    CascadeConfig,
+    CascadeOrchestratorAdapter,
+    CascadeSessionScope,
 )
 
 # =============================================================================
@@ -92,7 +90,6 @@ _SPEECH_CASCADE_HANDLER_EXPORTS = {
     "BargeInController",
     "ResponseSender",
     "RouteTurnThread",
-    "SpeechCascadeHandler",
     "SpeechEvent",
     "SpeechEventType",
     "SpeechSDKThread",
@@ -159,28 +156,33 @@ def __getattr__(name: str):
     """Lazy import for heavy components to avoid import-time dependencies."""
     if name in _SPEECH_CASCADE_HANDLER_EXPORTS:
         from .speech_cascade import handler
+
         return getattr(handler, name)
     if name in _TTS_EXPORTS:
         from . import tts  # TTSPlayback moved from speech_cascade.tts to voice.tts
+
         return getattr(tts, name)
     if name in _VOICELIVE_EXPORTS:
         from . import voicelive
+
         return getattr(voicelive, name)
     if name in _VOICEHANDLER_EXPORTS:
         from . import handler as voice_handler_module
+
         return getattr(voice_handler_module, name)
     if name in _GENESYS_EXPORTS:
         from .genesys import handler as genesys_handler
+
         return getattr(genesys_handler, name)
     if name in _MESSAGING_EXPORTS:
         from . import messaging
+
         return getattr(messaging, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [
     # Speech Cascade Handler (STT→LLM→TTS) - lazy loaded
-    "SpeechCascadeHandler",
     "SpeechEvent",
     "SpeechEventType",
     "ThreadBridge",
@@ -224,8 +226,6 @@ __all__ = [
     # Cascade Orchestrator (unified agents) - direct import
     "CascadeOrchestratorAdapter",
     "CascadeConfig",
-    "get_cascade_orchestrator",
-    "create_cascade_orchestrator_func",
     # VoiceLive Orchestrator - lazy loaded
     "LiveOrchestrator",
     "TRANSFER_TOOL_NAMES",

@@ -34,15 +34,14 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-
 from apps.artagent.backend.registries.agentstore.base import (
     HandoffConfig,
     ModelConfig,
     UnifiedAgent,
     VoiceConfig,
 )
+from apps.artagent.backend.voice.voicelive import session as voicelive_session
 from apps.artagent.backend.voice.voicelive.orchestrator import LiveOrchestrator
-
 
 # =============================================================================
 # Fakes
@@ -178,7 +177,9 @@ async def test_bootstrap_echo_carries_the_contract():
     orch, _conn, _audio, messenger = _make_orchestrator([agent])
 
     await orch._handle_session_updated(
-        _event(_EchoSession(voice=agent.build_voicelive_voice(), model="gpt-4o-mini"))
+        _event(
+            _EchoSession(voice=voicelive_session.build_voicelive_voice(agent), model="gpt-4o-mini")
+        )
     )
 
     contract = _contract_of(messenger)
@@ -198,7 +199,9 @@ async def test_context_only_echo_still_emits_no_envelope():
     orch._pending_context_session_updates = 1
 
     await orch._handle_session_updated(
-        _event(_EchoSession(voice=agent.build_voicelive_voice(), model="gpt-4o-mini"))
+        _event(
+            _EchoSession(voice=voicelive_session.build_voicelive_voice(agent), model="gpt-4o-mini")
+        )
     )
 
     assert messenger.session_updates == []
@@ -241,7 +244,7 @@ async def test_agent_restored_from_a_previous_connection_is_reported():
     await orch._handle_session_updated(
         _event(
             _EchoSession(
-                voice=restored.build_voicelive_voice(),
+                voice=voicelive_session.build_voicelive_voice(restored),
                 model="gpt-4o-mini",
             )
         )
@@ -268,7 +271,9 @@ async def test_tuned_voice_is_absent_when_the_agent_did_not_drift():
     orch, _conn, _audio, messenger = _make_orchestrator([agent])
 
     await orch._handle_session_updated(
-        _event(_EchoSession(voice=agent.build_voicelive_voice(), model="gpt-4o-mini"))
+        _event(
+            _EchoSession(voice=voicelive_session.build_voicelive_voice(agent), model="gpt-4o-mini")
+        )
     )
 
     assert _contract_of(messenger)["tuned_voice"] is None
@@ -281,7 +286,9 @@ async def test_ignored_per_agent_model_override_is_reported():
     orch, _conn, _audio, messenger = _make_orchestrator([agent], model_name="gpt-4o-mini")
 
     await orch._handle_session_updated(
-        _event(_EchoSession(voice=agent.build_voicelive_voice(), model="gpt-4o-mini"))
+        _event(
+            _EchoSession(voice=voicelive_session.build_voicelive_voice(agent), model="gpt-4o-mini")
+        )
     )
 
     contract = _contract_of(messenger)
@@ -305,7 +312,7 @@ async def test_deployment_tier_echo_stays_a_match():
     await orch._handle_session_updated(
         _event(
             _EchoSession(
-                voice=agent.build_voicelive_voice(),
+                voice=voicelive_session.build_voicelive_voice(agent),
                 model="gpt-realtime-datazone-standard",
             )
         )

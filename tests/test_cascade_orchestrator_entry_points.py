@@ -2,16 +2,8 @@
 Cascade Orchestrator Entry Point Regression Tests
 ==================================================
 
-These tests capture the current behavior of the CascadeOrchestratorAdapter
-entry point methods BEFORE Priority 1 refactoring.
-
-Priority 1 Refactoring Goals:
-- Remove as_orchestrator_func() wrapper
-- Consolidate process_user_input() into process_turn()
-- Remove factory function wrappers (get_cascade_orchestrator, create_cascade_orchestrator_func)
-- Make process_turn() the single entry point
-
-These tests ensure we don't break functionality during refactoring.
+Exercise process_turn as the supported native entry point and ensure removed
+factory/continuation wrappers do not return as alternate runtime paths.
 """
 
 from __future__ import annotations
@@ -99,9 +91,7 @@ class TestEntryPointWrappers:
     """
 
     @pytest.mark.asyncio
-    async def test_process_turn_is_core_entry_point(
-        self, cascade_adapter, mock_memo_manager
-    ):
+    async def test_process_turn_is_core_entry_point(self, cascade_adapter, mock_memo_manager):
         """
         BASELINE: process_turn() should be the core orchestration method.
 
@@ -118,9 +108,7 @@ class TestEntryPointWrappers:
         )
 
         # Mock LLM processing to avoid actual API calls
-        with patch.object(
-            cascade_adapter, "_process_llm", new_callable=AsyncMock
-        ) as mock_llm:
+        with patch.object(cascade_adapter, "_process_llm", new_callable=AsyncMock) as mock_llm:
             mock_llm.return_value = ("Test response", [])
 
             result = await cascade_adapter.process_turn(context)
@@ -131,9 +119,7 @@ class TestEntryPointWrappers:
             assert result.agent_name == "TestAgent"
 
     @pytest.mark.asyncio
-    async def test_process_user_input_wraps_process_turn(
-        self, cascade_adapter, mock_memo_manager
-    ):
+    async def test_process_turn_records_history(self, cascade_adapter, mock_memo_manager):
         """
         BASELINE: process_user_input() should wrap process_turn().
 
@@ -141,31 +127,35 @@ class TestEntryPointWrappers:
         use process_turn() directly.
         """
         # Mock LLM processing
-        with patch.object(
-            cascade_adapter, "_process_llm", new_callable=AsyncMock
-        ) as mock_llm:
+        with patch.object(cascade_adapter, "_process_llm", new_callable=AsyncMock) as mock_llm:
             mock_llm.return_value = ("Test response", [])
 
             # Call process_user_input (wrapper)
-            response = await cascade_adapter.process_user_input(
-                transcript="Hello", cm=mock_memo_manager
+            from apps.artagent.backend.voice.shared.base import OrchestratorContext
+
+            response = await cascade_adapter.process_turn(
+                OrchestratorContext(
+                    session_id="test-session",
+                    user_text="Hello",
+                    metadata={"memo_manager": mock_memo_manager},
+                )
             )
 
             # Verify it returns text response
-            assert response == "Test response"
+            assert response.response_text == "Test response"
 
             # Verify history was updated
             assert mock_memo_manager.append_to_history.called
 
     @pytest.mark.asyncio
-    async def test_as_orchestrator_func_returns_callable(self, cascade_adapter):
+    async def test_native_turn_has_one_context_argument(self, cascade_adapter):
         """
         BASELINE: as_orchestrator_func() should return a callable.
 
         After refactoring, this wrapper should be removed. Callers should
         instantiate the adapter and use process_turn() directly.
         """
-        orchestrator_func = cascade_adapter.as_orchestrator_func()
+        orchestrator_func = cascade_adapter.process_turn
 
         # Verify it returns a callable
         assert callable(orchestrator_func)
@@ -175,8 +165,7 @@ class TestEntryPointWrappers:
 
         sig = inspect.signature(orchestrator_func)
         params = list(sig.parameters.keys())
-        assert "cm" in params
-        assert "transcript" in params
+        assert "context" in params
 
     def test_factory_create_returns_adapter(self):
         """
@@ -213,9 +202,7 @@ class TestContextBuilding:
     (currently duplicated in process_user_input).
     """
 
-    def test_build_session_context_returns_dict(
-        self, cascade_adapter, mock_memo_manager
-    ):
+    def test_build_session_context_returns_dict(self, cascade_adapter, mock_memo_manager):
         """
         BASELINE: _build_session_context() should return dict with session vars.
 
@@ -244,12 +231,11 @@ class TestContextBuilding:
         )
 
         # Get source of process_user_input
-        source = inspect.getsource(CascadeOrchestratorAdapter.process_user_input)
+        source = inspect.getsource(CascadeOrchestratorAdapter._process_turn)
 
         # After refactoring: process_user_input should be a thin shim (no duplication)
-        assert "session_profile" not in source  # No longer duplicated!
-        assert "process_turn" in source  # Should delegate to process_turn()
-        assert "DEPRECATED" in source  # Should be marked deprecated
+        assert "_build_session_context" in source
+        assert not hasattr(CascadeOrchestratorAdapter, "process_user_input")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -313,7 +299,6 @@ class TestPostRefactoringTargets:
     They may currently FAIL because the code hasn't been refactored yet.
     """
 
-    @pytest.mark.skip(reason="Target for post-refactoring - currently fails")
     def test_no_wrapper_functions_exist(self):
         """
         TARGET: After refactoring, wrapper functions should not exist.
@@ -329,12 +314,8 @@ class TestPostRefactoringTargets:
         # After refactoring, these should not exist
         assert not hasattr(orchestrator, "get_cascade_orchestrator")
         assert not hasattr(orchestrator, "create_cascade_orchestrator_func")
-        assert not hasattr(
-            orchestrator.CascadeOrchestratorAdapter, "as_orchestrator_func"
-        )
-        assert not hasattr(
-            orchestrator.CascadeOrchestratorAdapter, "process_user_input"
-        )
+        assert not hasattr(orchestrator.CascadeOrchestratorAdapter, "as_orchestrator_func")
+        assert not hasattr(orchestrator.CascadeOrchestratorAdapter, "process_user_input")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -377,9 +358,7 @@ class TestIntegrationSmokeTest:
         )
 
         # Mock LLM call
-        with patch.object(
-            adapter, "_process_llm", new_callable=AsyncMock
-        ) as mock_llm:
+        with patch.object(adapter, "_process_llm", new_callable=AsyncMock) as mock_llm:
             mock_llm.return_value = ("Smoke test response", [])
 
             # Create context

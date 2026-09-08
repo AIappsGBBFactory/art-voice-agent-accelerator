@@ -56,8 +56,7 @@ from apps.artagent.backend.voice.shared.errors import (
     classify_voicelive_server_error,
     emit_voice_error,
 )
-from apps.artagent.backend.src.services.session_loader import load_user_profile_by_email
-from apps.artagent.backend.src.orchestration.session_agents import get_session_agent
+from apps.artagent.backend.voice.voicelive import session as voicelive_session
 
 # ─────────────────────────────────────────────────────────────────────────────
 # VoiceLive Channel Imports (local to voice_channels)
@@ -2964,7 +2963,8 @@ async def _prepare_voicelive_call_warmup(
     try:
         start_agent_obj = agents.get(effective_start_agent) if agents else None
         if start_agent_obj is not None:
-            await start_agent_obj.apply_voicelive_session(
+            await voicelive_session.apply_voicelive_session(
+                start_agent_obj,
                 connection,
                 system_vars=system_vars,
                 say=None,
