@@ -27,6 +27,18 @@ on:
         description: 'Recipient email for the decline-email scenario (overrides secret)'
         required: false
         type: string
+      backend_url:
+        description: 'Deployed backend base URL (overrides the environment variable)'
+        required: false
+        type: string
+      backend_container_app_name:
+        description: 'Deployed backend Container App (overrides the environment variable)'
+        required: false
+        type: string
+      resource_group:
+        description: 'Deployed resource group (overrides the environment variable)'
+        required: false
+        type: string
 
 env:
   CI: true
@@ -57,9 +69,9 @@ jobs:
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-      BACKEND_CONTAINER_APP_NAME: ${{ vars.BACKEND_CONTAINER_APP_NAME }}
-      BACKEND_CONTAINER_APP_URL: ${{ vars.BACKEND_CONTAINER_APP_URL || vars.BACKEND_API_URL }}
-      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      BACKEND_CONTAINER_APP_NAME: ${{ inputs.backend_container_app_name || vars.BACKEND_CONTAINER_APP_NAME }}
+      BACKEND_CONTAINER_APP_URL: ${{ inputs.backend_url || vars.BACKEND_CONTAINER_APP_URL || vars.BACKEND_API_URL }}
+      AZURE_RESOURCE_GROUP: ${{ inputs.resource_group || vars.AZURE_RESOURCE_GROUP }}
     steps:
       - name: 🛒 Checkout
         uses: actions/checkout@v4
@@ -128,9 +140,10 @@ jobs:
 
           # Second gate: health endpoint responding.
           if [ -n "$URL" ]; then
-            echo "Polling health endpoint: $URL/health ..."
+            HEALTH_URL="${URL%/}/api/v1/health"
+            echo "Polling health endpoint: $HEALTH_URL ..."
             for attempt in $(seq 1 10); do
-              STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$URL/health" 2>/dev/null || echo "000")
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$HEALTH_URL" 2>/dev/null || echo "000")
               echo "  attempt $attempt/10: HTTP $STATUS"
               if [[ "$STATUS" =~ ^2 ]]; then
                 echo "✅ Backend health endpoint returned $STATUS"
@@ -340,7 +353,7 @@ jobs:
             mode: voice_live
             file: tests/evaluation/scenarios/session_based/banking_context_sharing.yaml
     env:
-      EVAL_LIVE_URL: ${{ vars.BACKEND_CONTAINER_APP_URL || vars.BACKEND_API_URL }}
+      EVAL_LIVE_URL: ${{ inputs.backend_url || vars.BACKEND_CONTAINER_APP_URL || vars.BACKEND_API_URL }}
       AZURE_OPENAI_ENDPOINT: ${{ vars.AZURE_OPENAI_ENDPOINT || secrets.AZURE_OPENAI_ENDPOINT }}
       AZURE_SPEECH_REGION: ${{ vars.AZURE_SPEECH_REGION || secrets.AZURE_SPEECH_REGION }}
       AZURE_SPEECH_KEY: ${{ secrets.AZURE_SPEECH_KEY }}

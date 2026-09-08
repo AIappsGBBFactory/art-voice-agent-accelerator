@@ -21,6 +21,9 @@ on:
       - 'utils/**'
       - 'pyproject.toml'
       - '.github/workflows/test-unit.yml'
+      - '.github/workflows/live-evals-staging.yml'
+      - '.github/workflows/_template-deploy-azd.yml'
+      - '.github/workflows/deploy-azd-complete.yml'
       - '.github/quarantined-tests.txt'
   pull_request:
     branches: [main, staging]
@@ -31,6 +34,9 @@ on:
       - 'utils/**'
       - 'pyproject.toml'
       - '.github/workflows/test-unit.yml'
+      - '.github/workflows/live-evals-staging.yml'
+      - '.github/workflows/_template-deploy-azd.yml'
+      - '.github/workflows/deploy-azd-complete.yml'
       - '.github/quarantined-tests.txt'
   workflow_dispatch:
 

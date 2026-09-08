@@ -752,6 +752,9 @@ jobs:
   finalize:
     name: 📋 Finalize
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
     needs: [setup, execute]
     if: always() && github.event_name != 'pull_request' && needs.execute.result == 'success'
     environment: ${{ inputs.environment }}
@@ -865,22 +868,25 @@ jobs:
       - name: 🎙️ Dispatch Live Evals (staging only)
         # After a successful staging deploy, fire live-evals-staging.yml on the
         # staging ref. Running FROM staging satisfies the "staging branch only"
-        # environment protection rule. Skipped for non-staging environments or
-        # when GH_PAT is absent.
-        if: inputs.action != 'down' && inputs.environment == 'staging'
+        # environment protection rule. Dispatch and readiness coordinates must
+        # not depend on the PAT used for optional environment-variable writes.
+        if: inputs.environment == 'staging' && (inputs.action == 'up' || inputs.action == 'deploy')
         env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BACKEND_URL: ${{ needs.execute.outputs.backend_url }}
+          BACKEND_CONTAINER_APP_NAME: ${{ needs.execute.outputs.backend_container_app_name }}
+          RESOURCE_GROUP: ${{ needs.execute.outputs.resource_group }}
         run: |
-          if [ -z "${GH_TOKEN:-}" ]; then
-            echo "ℹ️ GH_PAT not provided; skipping live-evals dispatch."
-            exit 0
-          fi
+          set -euo pipefail
           echo "🎙️ Dispatching live-evals-staging.yml on staging ref..."
           gh workflow run live-evals-staging.yml \
-            --repo "${{ github.repository }}" \
+            --repo "$GH_REPO" \
             --ref staging \
-            && echo "✅ Live evals dispatched on staging" \
-            || echo "⚠️ Could not dispatch live-evals (workflow may not exist on staging yet)"
+            --raw-field backend_url="$BACKEND_URL" \
+            --raw-field backend_container_app_name="$BACKEND_CONTAINER_APP_NAME" \
+            --raw-field resource_group="$RESOURCE_GROUP"
+          echo "✅ Live evals dispatched on staging"
 
       - name: 📋 Generate Summary
         run: |
