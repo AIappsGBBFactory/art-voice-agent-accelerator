@@ -25,6 +25,18 @@ mixed business/handoff batches must commit business effects first, interruptions
 must not erase committed effects, and an old response must not complete a newer
 batch. A cancelled tool that never returns does not promise a business result.
 
+Cascade carries `HandoffResolution.system_vars` into the actual target prompt
+and the target's subsequent live turns, not just its greeting. Transport metadata
+and the session's durable business profile are not substituted for that resolved
+prompt scope. Scenario context variables remain authoritative; do not reconstruct
+the target context from raw model arguments or add another sharing filter.
+
+VoiceLive collects controls until the complete response batch is known, publishes
+business outputs before routing, and keeps that work off the reader. Test both
+argument-arrival orders and cancellation during tool execution and SDK session
+updates. Logical scenario/agent replacement advances ownership immediately, even
+when an old finalizer is detached and there is no active response ID.
+
 ## Add a model, voice, speech or scenario field
 
 Add the declared field/default to the existing dataclass in
@@ -41,6 +53,16 @@ its intentional model/voice presets; explicit separate legacy/Cascade/VoiceLive
 models survive editing. Explicit empty containers and nullable fields are not
 generically replaced by defaults. YAML inheritance and editor presets are
 intentional boundary-specific behavior, not identical input formats.
+In particular, mode-model presets apply only when a builder field is omitted.
+An explicit `cascade_model: null` or `voicelive_model: null` survives API
+projection/parse/build and retains the generic model fallback.
+
+For Quick Tune, use `src/orchestration/session_agents.session_agent_for_edit`.
+Resolve the actual current native agent before looking up its override; an
+unrelated customized agent is never a fallback for a known identity. The helper
+installs a deep-owned definition in the live registry before mutation, shared
+with the persisted view. New nested definition fields inherit that isolation
+without another manually maintained cloning map.
 
 `source_dir` round-trips in canonical storage. It is not a client-writable builder
 field because it can locate executable custom tools. An update of the same
@@ -66,6 +88,10 @@ while its `finally` is already awaiting native stop. Unconfirmed native stop
 means no lease reuse and no claim of a stable final snapshot. Still drain
 submitted writes and attempt independent safe cleanup. A failed close stays
 failed, even after late native completion; automatic retry/recycling is absent.
+The Cascade route worker also retains its close task and uses the bounded shared
+join. Its processing task shields the response task so parent cancellation cannot
+re-cancel a response already cleaning up. A route timeout reaches the handler's
+pending-write drain and safe independent cleanup without releasing either lease.
 
 Async hydration uses `MemoManager.from_redis_async`. ACS retains the existing
 call-key lookup followed by canonical `memo.session_id` assignment; there is no
@@ -119,7 +145,12 @@ replication, disk persistence or atomic `HSET` plus `EXPIRE`. See
 [the storage contract](memo-persistence.md).
 
 Native threads cannot be safely killed. Quarantined resources are not
-automatically recovered. VoiceLive inline control/barrier operations can stall
-the event reader. Definition caches are working views, not a second durable
+automatically recovered. VoiceLive session/audio callbacks and transcript-triggered
+automatic transfer can still await on the event reader; model-issued controls
+and their business barriers no longer do. An already submitted SDK operation
+cannot be retracted, but superseded completion cannot create another response.
+Transfer cleanup also rechecks ownership before cancelling or stopping playback;
+its result notification remains independent of spoken continuation.
+Definition caches are working views, not a second durable
 catalog. No external framework, dependencies, Genesys/Cascade integration or
 live-service validation is introduced by this consolidation.

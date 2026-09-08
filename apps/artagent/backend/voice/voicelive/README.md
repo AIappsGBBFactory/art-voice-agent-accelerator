@@ -8,11 +8,17 @@ neutral `UnifiedAgent` definitions contain no SDK session operations.
 ## Reader and tool ordering
 
 The reader forwards audio before awaiting `handle_event`. Business tools are
-offloaded through `_track_owned`; handoff and transfer run inline. MFA/DTMF
-semantics also remain engine-owned. An inline control waits for preceding
-business tools in its response before changing agents or transferring.
-**Limitation:** that control barrier and the control tool itself can stall the
-single reader. The runtime does not claim every event path is nonblocking.
+offloaded through `_track_owned`. Model-issued handoff/transfer intents are
+collected until `response.done` closes batch membership, regardless of which
+tool's arguments arrive first. The owned finalizer waits for all business work,
+publishes its outputs, then runs controls off-reader. It stops at the first
+terminal transition; failed controls can report an output and continue the old
+agent. Tools are never retried because speech was superseded. MFA/DTMF semantics
+remain engine-owned.
+
+Session/audio callbacks and transcript-triggered automatic transfer are still
+reader operations, outside model response batching. The runtime does not claim
+every event path is nonblocking.
 
 Both engines call `shared/tool_policy.py` for inputs, normalized results and
 synchronous identity/profile/slot effects. The shared `HandoffService` resolves
@@ -26,12 +32,26 @@ that response's batch and schedules an owned finalizer; it does not wait for
 business tools on the reader. A cancelled old response invalidates its batch,
 not a newer response or its transcript tracking.
 
-Each finalizer waits for its tool barrier, sends outputs/context, then creates
-at most one continuation. Epoch checks across each awaited send prevent a
+Each finalizer produces at most one business continuation or control transition.
+Epoch checks across each awaited send and control transition prevent a
 barge-in, new response, reconfiguration, handoff or transfer from resurrecting
 stale speech. Completed effects stay in the current memo. The `None` response-ID
 key supports direct callers without provider IDs using this same mechanism;
 there is no alternate `_pending_tool_outputs` runtime for tests.
+
+Logical scenario and agent replacements invalidate ownership before provider
+awaits, including when an old batch is already detached and no response ID is
+active. Ordinary VAD/context acknowledgements retain their existing behavior.
+A provider operation already submitted cannot be retracted; a stale completion
+cannot schedule further handoff speech or cancel/stop a replacement response.
+Transfer completion notifications still report committed tool outcomes.
+
+Quick Tune resolves the current native identity before any default session agent.
+`session_agents.session_agent_for_edit` installs the matching owned definition
+before either API or native tuning mutates it. Nested voice, session, speech,
+model and BYOM data are copied together; the application catalog and other
+sessions remain read-only. The live registry and persisted session view use the
+same owned instance.
 
 ## Start, close and memory
 
