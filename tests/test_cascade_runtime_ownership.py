@@ -349,6 +349,34 @@ async def test_full_tts_buffer_stops_and_joins_actual_generator():
 
 
 @pytest.mark.asyncio
+async def test_signal_only_cancel_wakes_consumer_waiting_for_first_frame():
+    class WaitingSynth(Synth):
+        def synthesize_to_pcm_stream(self, *, cancel_event, **kwargs):
+            self.active = True
+            self.started.set()
+            try:
+                assert self.stopped.wait(2)
+                if not cancel_event.is_set():
+                    yield b"late"
+            finally:
+                self.active = False
+                self.finished.set()
+
+    synth = WaitingSynth()
+    context = VoiceSessionContext(session_id="waiting", tts_client=synth)
+    playback = TTSPlayback(context, app_state())
+    chunks = playback._iter_synth_chunks(synth, "text", "voice", "chat", "medium", 16000)
+    pending = asyncio.create_task(anext(chunks))
+    assert await asyncio.to_thread(synth.started.wait, 1)
+    playback.cancel()
+    context.cancel_event.clear()
+    with pytest.raises(StopAsyncIteration):
+        await asyncio.wait_for(pending, 1)
+    assert synth.finished.is_set()
+    assert not playback._producers
+
+
+@pytest.mark.asyncio
 async def test_warmup_cancellation_joins_before_pool_release():
     app = app_state()
     handler = await make_handler(app)

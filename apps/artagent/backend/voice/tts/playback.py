@@ -926,8 +926,11 @@ class TTSPlayback:
 
         producer_future = loop.run_in_executor(executor, _producer)
         self._producers[producer_future] = stop
+        # Cancellation deliberately skips a queued sentinel. Completion must
+        # still wake a consumer waiting for its first frame.
+        producer_future.add_done_callback(lambda _: available.set())
         try:
-            while not self._is_cancelled():
+            while not stop.is_set() and not self._is_cancelled():
                 available.clear()
                 try:
                     item = queue.get_nowait()
@@ -1018,6 +1021,8 @@ class TTSPlayback:
         finally:
             await chunks.aclose()
 
+        if self._is_cancelled():
+            return False
         # Flush remaining tail as the final frame.
         if buffer:
             if not await _send_frame(bytes(buffer), is_final=True):
@@ -1142,6 +1147,8 @@ class TTSPlayback:
         finally:
             await chunks.aclose()
 
+        if self._is_cancelled():
+            return False
         # Flush remaining tail (sent as-is, matching the blocking path).
         if buffer:
             if not await _send_frame(bytes(buffer)):
