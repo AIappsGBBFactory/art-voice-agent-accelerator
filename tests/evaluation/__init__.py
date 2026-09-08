@@ -78,18 +78,17 @@ except Exception:
 # PACKAGE EXPORTS
 # =============================================================================
 
-from tests.evaluation.mocks import (
-    MockMemoManager,
-    MockOrchestratorContext,
-    build_context,
-)
-from tests.evaluation.recorder import EventRecorder
 from tests.evaluation.demo_user import (
     create_demo_user,
     create_demo_user_sync,
     extract_user_context,
     get_demo_user_prompt_context,
 )
+from tests.evaluation.mocks import (
+    MockOrchestratorContext,
+    build_context,
+)
+from tests.evaluation.recorder import EventRecorder
 from tests.evaluation.scenario_runner import (
     ComparisonRunner,
     ScenarioRunner,
@@ -133,7 +132,6 @@ __all__ = [
     "ValidationResult",
     "TurnValidationResult",
     # Mocks
-    "MockMemoManager",
     "MockOrchestratorContext",
     "build_context",
     # Schemas

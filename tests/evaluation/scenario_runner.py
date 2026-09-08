@@ -65,36 +65,23 @@ except ImportError:
 # =============================================================================
 
 import copy
-import time
 import json
+import time
 from dataclasses import replace
 from typing import Any
 
 import yaml
-
-from tests.evaluation.mocks import MockMemoManager
-from tests.evaluation.recorder import EventRecorder
-from tests.evaluation.demo_user import (
-    create_demo_user,
-    extract_user_context,
-)
-from tests.evaluation.schemas import (
-    FoundryExportConfig,
-    ModelProfile,
-    RunSummary,
-    SessionAgentConfig,
-)
-from tests.evaluation.scorer import MetricsScorer
-from tests.evaluation.wrappers import EvaluationOrchestratorWrapper
-from tests.evaluation.validator import ExpectationValidator
 from apps.artagent.backend.registries.agentstore.base import ModelConfig
 from apps.artagent.backend.registries.agentstore.loader import (
     build_handoff_map,
     discover_agents,
 )
+from apps.artagent.backend.registries.scenariostore.loader import (
+    ScenarioConfig,
+)
 from apps.artagent.backend.src.orchestration.session_agents import (
-    set_session_agent,
     remove_session_agent,
+    set_session_agent,
 )
 from apps.artagent.backend.voice.shared.base import OrchestratorContext
 from apps.artagent.backend.voice.shared.config_resolver import (
@@ -104,13 +91,23 @@ from apps.artagent.backend.voice.shared.config_resolver import (
 from apps.artagent.backend.voice.speech_cascade.orchestrator import (
     CascadeOrchestratorAdapter,
 )
-from apps.artagent.backend.registries.scenariostore.loader import (
-    ScenarioConfig,
-    GenericHandoffConfig,
-    HandoffConfig as ScenarioHandoffConfig,
-)
+from src.stateful.state_managment import MemoManager
 from utils.ml_logging import get_logger
 
+from tests.evaluation.demo_user import (
+    create_demo_user,
+    extract_user_context,
+)
+from tests.evaluation.recorder import EventRecorder
+from tests.evaluation.schemas import (
+    FoundryExportConfig,
+    ModelProfile,
+    RunSummary,
+    SessionAgentConfig,
+)
+from tests.evaluation.scorer import MetricsScorer
+from tests.evaluation.validator import ExpectationValidator
+from tests.evaluation.wrappers import EvaluationOrchestratorWrapper
 
 _runtime_bootstrapped = False
 _mcp_initialized = False
@@ -657,7 +654,7 @@ class ScenarioRunner:
             session_id=session_id,
             agents=agents,
             handoff_map=handoff_map,
-            streaming=False,
+            streaming=True,
         )
 
         return adapter, start_agent
@@ -726,7 +723,7 @@ class ScenarioRunner:
             session_id=session_id,
             agents=agents,
             handoff_map=handoff_map,
-            streaming=False,
+            streaming=True,
         )
 
         return adapter, start_agent
@@ -869,28 +866,15 @@ class ScenarioRunner:
             )
             start_agent = agent_list[0] if agent_list else next(iter(filtered_agents.keys()))
 
-        # Build handoff map from session_config handoffs
-        handoff_map: dict[str, str] = {}
-        for h in session_config.handoffs:
-            if h.tool and h.to_agent:
-                handoff_map[h.tool] = h.to_agent
-
-        # Also build from agent declarations (handoff.trigger) for agents in our list
-        for agent_name, agent in filtered_agents.items():
-            if hasattr(agent, "handoff") and hasattr(agent.handoff, "trigger"):
-                trigger = agent.handoff.trigger
-                if trigger and trigger not in handoff_map:
-                    handoff_map[trigger] = agent_name
-
-        # If generic_handoff enabled, ensure handoff_to_agent is available
-        generic_config = session_config.generic_handoff or {}
-        if generic_config.get("enabled", False):
-            # The handoff_to_agent tool handles routing dynamically
-            # We just need to ensure all agents are reachable
-            logger.info(
-                "Generic handoff enabled | allowed_targets=%s",
-                generic_config.get("allowed_targets", "(all)"),
-            )
+        scenario_obj = ScenarioConfig.from_dict(
+            f"eval_{session_id}",
+            {
+                **session_config.model_dump(by_alias=True),
+                "agents": list(filtered_agents),
+                "start_agent": start_agent,
+            },
+        )
+        handoff_map = scenario_obj.build_handoff_map()
 
         logger.info(
             "Creating CascadeOrchestratorAdapter from session_config | "
@@ -905,35 +889,7 @@ class ScenarioRunner:
             session_id=session_id,
             agents=filtered_agents,
             handoff_map=handoff_map,
-            streaming=False,
-        )
-
-        # Build ScenarioConfig from session_config for HandoffService
-        # This enables generic handoffs in evaluation scenarios
-        scenario_handoffs = []
-        for h in session_config.handoffs:
-            scenario_handoffs.append(ScenarioHandoffConfig(
-                from_agent=h.from_agent,
-                to_agent=h.to_agent,
-                tool=h.tool,
-                type=h.type or "announced",
-                share_context=h.share_context if h.share_context is not None else True,
-            ))
-
-        generic_cfg = GenericHandoffConfig(
-            enabled=generic_config.get("enabled", False),
-            allowed_targets=generic_config.get("allowed_targets", []),
-            default_type=generic_config.get("default_type", "announced"),
-            share_context=generic_config.get("share_context", True),
-        )
-
-        scenario_obj = ScenarioConfig(
-            name=f"eval_{session_id}",
-            agents=list(filtered_agents.keys()),
-            start_agent=start_agent,
-            handoff_type=session_config.handoff_type or "announced",
-            handoffs=scenario_handoffs,
-            generic_handoff=generic_cfg,
+            streaming=True,
         )
 
         # Inject cached config so HandoffService uses our scenario
@@ -995,12 +951,14 @@ class ScenarioRunner:
 
         logger.info(f"Running scenario: {scenario_name}")
 
-        # Create mock dependencies
+        # Headless evaluations use the production memory contract in local-only mode.
         session_id = self.scenario.get("metadata", {}).get("session_id", f"eval_{scenario_name}")
-        context_vars = self.scenario.get("metadata", {}).get("context", {})
-        memo_manager = MockMemoManager(session_id, context_vars)
+        context_vars = dict(self.scenario.get("metadata", {}).get("context", {}))
+        memo_manager = MemoManager(session_id=session_id)
+        for key, value in context_vars.items():
+            memo_manager.set_corememory(key, value)
         if scenario_template:
-            memo_manager.set_value_in_corememory("scenario_name", scenario_template)
+            memo_manager.set_corememory("scenario_name", scenario_template)
 
         # ═══════════════════════════════════════════════════════════════════════
         # Create demo user if configured
@@ -1041,11 +999,11 @@ class ScenarioRunner:
                 # Extract context for tools and inject into memo_manager
                 demo_context = extract_user_context(demo_user_data)
                 for key, value in demo_context.items():
-                    memo_manager.set_value_in_corememory(key, value)
+                    memo_manager.set_corememory(key, value)
                     context_vars[key] = value
                 
                 # Store the full demo user response for reference
-                memo_manager.set_value_in_corememory("demo_user_response", demo_user_data)
+                memo_manager.set_corememory("demo_user_response", demo_user_data)
                 
                 # CRITICAL: Store session_profile and client_id for orchestrator injection
                 # The orchestrator injects _session_profile and _client_id into tool args
@@ -1061,12 +1019,12 @@ class ScenarioRunner:
                             "claims": demo_user_data.get("claims"),
                         },
                     }
-                    memo_manager.set_value_in_corememory("session_profile", session_profile)
-                    memo_manager.set_value_in_corememory("client_id", profile.get("client_id"))
-                    memo_manager.set_value_in_corememory("caller_name", profile.get("full_name"))
+                    memo_manager.set_corememory("session_profile", session_profile)
+                    memo_manager.set_corememory("client_id", profile.get("client_id"))
+                    memo_manager.set_corememory("caller_name", profile.get("full_name"))
                     # Also store customer_intelligence for profile-aware tools
                     if profile.get("customer_intelligence"):
-                        memo_manager.set_value_in_corememory(
+                        memo_manager.set_corememory(
                             "customer_intelligence", profile["customer_intelligence"]
                         )
                 
@@ -1112,7 +1070,7 @@ class ScenarioRunner:
                 agent_overrides,
             )
             # Store session_config name for context
-            memo_manager.set_value_in_corememory("session_config", True)
+            memo_manager.set_corememory("session_config", True)
         else:
             # Existing: Use scenario_template or legacy approach
             orchestrator, start_agent = self._create_orchestrator_with_overrides(

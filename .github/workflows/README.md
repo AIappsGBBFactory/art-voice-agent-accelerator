@@ -47,6 +47,16 @@ The offline workflow regressions run their actual shell steps with stubbed
 AZURE_APPCONFIG_ENDPOINT='' pytest tests/test_live_eval_workflow.py
 ```
 
+Headless scenarios run the streaming Cascade path with the production
+`MemoManager` in explicit local-only mode. The retired evaluation
+`MockMemoManager`/history/core-memory copies are not an alternate state contract.
+Inline scenario definitions use `ScenarioConfig.from_dict`, including handoff
+conditions, generic identity requirements and agent defaults. The recorder
+forwards TTS callback metadata unchanged; its first-chunk timing measures
+text-to-TTS dispatch, not synthesized audio arriving at a client. The separate
+WebSocket jobs measure actual audio arrival. Recorded pipeline errors fail
+functional validation even if a scenario has no other content assertions.
+
 The blocking unit gate also covers async OpenAI invocation, Azure-host identity
 detection, and deferred VoiceLive memory sync. Four legacy ACS authentication
 expectations remain in `.github/quarantined-tests.txt`: implementing a different

@@ -257,6 +257,18 @@ class ExpectationValidator:
         checks: List[ValidationResult] = []
         turn_id = turn.turn_id
 
+        if turn.error:
+            checks.append(
+                ValidationResult(
+                    turn_id=turn_id,
+                    check_name="runtime_error",
+                    passed=False,
+                    message=f"Voice pipeline failed: {turn.error}",
+                    expected="No runtime error",
+                    actual=turn.error,
+                )
+            )
+
         # Get actual tools called
         actual_tools = [tc.name for tc in turn.tool_calls]
 

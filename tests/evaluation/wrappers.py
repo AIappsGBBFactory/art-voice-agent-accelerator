@@ -19,9 +19,10 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
+from utils.ml_logging import get_logger
+
 from tests.evaluation.recorder import EventRecorder
 from tests.evaluation.schemas import EvalModelConfig
-from utils.ml_logging import get_logger
 
 if TYPE_CHECKING:
     from apps.artagent.backend.voice import OrchestratorContext, OrchestratorResult
@@ -244,20 +245,19 @@ class EvaluationOrchestratorWrapper:
 
         return wrapped
 
-    def _wrap_tts_chunk_callback(
-        self, original_callback: Optional[Callable]
-    ) -> Callable:
+    def _wrap_tts_chunk_callback(self, original_callback: Optional[Callable]) -> Callable:
         """
         Wrap on_tts_chunk to capture per-chunk timing.
 
         The recorder uses the first observed chunk timestamp to compute
-        time-to-first-audio (tts_first_chunk_ms) and tracks the running
+        text-to-TTS dispatch latency (tts_first_chunk_ms) and tracks the running
         chunk count for the active turn. Always returns a callable so the
         production orchestrator's dispatch path is uniform (even when no
         downstream consumer is attached, as in headless scenario runs).
+        Actual audio arrival is measured separately by the WebSocket driver.
         """
 
-        async def wrapped(chunk: str):
+        async def wrapped(chunk: str, **kwargs: Any):
             try:
                 self._recorder.record_tts_chunk(
                     timestamp=time.perf_counter(),
@@ -267,7 +267,7 @@ class EvaluationOrchestratorWrapper:
                 logger.debug(f"record_tts_chunk failed (non-fatal): {e}")
 
             if original_callback:
-                await original_callback(chunk)
+                await original_callback(chunk, **kwargs)
 
         return wrapped
 

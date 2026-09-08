@@ -43,7 +43,7 @@ session_config:
         decline code — wait for an explicit handoff request.
 
     # Context NOT SHARED (fraud agent should not see prior merchant detail)
-    - from: BankingConcierge
+    - from: DeclineSpecialist
       to: FraudAgent
       tool: handoff_fraud_agent
       type: announced
