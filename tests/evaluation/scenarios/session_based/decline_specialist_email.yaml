@@ -96,7 +96,7 @@ turns:
 
   # Turn 4: Confirm email was sent correctly
   - turn_id: turn_4_confirm_email
-    user_input: "Great. That should have gone to my Microsoft email right?"
+    user_input: "Please confirm the exact email address you sent that summary to."
     expectations:
       tools_called: []
       no_handoff: true

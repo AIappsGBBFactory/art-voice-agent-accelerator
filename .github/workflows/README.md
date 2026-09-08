@@ -56,6 +56,13 @@ forwards TTS callback metadata unchanged; its first-chunk timing measures
 text-to-TTS dispatch, not synthesized audio arriving at a client. The separate
 WebSocket jobs measure actual audio arrival. Recorded pipeline errors fail
 functional validation even if a scenario has no other content assertions.
+Native token counters are cumulative for an agent session. The recorder uses
+per-turn deltas and captures source usage before a handoff resets the counters,
+so later replies do not inherit earlier token charges or false verbosity
+failures. Native counters and returned results are unchanged. Cost estimates
+still use the final agent's model configuration for each turn; they are not a
+per-model billing ledger for mixed-model handoffs. The email scenario explicitly
+asks for the exact destination address while retaining its recipient assertions.
 
 The WebSocket driver waits for the native browser readiness event and greeting
 quiescence, then observes replies concurrently with paced input. Its EOS anchor

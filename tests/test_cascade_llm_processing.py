@@ -54,6 +54,50 @@ def text_chunk(text):
 
 class TestAsyncProducerOwnership:
     @pytest.mark.asyncio
+    async def test_eval_records_native_stream_usage_once_per_turn(self, cascade_adapter, tmp_path):
+        from apps.artagent.backend.voice.shared.base import OrchestratorContext
+        from tests.evaluation.recorder import EventRecorder
+        from tests.evaluation.scorer import MetricsScorer
+        from tests.evaluation.wrappers import EvaluationOrchestratorWrapper
+
+        streams = [
+            AsyncStream(
+                [
+                    text_chunk("A response."),
+                    SimpleNamespace(
+                        choices=[],
+                        usage=SimpleNamespace(
+                            prompt_tokens=input_tokens, completion_tokens=output_tokens
+                        ),
+                    ),
+                ]
+            )
+            for input_tokens, output_tokens in [(10, 7), (5, 4)]
+        ]
+        cascade_adapter.async_client = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=AsyncMock(side_effect=streams)))
+        )
+        wrapper = EvaluationOrchestratorWrapper(
+            cascade_adapter, EventRecorder(run_id="native_usage", output_dir=tmp_path)
+        )
+        results = []
+        for number in (1, 2):
+            results.append(
+                await wrapper.process_turn(
+                    OrchestratorContext(
+                        session_id="test-session",
+                        user_text="hello",
+                        metadata={"run_id": f"turn_{number}"},
+                    )
+                )
+            )
+        events = MetricsScorer().load_events(tmp_path / "native_usage_events.jsonl")
+        assert [event.response_tokens for event in events] == [7, 4]
+        assert [event.input_tokens for event in events] == [10, 5]
+        assert [result.output_tokens for result in results] == [7, 11]
+        assert all(stream.closed for stream in streams)
+
+    @pytest.mark.asyncio
     async def test_process_turn_borrows_application_client_across_turns(self, cascade_adapter):
         from apps.artagent.backend.voice.shared.base import OrchestratorContext
         from src.aoai.client_manager import AoaiClientManager

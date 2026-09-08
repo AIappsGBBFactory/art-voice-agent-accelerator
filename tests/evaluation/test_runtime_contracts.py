@@ -10,6 +10,7 @@ import pytest
 import yaml
 from apps.artagent.backend.registries.agentstore.base import UnifiedAgent
 from apps.artagent.backend.voice.shared.base import OrchestratorContext
+from apps.artagent.backend.voice.shared.metrics import OrchestratorMetrics
 from src.stateful.state_managment import MemoManager
 
 from tests.evaluation import scenario_runner
@@ -195,3 +196,53 @@ def test_banking_no_context_edge_starts_at_the_active_specialist():
         if edge.from_agent == "DeclineSpecialist" and edge.to_agent == "FraudAgent"
     )
     assert edge.share_context is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("handoff", [False, True])
+async def test_recorded_usage_is_incremental_across_turns_and_agent_resets(tmp_path, handoff):
+    metrics = OrchestratorMetrics(agent_name="Agent")
+    metrics.set_tokens(input_tokens=100, output_tokens=70)
+    adapter = SimpleNamespace(_active_agent="Agent", agents={}, _metrics=metrics)
+    adapter.set_on_agent_switch = lambda callback: setattr(adapter, "on_switch", callback)
+    calls = 0
+
+    async def process_turn(context, *, on_tool_start, **callbacks):
+        nonlocal calls
+        calls += 1
+        metrics.add_tokens(input_tokens=20, output_tokens=10)
+        if handoff and calls == 1:
+            # Production emits tool_start before resetting its agent-session
+            # counters, then notifies the switch before the target response.
+            await on_tool_start("handoff_to_agent", {"target_agent": "Target"})
+            metrics.reset_for_agent_switch("Target")
+            adapter._active_agent = "Target"
+            await adapter.on_switch("Agent", "Target")
+            metrics.add_tokens(input_tokens=30, output_tokens=5)
+        return SimpleNamespace(
+            response_text="Short answer.",
+            input_tokens=metrics.input_tokens,
+            output_tokens=metrics.output_tokens,
+            error=None,
+        )
+
+    adapter.process_turn = process_turn
+    wrapper = EvaluationOrchestratorWrapper(
+        adapter, EventRecorder(run_id="usage", output_dir=tmp_path)
+    )
+    results = []
+    for number in (1, 2):
+        results.append(
+            await wrapper.process_turn(
+                OrchestratorContext(
+                    session_id="session",
+                    user_text="hello",
+                    metadata={"run_id": f"turn_{number}"},
+                )
+            )
+        )
+
+    events = MetricsScorer().load_events(tmp_path / "usage_events.jsonl")
+    assert [event.input_tokens for event in events] == ([50, 20] if handoff else [20, 20])
+    assert [event.response_tokens for event in events] == ([15, 10] if handoff else [10, 10])
+    assert results[1].output_tokens == (15 if handoff else 90)
