@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -101,6 +102,121 @@ async def test_headless_run_uses_real_local_memory_for_tool_effects(runner, monk
         "success": True,
         "reference": "committed",
     }
+
+
+@pytest.mark.asyncio
+async def test_headless_next_turn_uses_the_active_agents_history(runner, monkeypatch):
+    runner.scenario["turns"].append({"turn_id": "turn_2", "user_input": "next"})
+    orchestrator = scenario_runner._MockOrchestrator("Agent", None)
+    original = orchestrator.process_turn
+    observed = []
+    target_history = []
+
+    async def process_turn(context, **callbacks):
+        observed.append(list(context.conversation_history))
+        memo = context.metadata["memo_manager"]
+        if len(observed) == 1:
+            memo.append_to_history("Target", "assistant", "Target-only context")
+            target_history.extend(memo.get_history("Target"))
+            orchestrator._active_agent = "Target"
+        return await original(context, **callbacks)
+
+    monkeypatch.setattr(orchestrator, "process_turn", process_turn)
+    monkeypatch.setattr(
+        runner,
+        "_create_orchestrator_with_overrides",
+        lambda *args, **kwargs: (orchestrator, "Agent"),
+    )
+    await runner.run()
+    assert observed[1] == target_history
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("cancel_turn", "borrowed", "warm_failure"),
+    [
+        (False, False, False),
+        (True, False, False),
+        (False, True, False),
+        (True, True, False),
+        (False, False, True),
+    ],
+)
+async def test_headless_session_reuses_and_closes_its_warmed_async_client(
+    runner, monkeypatch, cancel_turn, borrowed, warm_failure
+):
+    from src.aoai import client as client_module
+
+    from tests.test_cascade_llm_processing import AsyncStream, text_chunk
+
+    runner.scenario["turns"].append({"turn_id": "turn_2", "user_input": "next"})
+    adapter = scenario_runner.CascadeOrchestratorAdapter.create(
+        start_agent="Agent",
+        session_id="eval_contract",
+        agents={"Agent": UnifiedAgent(name="Agent")},
+        handoff_map={},
+    )
+    monkeypatch.setattr(
+        runner,
+        "_create_orchestrator_with_overrides",
+        lambda *args, **kwargs: (adapter, "Agent"),
+    )
+    sync_warmup = AsyncMock()
+    monkeypatch.setattr(client_module, "warm_openai_connection", sync_warmup)
+    cleanup = Mock(wraps=scenario_runner.remove_session_agent)
+    monkeypatch.setattr(scenario_runner, "remove_session_agent", cleanup)
+    clients = []
+    requests = []
+
+    async def create(**kwargs):
+        requests.append(kwargs)
+        if not kwargs["stream"]:
+            if warm_failure:
+                raise TimeoutError("warmup timed out")
+            return SimpleNamespace()
+        if cancel_turn:
+            raise asyncio.CancelledError
+        return AsyncStream([text_chunk("A response.")])
+
+    class Client:
+        def __init__(self):
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=create))
+            self.close = AsyncMock()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            await self.close()
+
+    def make_client():
+        client = Client()
+        clients.append(client)
+        return client
+
+    factory = Mock(side_effect=make_client)
+    monkeypatch.setattr(client_module, "create_async_azure_openai_client", factory)
+    if borrowed:
+        adapter.async_client = make_client()
+    if cancel_turn:
+        with pytest.raises(asyncio.CancelledError):
+            await runner.run()
+    else:
+        await runner.run()
+    if borrowed:
+        factory.assert_not_called()
+        clients[0].close.assert_not_awaited()
+        assert adapter.async_client is clients[0]
+        await clients[0].close()
+    else:
+        factory.assert_called_once()
+        clients[0].close.assert_awaited_once()
+        assert adapter.async_client is None
+    cleanup.assert_called_once_with("eval_contract")
+    sync_warmup.assert_not_awaited()
+    assert requests[0]["stream"] is False
+    assert requests[0]["max_tokens"] == 1
+    assert len(requests) == (2 if cancel_turn else 3)
 
 
 @pytest.fixture

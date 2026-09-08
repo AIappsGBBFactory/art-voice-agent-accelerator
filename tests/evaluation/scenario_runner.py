@@ -64,9 +64,11 @@ except ImportError:
 # Now safe to import app modules
 # =============================================================================
 
+import asyncio
 import copy
 import json
 import time
+from contextlib import AsyncExitStack
 from dataclasses import replace
 from typing import Any
 
@@ -943,7 +945,7 @@ class ScenarioRunner:
         """
         # Ensure MCP servers are initialized for tool availability
         await _ensure_mcp_initialized()
-        
+
         scenario_name = self.scenario["scenario_name"]
         scenario_template = self.scenario.get("scenario_template")
         session_config_data = self.scenario.get("session_config")
@@ -967,7 +969,7 @@ class ScenarioRunner:
         # ═══════════════════════════════════════════════════════════════════════
         demo_user_config = self.scenario.get("demo_user")
         demo_user_data = None
-        
+
         if demo_user_config:
             # Check for email override from environment (set by CLI)
             email_override = os.environ.get("EVAL_EMAIL_OVERRIDE")
@@ -994,17 +996,17 @@ class ScenarioRunner:
                 insurance_company_name=demo_user_config.get("insurance_company_name"),
                 test_scenario=demo_user_config.get("test_scenario"),
             )
-            
+
             if demo_user_data:
                 # Extract context for tools and inject into memo_manager
                 demo_context = extract_user_context(demo_user_data)
                 for key, value in demo_context.items():
                     memo_manager.set_corememory(key, value)
                     context_vars[key] = value
-                
+
                 # Store the full demo user response for reference
                 memo_manager.set_corememory("demo_user_response", demo_user_data)
-                
+
                 # CRITICAL: Store session_profile and client_id for orchestrator injection
                 # The orchestrator injects _session_profile and _client_id into tool args
                 profile = demo_user_data.get("profile", {})
@@ -1027,7 +1029,7 @@ class ScenarioRunner:
                         memo_manager.set_corememory(
                             "customer_intelligence", profile["customer_intelligence"]
                         )
-                
+
                 # Log key identifiers for debugging
                 txn_count = len(demo_user_data.get("transactions", []))
                 logger.info(
@@ -1090,63 +1092,71 @@ class ScenarioRunner:
             recorder=recorder,
         )
 
-        # Warm the Azure OpenAI connection before the first turn so TTFT reflects
-        # production (warm) latency instead of first-call cold-start. Production
-        # warms at app startup (lifecycle/steps.py::warm_openai_connection); the
-        # headless eval bypasses the app lifecycle, so without this the first
-        # turn's TTFT is inflated by ~2-3s of TLS/HTTP2/token cold-start (e.g.
-        # greeting ~4s vs ~1.2s once warm). Best-effort, non-blocking.
-        if not use_mock:
-            try:
-                from src.aoai.client import warm_openai_connection
+        async with AsyncExitStack() as resources:
+            resources.callback(remove_session_agent, session_id)
+            if not use_mock:
+                from openai import OpenAIError
+                from src.aoai.client import create_async_azure_openai_client
 
-                warmed = await warm_openai_connection(timeout_sec=10.0)
-                logger.info(
-                    "🔥 AOAI connection warmup: %s",
-                    "ok" if warmed else "skipped/failed",
+                if orchestrator.async_client is None:
+                    client = await resources.enter_async_context(create_async_azure_openai_client())
+                    orchestrator.async_client = client
+                    resources.callback(setattr, orchestrator, "async_client", None)
+
+                # Warm the same async transport used by every measured turn.
+                # Reuse native model parameter policy; no tools or history are
+                # involved in this one-token readiness request.
+                model = orchestrator.current_agent_config.get_model_for_mode("cascade")
+                warm_params = orchestrator._prepare_streaming_params(
+                    replace(model, max_tokens=1, max_completion_tokens=1),
+                    model.deployment_id,
+                    [{"role": "user", "content": "hi"}],
+                    [],
                 )
-            except Exception as exc:  # noqa: BLE001 - warmup is best-effort
-                logger.debug("AOAI warmup skipped: %s", exc)
+                warm_params["stream"] = False
+                warm_params.pop("stream_options", None)
+                try:
+                    await asyncio.wait_for(
+                        orchestrator.async_client.chat.completions.create(**warm_params),
+                        timeout=10.0,
+                    )
+                    logger.info("AOAI session async connection warmed")
+                except (OpenAIError, TimeoutError) as exc:
+                    logger.warning("AOAI warmup failed; measurements may be cold: %s", exc)
 
-        # Run turns
-        for turn_data in self.scenario["turns"]:
-            turn_id = turn_data["turn_id"]
-            user_input = turn_data["user_input"]
-            turn_expectations = turn_data.get("expectations", {})
-            expected_tools = turn_expectations.get("tools_called", [])
+            for turn_data in self.scenario["turns"]:
+                turn_id = turn_data["turn_id"]
+                user_input = turn_data["user_input"]
+                turn_expectations = turn_data.get("expectations", {})
+                expected_tools = turn_expectations.get("tools_called", [])
+                active_agent = orchestrator._active_agent
 
-            logger.info(f"Turn {turn_id}: {user_input[:50]}...")
+                logger.info(f"Turn {turn_id}: {user_input[:50]}...")
 
-            # Build context with memo_manager
-            context = OrchestratorContext(
-                session_id=session_id,
-                user_text=user_input,
-                turn_id=turn_id,
-                conversation_history=memo_manager.get_history(agent_name),
-                metadata={
-                    "memo_manager": memo_manager,
-                    "scenario_name": scenario_name,
-                    "scenario_template": scenario_template,
-                    "model_override": model_override,
-                    "run_id": f"{scenario_name}:{turn_id}",
-                    "turn_id": turn_id,
-                    "expected_tools": expected_tools,
-                    **context_vars,
-                },
-            )
+                context = OrchestratorContext(
+                    session_id=session_id,
+                    user_text=user_input,
+                    turn_id=turn_id,
+                    conversation_history=memo_manager.get_history(active_agent),
+                    metadata={
+                        "memo_manager": memo_manager,
+                        "scenario_name": scenario_name,
+                        "scenario_template": scenario_template,
+                        "model_override": model_override,
+                        "run_id": f"{scenario_name}:{turn_id}",
+                        "turn_id": turn_id,
+                        "expected_tools": expected_tools,
+                        **context_vars,
+                    },
+                )
 
-            # Run turn (this will be recorded automatically)
-            result = await eval_orchestrator.process_turn(context)
+                result = await eval_orchestrator.process_turn(context)
 
-            # Update mock history if we aren't using the real orchestrator
-            if use_mock:
-                memo_manager.append_to_history(agent_name, "user", user_input)
-                memo_manager.append_to_history(agent_name, "assistant", result.response_text)
+                if use_mock:
+                    memo_manager.append_to_history(active_agent, "user", user_input)
+                    memo_manager.append_to_history(active_agent, "assistant", result.response_text)
 
-            logger.info(f"Turn {turn_id} complete: {len(result.response_text)} chars")
-
-        # Clean up session agents after run
-        remove_session_agent(session_id)
+                logger.info(f"Turn {turn_id} complete: {len(result.response_text)} chars")
 
         # Score the results
         scorer = MetricsScorer()

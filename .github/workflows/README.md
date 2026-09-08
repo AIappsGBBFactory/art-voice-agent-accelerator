@@ -67,6 +67,11 @@ The banking test fixture explicitly applies its request-only conditions to both
 declared routing forms and asks for the recalled decline code without supplying
 the answer. This clarifies that fixture's policy; it does not change production
 generic-routing permissions or remove the no-handoff/context assertions.
+Headless sessions now warm and reuse their actual async OpenAI client, rather
+than warming an unrelated synchronous client and opening a new transport each
+turn. Owned clients and session overrides are cleaned up on completion or
+cancellation; caller-provided clients remain borrowed. History is read for the
+current agent after a handoff, not permanently for the session's starting agent.
 
 The WebSocket driver waits for the native browser readiness event and greeting
 quiescence, then observes replies concurrently with paced input. Its EOS anchor
