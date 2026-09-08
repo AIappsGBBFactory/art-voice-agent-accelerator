@@ -18,16 +18,19 @@ What it does per scenario:
     ``session_id`` is stamped onto the backend's OpenTelemetry spans, so an
     ``eval_live_`` prefix makes every span for this run separable in App Insights.
 4. Stream the turn's audio (binary PCM frames) + a short trailing silence to
-   trigger STT finalization, then capture per turn:
+   trigger STT finalization while concurrently observing replies. EOS precedes
+   that artificial silence. Capture per turn:
     * ``first_response_ms`` = EOS -> first assistant/audio frame
        * ``first_audio_ms``    = EOS -> first inbound *audio* frame
        * ``response_text``      = best-effort assistant text from inbound frames
-       * ``turn_wall_ms``       = EOS -> response considered complete
+       * ``turn_wall_ms``       = EOS -> last response frame (excludes quiet wait)
 5. Write a JSON result (per-turn latencies + captured text + the ``session_id``)
    so a downstream trace-grading step can join on ``session.id``.
 
-This driver only *observes* the voice channel. Tool-call / handoff / content
-assertions are graded from the ``eval_``-tagged traces in App Insights.
+This driver only *observes* the voice channel using deployed industry defaults;
+it does not install inline scenario/model overrides or grade their functional
+assertions. The headless suite covers those expectations. App Insights spans
+provide separate server-side telemetry, not a substitute for client audio.
 
 Wire protocol matches ``tests/load/locustfile.browser_conversation.py``: one
 ``AudioMetadata`` JSON frame on connect, then raw binary PCM16 16 kHz mono
@@ -59,7 +62,6 @@ from urllib.parse import urlencode, urlparse, urlunparse
 
 import websockets
 import yaml
-
 from utils.ml_logging import get_logger
 
 logger = get_logger("evaluation.live.ws_voice_driver")
@@ -126,9 +128,9 @@ class ScenarioResult:
             "turns": len(self.turns),
             "turns_with_response": sum(1 for t in self.turns if t.first_response_ms is not None),
             "turns_with_audio": sum(1 for t in self.turns if t.first_audio_ms is not None),
-            "first_audio_ms_avg": round(sum(first_audio) / len(first_audio), 1)
-            if first_audio
-            else None,
+            "first_audio_ms_avg": (
+                round(sum(first_audio) / len(first_audio), 1) if first_audio else None
+            ),
             "first_audio_ms_max": round(max(first_audio), 1) if first_audio else None,
         }
         d["latency_metrics"] = {
@@ -281,9 +283,7 @@ def _evaluate_live_result(
 
     max_latency_p95_ms = (scenario.get("thresholds") or {}).get("max_latency_p95_ms")
     if max_latency_p95_ms is not None:
-        turn_walls = [
-            turn.turn_wall_ms for turn in result.turns if turn.turn_wall_ms is not None
-        ]
+        turn_walls = [turn.turn_wall_ms for turn in result.turns if turn.turn_wall_ms is not None]
         observed_p95 = _percentile(turn_walls, 95)
         checks.append(
             {
@@ -324,9 +324,7 @@ def _load_turns(scenario_path: Path) -> list[tuple[str, str]]:
     return turns
 
 
-def pregenerate_audio(
-    scenario_path: Path, cache_dir: Path, voice: str | None = None
-) -> list[Path]:
+def pregenerate_audio(scenario_path: Path, cache_dir: Path, voice: str | None = None) -> list[Path]:
     """Synthesize every turn of a scenario into the disk cache and return the paths.
 
     Run this once from an environment that can reach Azure Speech; the resulting
@@ -385,8 +383,8 @@ def _to_ws_url(base: str, path: str) -> str:
 def _extract_text(frame: dict[str, Any]) -> str:
     for key in _TEXT_KEYS:
         val = frame.get(key)
-        if isinstance(val, str) and val.strip():
-            return val.strip()
+        if isinstance(val, str) and val:
+            return val
     # Nested envelopes (e.g. {"audioData": {...}}, {"errorData": {...}})
     for val in frame.values():
         if isinstance(val, dict):
@@ -397,7 +395,11 @@ def _extract_text(frame: dict[str, Any]) -> str:
 
 
 def _frame_kind(frame: dict[str, Any]) -> str:
-    return str(frame.get("kind") or frame.get("type") or "unknown")
+    kind = str(frame.get("kind") or frame.get("type") or "unknown")
+    payload = frame.get("payload")
+    if kind == "event" and isinstance(payload, dict):
+        return str(payload.get("event_type") or payload.get("type") or kind)
+    return kind
 
 
 def _normalized_kind(kind: str) -> str:
@@ -416,14 +418,33 @@ def _is_response_kind(kind: str) -> bool:
 
 
 async def _drain_startup_messages(ws: Any) -> None:
-    """Discard readiness/greeting frames queued before the first measured turn."""
-    while True:
+    """Wait for browser readiness and drain greeting traffic before measuring."""
+    deadline = time.monotonic() + 30.0
+    ready = False
+    last_activity = time.monotonic()
+    while time.monotonic() < deadline:
+        if ready and time.monotonic() - last_activity >= 2.0:
+            return
         try:
-            await asyncio.wait_for(ws.recv(), timeout=0.05)
-        except asyncio.TimeoutError:
-            return
-        except websockets.ConnectionClosed:
-            return
+            message = await asyncio.wait_for(ws.recv(), timeout=0.2)
+        except TimeoutError:
+            continue
+        if isinstance(message, (bytes, bytearray)):
+            last_activity = time.monotonic()
+            continue
+        try:
+            frame = json.loads(message)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(frame, dict):
+            continue
+        kind = _frame_kind(frame)
+        if kind in {"speech_cascade_connected", "voice_live_connected"}:
+            ready = True
+            last_activity = time.monotonic()
+        elif _is_response_kind(kind):
+            last_activity = time.monotonic()
+    raise TimeoutError("Browser readiness/greeting did not settle within 30 seconds")
 
 
 async def _run_turn(
@@ -437,77 +458,136 @@ async def _run_turn(
     first_byte_timeout: float,
 ) -> TurnResult:
     result = TurnResult(turn_id=turn_id, user_input=user_input)
-
-    # --- Send the user turn as 20 ms binary PCM frames at real-time cadence ---
-    frames = [pcm[i : i + FRAME_BYTES] for i in range(0, len(pcm), FRAME_BYTES)]
-    for chunk in frames:
-        await ws.send(chunk)
-        result.audio_frames_sent += 1
-        await asyncio.sleep(FRAME_MS / 1000.0)
     result.audio_ms_sent = round(len(pcm) / (SAMPLE_RATE * BYTES_PER_SAMPLE) * 1000.0, 1)
+    eos: float | None = None
 
-    # --- Trailing silence to trigger STT finalization (~1.2s) ---
-    for _ in range(60):
-        await ws.send(_silence_frame())
-        await asyncio.sleep(FRAME_MS / 1000.0)
+    async def send_input() -> None:
+        nonlocal eos
+        for offset in range(0, len(pcm), FRAME_BYTES):
+            await ws.send(pcm[offset : offset + FRAME_BYTES])
+            result.audio_frames_sent += 1
+            await asyncio.sleep(FRAME_MS / 1000.0)
+        # Silence prompts endpointing but is not part of the user's utterance.
+        eos = time.monotonic()
+        for _ in range(60):
+            await ws.send(_silence_frame())
+            await asyncio.sleep(FRAME_MS / 1000.0)
 
-    # End-of-speech anchor: latency is measured from here.
-    eos = time.monotonic()
-    deadline = eos + turn_timeout
-    first_byte_deadline = eos + first_byte_timeout
+    sender = asyncio.create_task(send_input(), name=f"eval-audio-{turn_id}")
+    send_deadline = time.monotonic() + result.audio_ms_sent / 1000.0 + turn_timeout + 1.2
     last_inbound: float | None = None
-    texts: list[str] = []
+    last_response: float | None = None
+    texts: dict[str, str] = {}
+    open_streams: set[str] = set()
+    pending_tools = 0
 
-    while True:
-        now = time.monotonic()
-        if now >= deadline:
-            break
-        # Complete once we've had a response and then a quiet gap.
-        if last_inbound is not None and (now - last_inbound) >= quiet_gap:
-            break
-        if result.first_response_ms is None and now >= first_byte_deadline:
-            result.error = "no_response_before_first_byte_timeout"
-            break
+    try:
+        while True:
+            if sender.done():
+                sender.result()
+            now = time.monotonic()
+            deadline = eos + turn_timeout if eos is not None else send_deadline
+            if now >= deadline:
+                result.error = "turn_timeout" if eos is not None else "audio_send_timeout"
+                break
+            if (
+                last_response is not None
+                and last_inbound is not None
+                and now - last_inbound >= quiet_gap
+                and not open_streams
+                and pending_tools == 0
+                and sender.done()
+            ):
+                break
+            if eos is not None and last_response is None and now >= eos + first_byte_timeout:
+                result.error = "no_response_before_first_byte_timeout"
+                break
 
-        recv_timeout = min(0.2, max(0.02, deadline - now))
-        try:
-            msg = await asyncio.wait_for(ws.recv(), timeout=recv_timeout)
-        except asyncio.TimeoutError:
-            continue
-        except websockets.ConnectionClosed:
-            break
+            recv_timeout = min(0.2, max(0.001, deadline - now))
+            try:
+                msg = await asyncio.wait_for(ws.recv(), timeout=recv_timeout)
+            except TimeoutError:
+                continue
 
-        now = time.monotonic()
-        last_inbound = now
+            now = time.monotonic()
+            # Observe while sending so old/pre-EOS audio never becomes a queued
+            # zero-millisecond "response" after the silence padding finishes.
+            if eos is None or now < eos:
+                result.inbound_kinds["pre_eos"] = result.inbound_kinds.get("pre_eos", 0) + 1
+                continue
+            last_inbound = now
 
-        if isinstance(msg, (bytes, bytearray)):
-            # Inbound binary = agent audio.
-            result.inbound_kinds["binary_audio"] = result.inbound_kinds.get("binary_audio", 0) + 1
-            if result.first_response_ms is None:
-                result.first_response_ms = round((now - eos) * 1000.0, 1)
-            if result.first_audio_ms is None:
-                result.first_audio_ms = round((now - eos) * 1000.0, 1)
-            continue
+            if isinstance(msg, (bytes, bytearray)):
+                result.inbound_kinds["binary_audio"] = (
+                    result.inbound_kinds.get("binary_audio", 0) + 1
+                )
+                if msg:
+                    last_response = now
+                    if result.first_response_ms is None:
+                        result.first_response_ms = round((now - eos) * 1000.0, 1)
+                    if result.first_audio_ms is None:
+                        result.first_audio_ms = round((now - eos) * 1000.0, 1)
+                continue
 
-        try:
-            frame = json.loads(msg)
-        except (json.JSONDecodeError, TypeError):
-            result.inbound_kinds["unparseable"] = result.inbound_kinds.get("unparseable", 0) + 1
-            continue
+            try:
+                frame = json.loads(msg)
+            except (json.JSONDecodeError, TypeError):
+                frame = None
+            if not isinstance(frame, dict):
+                result.inbound_kinds["unparseable"] = result.inbound_kinds.get("unparseable", 0) + 1
+                continue
 
-        kind = _frame_kind(frame)
-        result.inbound_kinds[kind] = result.inbound_kinds.get(kind, 0) + 1
-        text = _extract_text(frame)
-        if result.first_response_ms is None and _is_response_kind(kind):
-            result.first_response_ms = round((now - eos) * 1000.0, 1)
-        if _is_audio_kind(kind) and result.first_audio_ms is None:
-            result.first_audio_ms = round((now - eos) * 1000.0, 1)
-        if text:
-            texts.append(text)
+            kind = _frame_kind(frame)
+            result.inbound_kinds[kind] = result.inbound_kinds.get(kind, 0) + 1
+            if kind == "tool_start":
+                pending_tools += 1
+            elif kind == "tool_end":
+                pending_tools = max(0, pending_tools - 1)
+            elif kind == "error":
+                result.error = _extract_text(frame) or "backend_error"
+                break
 
-    result.response_text = " ".join(texts).strip()
-    if result.first_response_ms is not None:
-        result.turn_wall_ms = round((time.monotonic() - eos) * 1000.0, 1)
+            audio = _is_audio_kind(kind)
+            text = _extract_text(frame) if kind in {"assistant", "assistant_streaming"} else ""
+            if audio or text:
+                last_response = now
+                if result.first_response_ms is None:
+                    result.first_response_ms = round((now - eos) * 1000.0, 1)
+                if audio and result.first_audio_ms is None:
+                    result.first_audio_ms = round((now - eos) * 1000.0, 1)
+            if kind in {"assistant", "assistant_streaming"}:
+                payload = frame.get("payload")
+                payload = payload if isinstance(payload, dict) else frame
+                if isinstance(payload.get("content"), str):
+                    text = payload["content"]
+                key = str(payload.get("turn_id") or payload.get("response_id") or "legacy")
+                mode = payload.get("content_mode")
+                if mode in {"snapshot", "final_turn"} or kind == "assistant":
+                    texts[key] = text
+                elif mode == "delta":
+                    texts[key] = texts.get(key, "") + text
+                else:
+                    texts[key] = " ".join(filter(None, (texts.get(key), text)))
+                if mode == "final_turn" or payload.get("is_final") or kind == "assistant":
+                    open_streams.discard(key)
+                    if last_response is not None:
+                        last_response = now
+                elif mode in {"snapshot", "delta"}:
+                    open_streams.add(key)
+
+        if result.error is None:
+            await sender
+    except websockets.ConnectionClosed as exc:
+        code = exc.rcvd.code if exc.rcvd is not None else 1006
+        result.error = f"connection_closed: {code}"
+    finally:
+        if not sender.done():
+            sender.cancel()
+        await asyncio.gather(sender, return_exceptions=True)
+
+    result.response_text = "\n\n".join(texts.values()).strip()
+    if result.error is None and last_response is not None and eos is not None:
+        result.turn_wall_ms = round((last_response - eos) * 1000.0, 1)
     return result
 
 
@@ -534,9 +614,11 @@ async def run_scenario(
 
     doc = yaml.safe_load(scenario_path.read_text())
     scenario_name = str(doc.get("scenario_name") or scenario_path.stem)
-    industry = industry or (doc.get("session_config", {}).get("agent_defaults", {}) or {}).get(
-        "industry"
-    ) or (doc.get("demo_user", {}) or {}).get("scenario")
+    industry = (
+        industry
+        or (doc.get("session_config", {}).get("agent_defaults", {}) or {}).get("industry")
+        or (doc.get("demo_user", {}) or {}).get("scenario")
+    )
     configured_email = (doc.get("demo_user", {}) or {}).get("email")
     scenario_text = scenario_path.read_text(encoding="utf-8")
     uses_email_placeholder = "${demo_user.email}" in scenario_text or "${email}" in scenario_text
@@ -583,9 +665,7 @@ async def run_scenario(
         _evaluate_live_result(result, doc, require_audio=require_audio)
         return result
 
-    logger.info(
-        "Driving %d turns against %s (session_id=%s)", len(pcm_by_turn), ws_url, session_id
-    )
+    logger.info("Driving %d turns against %s (session_id=%s)", len(pcm_by_turn), ws_url, session_id)
 
     headers = {
         "x-ms-call-connection-id": session_id,
@@ -612,7 +692,6 @@ async def run_scenario(
         ) as ws:
             result.connect_latency_ms = round((time.monotonic() - connect_started) * 1000.0, 1)
             await ws.send(json.dumps(metadata))
-            await asyncio.sleep(1.0)  # let the session initialize / greeting settle
             await _drain_startup_messages(ws)
 
             for turn_id, user_input, pcm in pcm_by_turn:
@@ -634,6 +713,9 @@ async def run_scenario(
                     result.error = f"connection_closed_mid_scenario: {exc.code}"
                     break
                 result.turns.append(turn_result)
+                if turn_result.error:
+                    result.error = f"turn_failed: {turn_id}: {turn_result.error}"
+                    break
                 await asyncio.sleep(inter_turn_pause)
 
         result.ok = result.error is None and all(t.error is None for t in result.turns)

@@ -57,6 +57,23 @@ text-to-TTS dispatch, not synthesized audio arriving at a client. The separate
 WebSocket jobs measure actual audio arrival. Recorded pipeline errors fail
 functional validation even if a scenario has no other content assertions.
 
+The WebSocket driver waits for the native browser readiness event and greeting
+quiescence, then observes replies concurrently with paced input. Its EOS anchor
+is the end of user PCM, before endpointing silence. `turn_wall_ms` ends at the
+last response frame, excluding the observer's quiet wait; it still includes
+audio delivery and is not the headless model-processing metric. Typed transcript
+snapshots replace prior content, deltas append, and final-turn envelopes close
+their stream. Control/user messages cannot complete an unanswered turn. Missing
+responses, timeouts and mid-turn closes stop the scenario instead of sending a
+new utterance over unresolved output. No latency budgets are increased.
+The wire driver selects the deployed industry scenario; it does not install
+inline `session_config` or model overrides. Those functional/configuration
+expectations are exercised by the headless suite. Voice jobs are audio and
+latency smoke tests of the deployed configuration, not proof of inline routing.
+Completion still uses a bounded quiet-window heuristic: audio frames have no
+response identity, and an unusually delayed greeting or silent gap between
+responses can limit attribution. Inspect server traces for ambiguous runs.
+
 The blocking unit gate also covers async OpenAI invocation, Azure-host identity
 detection, and deferred VoiceLive memory sync. Four legacy ACS authentication
 expectations remain in `.github/quarantined-tests.txt`: implementing a different
