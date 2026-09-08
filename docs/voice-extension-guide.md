@@ -47,8 +47,13 @@ handoff-pending Boolean. Extend `test_voicelive_handoff_transition.py` with a
 held provider await plus replacement/acknowledgement, rather than setting a
 private protection flag to simulate a successful handoff.
 
-An executed tool's completion notification has its own lifetime: report it once
-even if routing is superseded during cancel, playback, session application,
+Tool completion ownership encloses invocation as well as routing, not just the
+awaits after a result has arrived. Report a terminal attempt once even when close
+cancels a suspended executor: without a settled result, report cancelled/unknown,
+warn that effects may have occurred, never promise rollback or safe automatic
+retry, and re-raise cancellation. Keep settled results/statuses unchanged, and do
+not let notification failure replace the original cancellation or execution error.
+The same owner handles supersession during cancel, playback, session application,
 replay, or response creation. Keep the actual tool outcome and use the
 notification-only `handoff_transition` metadata to distinguish routing status.
 This is a single notification attempt through the existing messenger, not

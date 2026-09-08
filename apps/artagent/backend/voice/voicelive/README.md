@@ -63,9 +63,16 @@ Failure releases only the matching transition, never a replacement's protection.
 History values are captured before the transition's first await, and replay checks
 its epoch before every new item submission, including the assistant item.
 
-Tool execution and routing are separate outcomes. The handoff branch makes one
-completion-notification attempt in `finally` after execution, including when
-routing is superseded or fails. The original result/status is retained, with
+Tool execution and routing are separate outcomes. One completion `finally`
+encloses start notification, invocation and routing for every tool; branch-local
+terminal notifications are not separate owners. A settled result/status is retained
+even if routing is superseded or fails. If invocation is cancelled before a result
+settles, the terminal attempt reports `cancelled` with `outcome: unknown` and an
+explicit warning that effects may have occurred and automatic retry is unsafe.
+The existing error payload prevents the wire helper from defaulting this unknown
+outcome to success. This does not claim rollback or erase simulated/remote effects.
+Cancellation is re-raised; notification failure cannot replace it or a settled
+execution error. Handoffs retain
 notification-only `handoff_transition.status` (`switched`, `superseded`,
 `rejected`, `failed`, or `response_failed`) and `target_agent` metadata. This does
 not change the registered tool's result or retry its side effects. Notification

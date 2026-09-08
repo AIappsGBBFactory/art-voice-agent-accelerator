@@ -2867,142 +2867,120 @@ class LiveOrchestrator:
                     args.setdefault("user_last_utterance", last_user_message)
 
             MFA_TOOL_NAMES = {"send_mfa_code", "resend_mfa_code"}
-
-            if self.messenger:
-                try:
-                    await self.messenger.notify_tool_start(call_id=call_id, name=name, args=args)
-                except Exception:
-                    logger.debug("Tool start messenger notification failed", exc_info=True)
-                if name in MFA_TOOL_NAMES:
-                    try:
-                        await self.messenger.send_status_update(
-                            text="Sending a verification code to your email…",
-                            sender=self.active,
-                            event_label="mfa_status_update",
-                        )
-                    except Exception:
-                        logger.debug("Failed to emit MFA status update", exc_info=True)
-
             start_ts = time.perf_counter()
-            result: dict[str, Any] = {}
-
-            if is_control and batch.epoch != self._response_epoch:
-                if self.messenger:
-                    await self.messenger.notify_tool_end(
-                        call_id=call_id, name=name, status="cancelled", elapsed_ms=0
-                    )
-                return False
+            result: dict[str, Any] | None = None
+            error_payload: str | None = None
+            routing_status: str | None = None
+            target = None
+            cancellation: asyncio.CancelledError | None = None
 
             try:
-                # Tool execution runs under the enclosing `execute_tool {name}`
-                # span, which already carries the tool name, args, and timing — no
-                # separate child span is needed.
-                result = normalize_tool_result(await execute_tool(name, args))
-                self._system_vars.update(apply_tool_result(self._memo_manager, name, result))
-            except (asyncio.CancelledError, KeyboardInterrupt):
-                raise
-            except Exception as exc:
-                # CRITICAL: Do NOT re-raise here. This exception bubbles up through
-                # handle_event() into the handler's top-level _event_loop(), whose
-                # broad except clause treats ANY exception as fatal and shuts down
-                # the entire VoiceLive session (self._shutdown.set()). A single
-                # failed tool call must not kill the call — it must be reported
-                # back to the model as a tool error so the conversation continues.
-                notify_status = "error"
-                notify_error = str(exc)
-                tool_span.set_status(trace.StatusCode.ERROR, str(exc))
-                tool_span.add_event(
-                    "tool.execution_error",
-                    {"error.type": type(exc).__name__, "error.message": str(exc)},
-                )
-                logger.exception(
-                    "Tool execution raised an exception | tool=%s call_id=%s", name, call_id
-                )
-                result = {"success": False, "error": notify_error}
-
-            elapsed_ms = (time.perf_counter() - start_ts) * 1000
-            tool_span.set_attribute("execution.duration_ms", elapsed_ms)
-            tool_span.set_attribute("voicelive.tool.elapsed_ms", elapsed_ms)
-
-            error_payload: str | None = None
-            execution_success = tool_succeeded(result)
-            if not execution_success:
-                notify_status = "error"
-                err_val = result.get("message") or result.get("error")
-                if err_val:
-                    error_payload = str(err_val)
-
-            tool_span.set_attribute("execution.success", execution_success)
-            tool_span.set_attribute("result.type", type(result).__name__ if result else "None")
-            tool_span.set_attribute("voicelive.tool.status", notify_status)
-
-            if is_control and not is_handoff and batch.epoch != self._response_epoch:
                 if self.messenger:
-                    await self.messenger.notify_tool_end(
-                        call_id=call_id,
-                        name=name,
-                        status=notify_status,
-                        elapsed_ms=elapsed_ms,
-                        result=result,
-                        error=error_payload,
+                    try:
+                        await self.messenger.notify_tool_start(
+                            call_id=call_id, name=name, args=args
+                        )
+                    except Exception:
+                        logger.debug("Tool start messenger notification failed", exc_info=True)
+                    if name in MFA_TOOL_NAMES:
+                        try:
+                            await self.messenger.send_status_update(
+                                text="Sending a verification code to your email…",
+                                sender=self.active,
+                                event_label="mfa_status_update",
+                            )
+                        except Exception:
+                            logger.debug("Failed to emit MFA status update", exc_info=True)
+
+                start_ts = time.perf_counter()
+                if is_control and batch.epoch != self._response_epoch:
+                    notify_status = "cancelled"
+                    if is_handoff:
+                        routing_status = "superseded"
+                    result = {"outcome": "not_invoked", "error": "Cancelled before tool invocation"}
+                    return False
+
+                try:
+                    # Execution stays under the enclosing tool span and completion owner.
+                    result = normalize_tool_result(await execute_tool(name, args))
+                    self._system_vars.update(apply_tool_result(self._memo_manager, name, result))
+                except (asyncio.CancelledError, KeyboardInterrupt):
+                    raise
+                except Exception as exc:
+                    # Report tool errors to the model rather than ending the voice session.
+                    notify_status = "error"
+                    notify_error = str(exc)
+                    tool_span.set_status(trace.StatusCode.ERROR, str(exc))
+                    tool_span.add_event(
+                        "tool.execution_error",
+                        {"error.type": type(exc).__name__, "error.message": str(exc)},
                     )
-                return False
+                    logger.exception(
+                        "Tool execution raised an exception | tool=%s call_id=%s", name, call_id
+                    )
+                    result = {"success": False, "error": notify_error}
 
-            # Handle transfer tools
-            if (
-                name in TRANSFER_TOOL_NAMES
-                and notify_status != "error"
-                and isinstance(result, dict)
-            ):
-                takeover_message = result.get("message") or "Transferring call to destination."
-                tool_span.add_event(
-                    "tool.transfer_initiated",
-                    {"transfer.message": takeover_message[:100] if takeover_message else ""},
-                )
-                if self.messenger:
-                    try:
-                        await self.messenger.send_status_update(
-                            text=takeover_message,
-                            sender=self.active,
-                            event_label="acs_call_transfer_status",
-                        )
-                    except Exception:
-                        logger.debug("Failed to emit transfer status update", exc_info=True)
-                transfer_epoch = batch.epoch
-                try:
-                    if transfer_epoch == self._response_epoch and result.get(
-                        "should_interrupt_playback", True
-                    ):
-                        self._bump_response_epoch("transfer_cancel")
-                        transfer_epoch = self._response_epoch
-                        await self.conn.response.cancel()
-                except Exception:
-                    logger.debug("response.cancel() failed during transfer", exc_info=True)
-                if transfer_epoch == self._response_epoch and self.audio:
-                    try:
-                        await self.audio.stop_playback()
-                    except Exception:
-                        logger.debug("Audio stop playback failed during transfer", exc_info=True)
-                if self.messenger:
-                    try:
-                        await self.messenger.notify_tool_end(
-                            call_id=call_id,
-                            name=name,
-                            status=notify_status,
-                            elapsed_ms=(time.perf_counter() - start_ts) * 1000,
-                            result=result,
-                            error=error_payload,
-                        )
-                    except Exception:
-                        logger.debug("Tool end messenger notification failed", exc_info=True)
-                tool_span.set_status(trace.StatusCode.OK)
-                return True
+                elapsed_ms = (time.perf_counter() - start_ts) * 1000
+                tool_span.set_attribute("execution.duration_ms", elapsed_ms)
+                tool_span.set_attribute("voicelive.tool.elapsed_ms", elapsed_ms)
 
-            # Handle handoff tools using unified HandoffService
-            if is_handoff:
-                routing_status = "failed"
-                target = None
-                try:
+                execution_success = tool_succeeded(result)
+                if not execution_success:
+                    notify_status = "error"
+                    err_val = result.get("message") or result.get("error")
+                    if err_val:
+                        error_payload = str(err_val)
+
+                tool_span.set_attribute("execution.success", execution_success)
+                tool_span.set_attribute("result.type", type(result).__name__ if result else "None")
+                tool_span.set_attribute("voicelive.tool.status", notify_status)
+
+                if is_control and not is_handoff and batch.epoch != self._response_epoch:
+                    return False
+
+                # Handle transfer tools
+                if (
+                    name in TRANSFER_TOOL_NAMES
+                    and notify_status != "error"
+                    and isinstance(result, dict)
+                ):
+                    takeover_message = result.get("message") or "Transferring call to destination."
+                    tool_span.add_event(
+                        "tool.transfer_initiated",
+                        {"transfer.message": takeover_message[:100] if takeover_message else ""},
+                    )
+                    if self.messenger:
+                        try:
+                            await self.messenger.send_status_update(
+                                text=takeover_message,
+                                sender=self.active,
+                                event_label="acs_call_transfer_status",
+                            )
+                        except Exception:
+                            logger.debug("Failed to emit transfer status update", exc_info=True)
+                    transfer_epoch = batch.epoch
+                    try:
+                        if transfer_epoch == self._response_epoch and result.get(
+                            "should_interrupt_playback", True
+                        ):
+                            self._bump_response_epoch("transfer_cancel")
+                            transfer_epoch = self._response_epoch
+                            await self.conn.response.cancel()
+                    except Exception:
+                        logger.debug("response.cancel() failed during transfer", exc_info=True)
+                    if transfer_epoch == self._response_epoch and self.audio:
+                        try:
+                            await self.audio.stop_playback()
+                        except Exception:
+                            logger.debug(
+                                "Audio stop playback failed during transfer", exc_info=True
+                            )
+                    tool_span.set_status(trace.StatusCode.OK)
+                    return True
+
+                # Handle handoff tools using unified HandoffService
+                if is_handoff:
+                    routing_status = "failed"
                     if batch.epoch != self._response_epoch:
                         routing_status = "superseded"
                         return False
@@ -3041,56 +3019,59 @@ class LiveOrchestrator:
                     elif execution_success:
                         tool_span.set_status(trace.StatusCode.OK)
                     return routing_status == "switched"
-                except asyncio.CancelledError:
+
+                else:
+                    output_json = json.dumps(result)
+                    batch.outputs.append((call_id, output_json))
+                    pending_count = len(batch.outputs)
+                    self._response_had_tool_calls = True
+                    logger.debug(
+                        "[Business Tool] Queued output for call_id=%s | pending_count=%d",
+                        call_id,
+                        pending_count,
+                    )
+
+                    tool_span.set_status(trace.StatusCode.OK)
+                    return False
+            except asyncio.CancelledError as exc:
+                cancellation = exc
+                if is_handoff:
                     routing_status = "superseded"
-                    raise
-                finally:
-                    # Reporting an executed outcome outlives permission to continue routing.
-                    if self.messenger:
-                        notification_result = {
-                            **result,
-                            "handoff_transition": {
-                                "status": routing_status,
-                                "target_agent": target,
-                            },
-                        }
-                        try:
-                            await self.messenger.notify_tool_end(
-                                call_id=call_id,
-                                name=name,
-                                status=notify_status,
-                                elapsed_ms=(time.perf_counter() - start_ts) * 1000,
-                                result=notification_result,
-                                error=error_payload,
-                            )
-                        except Exception:
-                            logger.debug("Tool end messenger notification failed", exc_info=True)
-
-            else:
-                output_json = json.dumps(result)
-                batch.outputs.append((call_id, output_json))
-                pending_count = len(batch.outputs)
-                self._response_had_tool_calls = True
-                logger.debug(
-                    "[Business Tool] Queued output for call_id=%s | pending_count=%d",
-                    call_id,
-                    pending_count,
-                )
-
+                raise
+            finally:
                 if self.messenger:
+                    # None means the invocation never produced a settled result.
+                    # Cancellation cannot tell us whether external effects occurred.
+                    if result is None:
+                        notify_status = "cancelled"
+                        error_payload = (
+                            "Tool invocation cancelled before a settled result; outcome unknown. "
+                            "Effects may have occurred; do not retry automatically."
+                        )
+                        result = {"error": error_payload, "outcome": "unknown"}
+                    notification_result = dict(result)
+                    if routing_status is not None:
+                        notification_result["handoff_transition"] = {
+                            "status": routing_status,
+                            "target_agent": target,
+                        }
                     try:
                         await self.messenger.notify_tool_end(
                             call_id=call_id,
                             name=name,
                             status=notify_status,
                             elapsed_ms=(time.perf_counter() - start_ts) * 1000,
-                            result=result if isinstance(result, dict) else None,
+                            result=notification_result,
                             error=error_payload,
+                        )
+                    except asyncio.CancelledError:
+                        if cancellation is None:
+                            raise
+                        logger.debug(
+                            "Tool end notification cancelled during cancellation", exc_info=True
                         )
                     except Exception:
                         logger.debug("Tool end messenger notification failed", exc_info=True)
-                tool_span.set_status(trace.StatusCode.OK)
-                return False
 
     async def _run_handoff_transition(
         self, resolution: HandoffResolution, result: dict[str, Any], last_user_message: str

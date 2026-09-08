@@ -39,10 +39,10 @@ def handoff_runtime(monkeypatch):
     return orch, conn, execute
 
 
-async def dispatch_handoff(orch, call_id="handoff"):
+async def dispatch_handoff(orch, call_id="handoff", *, tool_name="handoff_to_agent"):
     before = set(orch._owned_tasks)
     response_id = orch._active_response_id or call_id
-    event = _fn_args_done(call_id, "handoff_to_agent", {})
+    event = _fn_args_done(call_id, tool_name, {})
     event.response_id = response_id
     await orch.handle_event(event)
     await orch.handle_event(_response_done(response_id, ResponseStatus.COMPLETED))
@@ -183,7 +183,96 @@ async def test_current_transition_failure_reports_outcome_once_and_releases_prot
 
 
 @pytest.mark.asyncio
-async def test_close_during_handoff_application_preserves_executed_completion(monkeypatch):
+@pytest.mark.parametrize("effect_before_suspend", [False, True])
+@pytest.mark.parametrize("notification_failure", [None, "error", "cancel"])
+@pytest.mark.parametrize(
+    "tool_name", ["handoff_to_agent", "lookup", "transfer_call_to_destination"]
+)
+async def test_close_during_invocation_reports_unknown_and_propagates_cancellation(
+    effect_before_suspend, notification_failure, tool_name, monkeypatch
+):
+    from apps.artagent.backend.voice.voicelive.tool_helpers import _derive_tool_status
+
+    orch, conn, execute = handoff_runtime(monkeypatch)
+    monkeypatch.setattr(
+        orch._handoff_service, "is_handoff", lambda name: name == "handoff_to_agent"
+    )
+    entered = asyncio.Event()
+    effects = []
+    executing = []
+
+    async def hold(*args, **kwargs):
+        executing.append(asyncio.current_task())
+        if effect_before_suspend:
+            effects.append("effect already performed")
+        entered.set()
+        await asyncio.Event().wait()
+
+    execute.side_effect = hold
+    if notification_failure == "error":
+        orch.messenger.notify_tool_end.side_effect = RuntimeError("notification unavailable")
+    elif notification_failure == "cancel":
+        orch.messenger.notify_tool_end.side_effect = asyncio.CancelledError(
+            "notification cancelled"
+        )
+    tasks = await dispatch_handoff(orch, tool_name=tool_name)
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        await orch.cancel_and_join_tasks()
+        finalizer = executing[0]
+        assert finalizer in tasks
+        assert finalizer.cancelled()
+        with pytest.raises(asyncio.CancelledError) as cancelled:
+            await finalizer
+        assert cancelled.value.args == ()
+        execute.assert_awaited_once()
+        orch.messenger.notify_tool_start.assert_awaited_once()
+        orch.messenger.notify_tool_end.assert_awaited_once()
+        terminal = orch.messenger.notify_tool_end.call_args.kwargs
+        assert terminal["status"] == "cancelled"
+        assert terminal["result"]["outcome"] == "unknown"
+        assert terminal["result"].get("success") is not True
+        assert _derive_tool_status(terminal["result"]) != "success"
+        assert "effects may have occurred" in terminal["error"].lower()
+        assert "do not retry automatically" in terminal["error"].lower()
+        if tool_name == "handoff_to_agent":
+            assert terminal["result"]["handoff_transition"]["status"] == "superseded"
+        assert effects == (["effect already performed"] if effect_before_suspend else [])
+        assert orch.active == "Concierge"
+        assert orch._handoff_transition is None
+        conn.response.create.assert_not_awaited()
+        conn.response.cancel.assert_not_awaited()
+        conn.conversation.item.create.assert_not_awaited()
+    finally:
+        await orch.cancel_and_join_tasks()
+
+
+@pytest.mark.asyncio
+async def test_notification_failure_preserves_settled_execution_error(monkeypatch):
+    orch, _, execute = handoff_runtime(monkeypatch)
+    execute.side_effect = RuntimeError("original execution error")
+    orch.messenger.notify_tool_end.side_effect = RuntimeError("notification unavailable")
+    orch._handoff_service._resolution.success = False
+    orch._handoff_service._resolution.error = "route rejected"
+    try:
+        tasks = await dispatch_handoff(orch)
+        await asyncio.gather(*tasks)
+        execute.assert_awaited_once()
+        orch.messenger.notify_tool_end.assert_awaited_once()
+        terminal = orch.messenger.notify_tool_end.call_args.kwargs
+        assert terminal["status"] == "error"
+        assert terminal["result"]["error"] == "original execution error"
+        assert terminal["error"] == "original execution error"
+        assert not any(task.cancelled() for task in tasks)
+    finally:
+        await orch.cancel_and_join_tasks()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("notification_fails", [False, True])
+async def test_close_during_handoff_application_preserves_executed_completion(
+    notification_fails, monkeypatch
+):
     orch, conn, execute = handoff_runtime(monkeypatch)
     entered = asyncio.Event()
 
@@ -192,6 +281,8 @@ async def test_close_during_handoff_application_preserves_executed_completion(mo
         await asyncio.Event().wait()
 
     monkeypatch.setattr(session, "apply_voicelive_session", hold)
+    if notification_fails:
+        orch.messenger.notify_tool_end.side_effect = RuntimeError("notification unavailable")
     await dispatch_handoff(orch)
     await asyncio.wait_for(entered.wait(), 1)
     await orch.cancel_and_join_tasks()
