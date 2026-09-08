@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 SAMPLE_RATE_BROWSER = 48000  # Browser WebAudio prefers 48kHz
 SAMPLE_RATE_ACS = 16000  # ACS telephony uses 16kHz
 _PCM16_BYTES_PER_SAMPLE = 2
+_PRODUCER_STOP_TIMEOUT_SECONDS = 10.0
 
 # Streaming synthesis: when enabled, audio chunks are sent to the transport as
 # Azure renders them (low time-to-first-audio) instead of waiting for the entire
@@ -161,7 +162,9 @@ class TTSPlayback:
             stop.set()
             synth.stop_speaking()
         try:
-            await asyncio.wait_for(asyncio.shield(future), timeout=10.0)
+            await asyncio.wait_for(
+                asyncio.shield(future), timeout=_PRODUCER_STOP_TIMEOUT_SECONDS
+            )
         finally:
             if future.done():
                 self._producers.pop(future, None)

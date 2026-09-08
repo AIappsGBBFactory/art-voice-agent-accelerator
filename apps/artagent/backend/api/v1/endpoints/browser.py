@@ -24,9 +24,11 @@ The endpoint handles:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import time
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 from apps.artagent.backend.src.services.acs.session_terminator import (
@@ -783,54 +785,83 @@ async def _cleanup_conversation(
     conn_id: str | None,
     stream_mode: StreamMode,
 ) -> None:
-    """Clean up conversation session resources."""
-    with tracer.start_as_current_span(
-        "api.v1.browser.cleanup_conversation",
-        attributes={"session_id": session_id},
-    ) as span:
-        try:
-            # Terminate Voice Live ACS session if needed
-            await _terminate_voice_live_if_needed(websocket, session_id)
+    """Attempt every safe teardown stage, then report any accumulated failures.
 
-            # Handler cleanup based on type
-            if handler:
+    A failed speech stop must retain its unsafe leases, but must not skip socket,
+    connection, session, adapter, or analytics cleanup. One shielded task per
+    websocket also makes repeated/concurrent finalizers observe the same outcome
+    without double-counting disconnects or persisting duplicate analytics.
+    """
+    task = getattr(websocket.state, "_conversation_cleanup_task", None)
+    if task is None:
+
+        async def cleanup() -> None:
+            with tracer.start_as_current_span(
+                "api.v1.browser.cleanup_conversation",
+                attributes={"session_id": session_id},
+            ) as span:
+                errors: list[Exception] = []
+
+                async def attempt(label: str, operation: Callable[[], Any]) -> None:
+                    try:
+                        result = operation()
+                        if inspect.isawaitable(result):
+                            await result
+                    except Exception as exc:
+                        exc.add_note(f"Browser cleanup stage: {label}")
+                        errors.append(exc)
+                        logger.error("[%s] Cleanup %s failed: %s", session_id, label, exc)
+
+                await attempt(
+                    "voice_live_termination",
+                    lambda: _terminate_voice_live_if_needed(websocket, session_id),
+                )
                 if isinstance(handler, VoiceHandler):
-                    await handler.stop()
-                # VoiceLiveSDKHandler cleanup already done in processing finally block
+                    await attempt("speech_stop", handler.stop)
+                # VoiceLive handler cleanup remains owned by its processing finally.
 
-            # Clear orchestrator adapter cache for this session
-            if session_id:
-                cleanup_adapter(session_id)
+                if session_id:
+                    await attempt("adapter", lambda: cleanup_adapter(session_id))
+                if conn_id:
+                    await attempt(
+                        "connection", lambda: websocket.app.state.conn_manager.unregister(conn_id)
+                    )
+                if session_id:
+                    await attempt(
+                        "session",
+                        lambda: websocket.app.state.session_manager.remove_session(session_id),
+                    )
+                if hasattr(websocket.app.state, "session_metrics"):
+                    await attempt(
+                        "disconnect_metrics",
+                        lambda: websocket.app.state.session_metrics.increment_disconnected(),
+                    )
+                if _is_connected(websocket):
+                    await attempt("socket", websocket.close)
+                if memory_manager and hasattr(websocket.app.state, "cosmos"):
+                    await attempt(
+                        "analytics",
+                        lambda: build_and_flush(memory_manager, websocket.app.state.cosmos),
+                    )
 
-            # Unregister connection
-            if conn_id:
-                await websocket.app.state.conn_manager.unregister(conn_id)
+                if errors:
+                    failure = ExceptionGroup("Browser conversation cleanup failed", errors)
+                    span.set_status(Status(StatusCode.ERROR, str(failure)))
+                    raise failure
+                span.set_status(Status(StatusCode.OK))
+                logger.info("[%s] Conversation cleanup complete", session_id)
 
-            # Remove from session manager
-            if session_id:
-                await websocket.app.state.session_manager.remove_session(session_id)
+        task = asyncio.create_task(cleanup(), name=f"browser-cleanup-{session_id}")
+        websocket.state._conversation_cleanup_task = task
 
-            # Track disconnect metrics
-            if hasattr(websocket.app.state, "session_metrics"):
-                await websocket.app.state.session_metrics.increment_disconnected()
+        def observe_cleanup(completed: asyncio.Task) -> None:
+            if not completed.cancelled() and completed.exception() is not None:
+                logger.error(
+                    "[%s] Conversation cleanup failed: %s", session_id, completed.exception()
+                )
 
-            # Close WebSocket
-            if _is_connected(websocket):
-                await websocket.close()
-
-            # Persist analytics
-            if memory_manager and hasattr(websocket.app.state, "cosmos"):
-                try:
-                    await build_and_flush(memory_manager, websocket.app.state.cosmos)
-                except Exception as e:
-                    logger.error("[%s] Analytics persist error: %s", session_id, e)
-
-            span.set_status(Status(StatusCode.OK))
-            logger.info("[%s] Conversation cleanup complete", session_id)
-
-        except Exception as e:
-            span.set_status(Status(StatusCode.ERROR, str(e)))
-            logger.error("[%s] Conversation cleanup error: %s", session_id, e)
+        task.add_done_callback(observe_cleanup)
+    await asyncio.shield(task)
 
 
 async def _terminate_voice_live_if_needed(

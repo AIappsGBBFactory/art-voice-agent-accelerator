@@ -85,5 +85,16 @@ does not return a still-active client to the pool. Fix the provider/service fail
 rather than reusing that resource. Native work cannot safely be killed by cancelling
 its asyncio Future.
 
+Browser endpoint teardown is independent of speech lease release. Even when
+`VoiceHandler.stop()` reports native stop failure or a producer-join timeout,
+`_cleanup_conversation` attempts adapter eviction, connection unregister, session
+removal, disconnect metrics, socket close, and analytics persistence. Exceptions
+from these stages are logged and collected into an `ExceptionGroup` after the
+remaining stages run. Speech shutdown does not become silently successful.
+One shielded cleanup task per websocket survives caller cancellation; concurrent
+or later calls receive the same result, including failure, without repeating
+metrics, analytics, or other cleanup stages. A retry does not retry failed stages
+or return withheld speech leases.
+
 MemoManager hydration and ordered persistence remain the storage workstream's
 contract. This component introduces no alternative session-state model.
