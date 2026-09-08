@@ -2174,59 +2174,32 @@ def _session_agent_response(
 
 
 async def _resolve_live_session_agent(session_id: str, request: Request) -> UnifiedAgent | None:
-    """
-    Return the session-scoped agent to patch for a live-settings change.
-
-    If the session already has an Agent Builder / Quick Tune agent, that is
-    returned. Otherwise the currently-active base agent (resolved from corememory
-    ``active_agent`` → ``app_state.start_agent`` → first registry agent) is
-    deep-copied into session scope so live tweaks are captured in session state
-    instead of being lost on the next reconnect. The clone is never the shared
-    registry object, avoiding cross-session leakage.
-    """
-    app_state = request.app.state
-    unified_agents: dict[str, UnifiedAgent] = getattr(app_state, "unified_agents", {}) or {}
-
-    # Resolve the active agent name: corememory active_agent → start_agent → first.
-    active_name: str | None = None
+    """Resolve current identity first, then install its owned effective definition."""
+    from apps.artagent.backend.src.orchestration.session_agents import session_agent_for_edit
     from apps.artagent.backend.src.orchestration.session_memory import session_memo
+    from apps.artagent.backend.src.orchestration.unified import _adapters
+    from apps.artagent.backend.voice.voicelive.orchestrator import get_voicelive_orchestrator
 
+    app_state = request.app.state
     redis_mgr = getattr(app_state, "redis", None) or getattr(app_state, "redis_manager", None)
     memo = await session_memo(session_id, redis_mgr)
-    active_name = memo.get_value_from_corememory("active_agent")
+    live = get_voicelive_orchestrator(session_id)
+    cascade = _adapters.get(session_id)
+    if live is not None:
+        agents, active_name = live.agents, live.active
+    elif cascade is not None:
+        agents, active_name = cascade.agents, cascade.active_agent
+    else:
+        agents = dict(getattr(app_state, "unified_agents", {}) or {})
+        active_name = memo.get_value_from_corememory("active_agent")
     if not active_name:
         active_name = getattr(app_state, "start_agent", None)
-
-    if active_name:
-        existing = get_session_agent(session_id, active_name)
-        if existing is not None:
-            return existing
-
-    existing = get_session_agent(session_id)
-    if existing is not None:
-        return existing
-
-    if not unified_agents:
+    if not active_name:
+        existing = get_session_agent(session_id)
+        active_name = existing.name if existing else next(iter(agents), None)
+    if not active_name:
         return None
-
-    base_agent: UnifiedAgent | None = None
-    if active_name:
-        _, base_agent = find_agent_by_name(unified_agents, active_name)
-    if base_agent is None:
-        base_agent = next(iter(unified_agents.values()), None)
-    if base_agent is None:
-        return None
-
-    # Session-scoped clone so live tweaks never mutate the shared registry agent.
-    clone = copy.deepcopy(base_agent)
-    clone.metadata = {
-        **(getattr(clone, "metadata", None) or {}),
-        "source": "dynamic",
-        "session_id": session_id,
-        "created_at": time.time(),
-        "cloned_from": getattr(base_agent, "name", None),
-    }
-    return clone
+    return session_agent_for_edit(session_id, agents, active_name)
 
 
 async def _upsert_session_agent(

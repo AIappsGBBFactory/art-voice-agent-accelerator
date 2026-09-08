@@ -16,6 +16,7 @@ Storage Structure:
 from __future__ import annotations
 
 import time
+from copy import deepcopy
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -351,6 +352,38 @@ def get_session_agents(session_id: str) -> dict[str, UnifiedAgent]:
     """Get all dynamic agents for a session."""
     _ensure_session_loaded(session_id)
     return dict(_session_agents.get(session_id, {}))
+
+
+def session_agent_for_edit(
+    session_id: str | None,
+    agents: dict[str, UnifiedAgent],
+    agent_name: str,
+) -> UnifiedAgent | None:
+    """Install a matching session-owned definition before any mutable live edit.
+
+    Catalog/scenario definitions are borrowed until edited. Deep-copy their entire
+    definition, not a field list, so future nested configuration stays isolated.
+    """
+    key, base = find_agent_by_name(agents, agent_name)
+    owned = get_session_agent(session_id, agent_name) if session_id else None
+    if owned is None:
+        if base is None:
+            logger.warning(
+                "Cannot tune missing agent | session=%s agent=%s", session_id, agent_name
+            )
+            return None
+        owned = deepcopy(base)
+        owned.metadata = {
+            **owned.metadata,
+            "source": "dynamic",
+            "session_id": session_id,
+            "created_at": time.time(),
+            "cloned_from": base.name,
+        }
+    agents[key or owned.name] = owned
+    if session_id:
+        set_session_agent(session_id, owned, persist=False)
+    return owned
 
 
 def set_session_agent(

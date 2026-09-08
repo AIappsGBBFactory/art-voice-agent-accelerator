@@ -361,6 +361,104 @@ class TestLiveSettingsPersist:
     """Quick Tune tweaks must be captured in session state."""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("customized_auth", [False, True])
+    async def test_live_tuning_owns_only_the_current_effective_agent(
+        self, session_id, customized_auth, monkeypatch
+    ):
+        from copy import deepcopy
+
+        from apps.artagent.backend.src.orchestration import session_agents as registry
+        from apps.artagent.backend.voice.shared.config_resolver import build_effective_registry
+        from apps.artagent.backend.voice.voicelive import orchestrator as live
+        from src.stateful.state_managment import MemoManager
+
+        from tests.test_voicelive_tool_offload import DummyVoiceLiveConnection
+
+        monkeypatch.setattr(live, "_voicelive_orchestrators", {})
+        monkeypatch.setattr(registry, "_session_agents", {})
+        monkeypatch.setattr(registry, "_active_session_agents", {})
+        catalog = {
+            name: UnifiedAgent(
+                name=name,
+                voice=VoiceConfig(name="en-US-JennyNeural"),
+                session={"turn_detection": {"threshold": 0.5}, "custom": {"nested": []}},
+                model=ModelConfig(metadata={"nested": []}),
+            )
+            for name in ("AuthAgent", "FraudAgent")
+        }
+        first_agents, _, _ = build_effective_registry(None, base_agents=catalog)
+        other_agents, _, _ = build_effective_registry(None, base_agents=catalog)
+        first_agents["FraudAgent"] = deepcopy(first_agents["FraudAgent"])
+        effective = first_agents["FraudAgent"]
+        effective.greeting = "Scenario-specific greeting"
+        memo = MemoManager(session_id=session_id)
+        first = live.LiveOrchestrator(
+            DummyVoiceLiveConnection(), first_agents, start_agent="AuthAgent", memo_manager=memo
+        )
+        other = live.LiveOrchestrator(
+            DummyVoiceLiveConnection(), other_agents, start_agent="FraudAgent"
+        )
+        live.register_voicelive_orchestrator(session_id, first)
+        if customized_auth:
+            auth = deepcopy(catalog["AuthAgent"])
+            auth.voice.name = "en-US-AvaNeural"
+            set_session_agent(session_id, auth, set_active=True, persist=False)
+        redis = CountingRedisManager()
+        set_redis_manager(redis)
+        await registry.persist_session_agents_to_redis(session_id, raise_on_failure=True)
+        first.active = "FraudAgent"
+        memo.set_corememory("active_agent", "FraudAgent")
+
+        result = await apply_live_session_settings(
+            session_id,
+            LiveSettingsRequest.model_validate(
+                {
+                    "voice": {"name": "en-US-GuyNeural", "pitch": "+6%"},
+                    "turn_detection": {"threshold": 0.8},
+                }
+            ),
+            stub_request(catalog, "AuthAgent"),
+        )
+        assert result["live"]
+        owned = get_session_agent(session_id, "FraudAgent")
+        assert owned is not None
+        assert owned is first.agents["FraudAgent"]
+        assert owned is not effective
+        assert owned.greeting == "Scenario-specific greeting"
+        assert owned.voice.name == "en-US-GuyNeural"
+        assert owned.session["turn_detection"]["threshold"] == 0.8
+        assert first.active == memo.get_value_from_corememory("active_agent") == "FraudAgent"
+        assert (
+            catalog["FraudAgent"].voice.name
+            == other.agents["FraudAgent"].voice.name
+            == "en-US-JennyNeural"
+        )
+        for field in ("voice", "speech", "model", "session"):
+            assert getattr(owned, field) is not getattr(effective, field)
+        owned.session["custom"]["nested"].append("session-only")
+        owned.model.metadata["nested"].append("session-only")
+        assert effective.session["custom"]["nested"] == []
+        assert effective.model.metadata["nested"] == []
+        saved = memo.get_value_from_corememory(registry.AGENTS_KEY_ALL)
+        assert saved["FraudAgent"]["voice"]["name"] == "en-US-GuyNeural"
+        if customized_auth:
+            assert get_session_agent(session_id, "AuthAgent").voice.name == "en-US-AvaNeural"
+
+    @pytest.mark.asyncio
+    async def test_direct_live_tuning_does_not_mutate_borrowed_catalog(self):
+        from apps.artagent.backend.voice.shared.config_resolver import build_effective_registry
+        from apps.artagent.backend.voice.voicelive.orchestrator import LiveOrchestrator
+
+        from tests.test_voicelive_tool_offload import DummyVoiceLiveConnection
+
+        base = UnifiedAgent(name="Agent", voice=VoiceConfig(name="en-US-JennyNeural"))
+        agents, _, _ = build_effective_registry(None, base_agents={"Agent": base})
+        orch = LiveOrchestrator(DummyVoiceLiveConnection(), agents, start_agent="Agent")
+        await orch.apply_live_session_settings(voice={"name": "en-US-GuyNeural"})
+        assert base.voice.name == "en-US-JennyNeural"
+        assert orch.agents["Agent"].voice.name == "en-US-GuyNeural"
+
+    @pytest.mark.asyncio
     async def test_patches_existing_session_agent(self, session_id) -> None:
         # Seed a session agent (as Agent Builder would).
         cfg = DynamicAgentConfig.model_validate(

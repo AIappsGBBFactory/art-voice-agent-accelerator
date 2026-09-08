@@ -454,7 +454,7 @@ class LiveOrchestrator:
         orchestrator_config: Any | None = None,
     ):
         self.conn = conn
-        self.agents = agents
+        self.agents = dict(agents)
         self._handoff_map = handoff_map or {}
         self.active = start_agent
         self.audio = audio_processor
@@ -990,7 +990,7 @@ class LiveOrchestrator:
         needs_session_update = False
 
         # Update agents registry
-        self.agents = agents
+        self.agents = dict(agents)
 
         # Update handoff map
         self._handoff_map = handoff_map
@@ -1408,10 +1408,11 @@ class LiveOrchestrator:
         """
         if not self.conn or not self.active:
             return False
-        agent = self.agents.get(self.active)
-        if not agent:
+        from apps.artagent.backend.src.orchestration.session_agents import session_agent_for_edit
+
+        ua = session_agent_for_edit(self._session_id, self.agents, self.active)
+        if ua is None:
             return False
-        ua = getattr(agent, "_agent", agent)
 
         # Mutate the per-session agent so the tweak persists across turns.
         if turn_detection:
