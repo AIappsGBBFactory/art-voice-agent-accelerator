@@ -1002,7 +1002,7 @@ class VoiceHandler:
 
         # Cancel orchestration tasks
         for task in list(self._orchestration_tasks):
-            if not task.done():
+            if not task.done() and not task.cancelling():
                 task.cancel()
 
         # Stop SDK and turn processing; a failed stop must not return a live lease.

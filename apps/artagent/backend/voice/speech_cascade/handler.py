@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol
 
+from apps.artagent.backend.voice.shared.close import cancel_and_join
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 from src.speech.speech_recognizer import StreamingSpeechRecognizerFromBytes
@@ -730,6 +731,7 @@ class RouteTurnThread:
 
         self.processing_task: asyncio.Task | None = None
         self.current_response_task: asyncio.Task | None = None
+        self._stop_task: asyncio.Task | None = None
         self.running = False
         self._stopped = False
 
@@ -743,6 +745,8 @@ class RouteTurnThread:
 
     async def start(self) -> None:
         """Start the route turn processing loop."""
+        if self._stopped:
+            raise RuntimeError("Cannot restart a stopped route worker")
         if self.running:
             return
 
@@ -952,7 +956,7 @@ class RouteTurnThread:
                         )
                         if coro:
                             self.current_response_task = asyncio.create_task(coro)
-                            await self.current_response_task
+                            await asyncio.shield(self.current_response_task)
 
                 except asyncio.CancelledError:
                     logger.info(
@@ -969,7 +973,8 @@ class RouteTurnThread:
                     if self.thread_bridge is not None:
                         self.thread_bridge.disarm_turn_guard()
                     if self.current_response_task and not self.current_response_task.done():
-                        self.current_response_task.cancel()
+                        if not self.current_response_task.cancelling():
+                            self.current_response_task.cancel()
                         await asyncio.gather(self.current_response_task, return_exceptions=True)
                     self.current_response_task = None
                     # Close voice.turn.N.total now that the response is fully generated
@@ -1088,34 +1093,29 @@ class RouteTurnThread:
 
             # Cancel current response task
             if self.current_response_task and not self.current_response_task.done():
-                self.current_response_task.cancel()
-                try:
-                    await self.current_response_task
-                except asyncio.CancelledError:
-                    pass
+                await cancel_and_join([self.current_response_task])
             self.current_response_task = None
 
         except Exception as e:
             logger.error(f"[{self._conn_short}] Error cancelling processing: {e}")
+            raise
 
     async def stop(self) -> None:
-        """Stop the route turn processing loop."""
-        if self._stopped:
-            return
+        """Await one retained close, keeping unacknowledged producers quarantined."""
+        if self._stop_task is None:
+            self._stopped = True
+            self.running = False
+            self._stop_task = asyncio.create_task(self._stop())
+        await asyncio.shield(self._stop_task)
 
-        self._stopped = True
-        self.running = False
-        await self.cancel_current_processing()
-        await self._end_active_turn()
-
-        if self.processing_task and not self.processing_task.done():
-            self.processing_task.cancel()
-            try:
-                await self.processing_task
-            except asyncio.CancelledError:
-                pass
-
-        await self._clear_speech_queue()
+    async def _stop(self) -> None:
+        try:
+            await cancel_and_join(
+                task for task in (self.current_response_task, self.processing_task) if task
+            )
+        finally:
+            await self._end_active_turn()
+            await self._clear_speech_queue()
 
     async def _clear_speech_queue(self) -> None:
         """Clear remaining events from the speech queue."""

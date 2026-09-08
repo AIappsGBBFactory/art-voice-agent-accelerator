@@ -186,6 +186,71 @@ async def test_true_hydration_failure_is_not_an_empty_local_session():
 
 
 @pytest.mark.asyncio
+async def test_route_worker_timeout_drains_persistence_without_recancelling_native_cleanup(
+    monkeypatch,
+):
+    from apps.artagent.backend.voice.shared.close import cancel_and_join
+    from apps.artagent.backend.voice.speech_cascade import handler as route_module
+
+    handler, memo, app = await build_handler("cascade")
+    entered, cleaning, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    safe_cleanup = AsyncMock()
+    monkeypatch.setattr(
+        "apps.artagent.backend.src.orchestration.session_memory.release_session_memory",
+        safe_cleanup,
+    )
+
+    async def bounded_join(tasks, **kwargs):
+        await cancel_and_join(tasks, timeout=0.02, **kwargs)
+
+    monkeypatch.setattr(route_module, "cancel_and_join", bounded_join, raising=False)
+    cancellation_counts = []
+
+    async def response(**kwargs):
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleaning.set()
+            await release.wait()
+            cancellation_counts.append(asyncio.current_task().cancelling())
+
+    route = route_module.RouteTurnThread(
+        connection_id="route-close",
+        speech_queue=asyncio.Queue(),
+        orchestrator_func=response,
+        memory_manager=memo,
+    )
+    handler._route_turn_thread = route
+    await route.start()
+    await route.speech_queue.put(
+        route_module.SpeechEvent(event_type=route_module.SpeechEventType.FINAL, text="Hello")
+    )
+    await entered.wait()
+    closing = asyncio.create_task(handler.stop())
+    try:
+        await asyncio.wait_for(cleaning.wait(), 1)
+        done, _ = await asyncio.wait({closing}, timeout=0.2)
+        assert done, "Route cleanup must reach persistence drain despite a held response"
+        with pytest.raises(ExceptionGroup, match="quiesced"):
+            await closing
+        assert memo.actions == [("flush", None)]
+        safe_cleanup.assert_awaited_once()
+        assert app.tts_pool.released == app.stt_pool.released == 0
+        assert route.current_response_task is not None
+        assert not route.current_response_task.done()
+        assert route.current_response_task.cancelling() == 1
+        with pytest.raises(ExceptionGroup):
+            await route.stop()
+        with pytest.raises(RuntimeError, match="restart"):
+            await route.start()
+    finally:
+        release.set()
+        await asyncio.gather(closing, route.processing_task, return_exceptions=True)
+    assert cancellation_counts == [1]
+
+
+@pytest.mark.asyncio
 async def test_release_removes_only_matching_session_and_adapter(monkeypatch):
     from apps.artagent.backend.src.orchestration import session_memory, unified
 

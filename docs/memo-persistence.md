@@ -142,6 +142,11 @@ early as though it finished. Unacknowledged native work prevents a stable-snapsh
 claim and lease reuse; submitted persistence is still drained and independent
 safe cleanup is attempted. Native state-projection failure also drains submitted
 writes. Persistence failure after quiescence does not leak safe speech leases.
+The Cascade route worker uses the same bounded producer join inside a retained
+close task. A response held in cancellation cleanup cannot block entry to the
+handler's pending-write drain. It remains referenced and is not cancelled again
+by its processing parent; a failed route close cannot be restarted or used to
+justify a final snapshot or lease reuse.
 
 Async definition mutation/removal entry points prime existing definition views
 before editing. Sync compatibility APIs remain, but in-event-loop sync reads use
