@@ -179,6 +179,27 @@ class TestAsyncProducerOwnership:
         assert not any(task.get_name() == "cascade-llm-stream" for task in asyncio.all_tasks())
 
     @pytest.mark.asyncio
+    async def test_stream_close_failure_is_observed_after_queue_drains(self, cascade_adapter):
+        class FailingCloseStream(AsyncStream):
+            async def close(self):
+                self.closed = True
+                raise RuntimeError("stream close failed before sentinel")
+
+        stream = FailingCloseStream([text_chunk("A response.")])
+        cascade_adapter.async_client = SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=AsyncMock(return_value=stream)))
+        )
+
+        response, tools = await asyncio.wait_for(cascade_adapter._process_llm([], []), 10)
+
+        assert stream.closed
+        assert cascade_adapter._last_error_info is not None
+        assert "stream close failed before sentinel" in cascade_adapter._last_error_info.details
+        assert response != "A response."
+        assert tools == []
+        assert not any(task.get_name() == "cascade-llm-stream" for task in asyncio.all_tasks())
+
+    @pytest.mark.asyncio
     async def test_bounded_backpressure_cancel_joins_producer(self, cascade_adapter):
         consumed = 0
         entered_tts = asyncio.Event()

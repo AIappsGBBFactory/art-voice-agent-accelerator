@@ -48,6 +48,12 @@ the turn finishes. A 90-second streaming deadline includes downstream TTS waits.
 There is no per-model-call `AzureOpenAIManager` or detached synchronous iterator.
 Handoff detection suppresses queued pre-handoff text as well as later deltas.
 
+An empty queue and a completed producer do not imply success. Cascade awaits the
+model task after draining the queue so stream-close failures reach the normal
+error-reporting path. The TTS bridge joins its executor future in `finally`,
+including when completion occurs without a queued sentinel; producer failure or
+cancellation still propagates. These completion waits are not unused return values.
+
 Each Speech TTS operation has its own `threading.Event`, which is never cleared
 for reuse. `cancel()` also invalidates a playback generation: clearing the shared
 session cancel flag for the next turn cannot revive older audio. Audio writes and

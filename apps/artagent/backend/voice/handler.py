@@ -35,11 +35,9 @@ import base64
 import contextlib
 import json
 import struct
-import threading
 import time
 import uuid
-import weakref
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -75,18 +73,15 @@ from config import (
     AZURE_OPENAI_CHAT_DEPLOYMENT_ID,
     AZURE_OPENAI_ENDPOINT,
     GREETING,
-    STOP_WORDS,
 )
 from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
 from jinja2 import Template
 from opentelemetry import trace
-from opentelemetry.trace import SpanKind, Status, StatusCode
 from src.enums.stream_modes import StreamMode
 
 # Pool management
 from src.pools.session_manager import SessionContext
-from src.speech.speech_recognizer import StreamingSpeechRecognizerFromBytes
 from src.stateful.state_managment import MemoManager
 from utils.ml_logging import get_logger
 

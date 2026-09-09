@@ -349,6 +349,33 @@ async def test_full_tts_buffer_stops_and_joins_actual_generator():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["success", "failure", "cancelled"])
+async def test_completed_tts_producer_without_sentinel_is_joined(monkeypatch, outcome):
+    synth = Synth()
+    playback = TTSPlayback(
+        VoiceSessionContext(session_id="finished", tts_client=synth), app_state()
+    )
+    loop = asyncio.get_running_loop()
+    future = loop.create_future()
+    if outcome == "failure":
+        future.set_exception(RuntimeError("producer failed before sentinel"))
+        expected = RuntimeError
+    elif outcome == "cancelled":
+        future.cancel()
+        expected = asyncio.CancelledError
+    else:
+        future.set_result(None)
+        expected = StopAsyncIteration
+
+    # Exercise an empty bridge after executor completion, without a queued sentinel.
+    monkeypatch.setattr(loop, "run_in_executor", lambda *args: future)
+    chunks = playback._iter_synth_chunks(synth, "text", "voice", "chat", "medium", 16000)
+    with pytest.raises(expected):
+        await anext(chunks)
+    assert not playback._producers
+
+
+@pytest.mark.asyncio
 async def test_signal_only_cancel_wakes_consumer_waiting_for_first_frame():
     class WaitingSynth(Synth):
         def synthesize_to_pcm_stream(self, *, cancel_event, **kwargs):

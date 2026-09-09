@@ -47,7 +47,6 @@ except ImportError:
     logger = logging.getLogger("voice.shared.config_resolver")
 
 from apps.artagent.backend.src.orchestration.naming import (
-    agent_key,
     find_agent_by_name,
     names_equal,
 )

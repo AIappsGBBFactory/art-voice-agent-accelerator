@@ -939,7 +939,6 @@ class TTSPlayback:
                     item = queue.get_nowait()
                 except Empty:
                     if producer_future.done():
-                        await producer_future
                         break
                     await asyncio.wait_for(available.wait(), timeout=30.0)
                     continue

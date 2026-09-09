@@ -1743,7 +1743,6 @@ class CascadeOrchestratorAdapter:
                             chunk = await asyncio.wait_for(tts_queue.get(), timeout=5.0)
                         except TimeoutError:
                             if stream_future.done():
-                                await stream_future
                                 break
                             continue
                         if chunk is None:
@@ -1770,6 +1769,8 @@ class CascadeOrchestratorAdapter:
                 try:
                     async with asyncio.timeout(90.0):
                         await _consume_stream()
+                        # Observe producer failures (including stream.close), even
+                        # if the queue consumer found the task already finished.
                         await stream_future
                 finally:
                     if not stream_future.done():

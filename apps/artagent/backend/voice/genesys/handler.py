@@ -1026,6 +1026,7 @@ class GenesysVoiceLiveHandler:
             try:
                 await task
             except asyncio.CancelledError:
+                # Expected acknowledgement of the cancellation requested above.
                 pass
 
     async def _close_voicelive_runtime(self, *, producers_quiesced: bool = True) -> None:
@@ -1210,6 +1211,7 @@ class GenesysVoiceLiveHandler:
         try:
             self._response_audio_order.remove(response_id)
         except ValueError:
+            # Draining or discarding may already have removed this response.
             pass
 
     def _discard_response_audio_locked(self, response_id: str) -> None:
