@@ -250,6 +250,44 @@
         ```
     3.  **Check Quotas and Model Names:** Ensure your service quotas have not been exceeded and that the model deployment names in your code match those in the Azure portal.
 
+!!! question "Problem: The agent is silent, or the call drops immediately after connecting"
+    **Symptoms:**
+    - The call connects but the agent never speaks.
+    - The browser session ends right after starting, with no explanation.
+    - Backend logs show `DeploymentNotFound`, `401`, `429`, or a Speech SDK cancellation.
+
+    **Cause:** the configured model deployment or voice does not exist, or the
+    app cannot authenticate to Azure OpenAI / Azure Speech.
+
+    **Solutions:**
+    The app now classifies these failures and surfaces them instead of failing
+    silently. Look for a red error card in the browser UI — it names the error
+    code, what went wrong, and how to fix it. The same information is logged
+    server-side under the `voice.shared.errors` logger:
+
+    ```
+    Voice pipeline error | session=... call=... DeploymentNotFound: The model deployment 'gpt-4o-mini' was not found.
+    ```
+
+    Common codes and what to do:
+
+    | Code | Meaning | Fix |
+    |------|---------|-----|
+    | `DeploymentNotFound` | The agent's model is not deployed on the resource | Match the agent's `model` to a real deployment name in Azure AI Foundry |
+    | `ModelUnavailableInRegion` | The model exists but not in this region | Redeploy to a supported region, or pick an available model |
+    | `VoiceNotAvailable` | The agent's TTS `voice` is invalid for the region | Use a valid Azure neural voice name |
+    | `AuthenticationError` | Bad key, or the managed identity lacks a role | Grant *Cognitive Services OpenAI User* / *Speech User*, verify the endpoint |
+    | `RateLimitExceeded` | Throttled or out of quota | Raise the deployment TPM quota, or retry |
+    | `UnsupportedParameter` | The model rejected a request parameter | Adjust the agent's model config (e.g. `max_tokens` vs `max_completion_tokens`) |
+
+    If the session was rejected outright, the WebSocket is closed with a reason
+    string of the form `<Code>: <message>` and one of two close codes:
+
+    - **4500** — fatal. The config is broken, so the frontend stops reconnecting
+      (retrying would hit the identical error).
+    - **4501** — retryable (network blip, rate limit). The error is shown, but
+      the frontend keeps its normal exponential backoff.
+
 !!! question "Problem: Redis connection timeouts or failures"
     **Symptoms:**
     - High latency in agent responses.

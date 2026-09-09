@@ -2,7 +2,7 @@
 Scenario Orchestration Contract Tests
 ======================================
 
-These tests ensure key functional contracts are preserved during the 
+These tests ensure key functional contracts are preserved during the
 layer consolidation refactoring (see docs/proposals/scenario-orchestration-simplification.md).
 
 The tests cover:
@@ -16,10 +16,8 @@ These tests should pass BEFORE and AFTER the refactoring to ensure no regression
 
 from __future__ import annotations
 
-import os
-from dataclasses import dataclass
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -230,7 +228,7 @@ class TestUnifiedAgentGreetingRendering:
         context = unified_agent._get_greeting_context({"caller_name": None})
 
         # None value should not be in context
-        assert context.get("caller_name") != None or "caller_name" not in context
+        assert context.get("caller_name") is not None or "caller_name" not in context
 
 
 class TestUnifiedAgentToolRetrieval:
@@ -304,52 +302,32 @@ class TestVoiceLiveAgentAdapterConstruction:
     1. Parse session config for modalities, audio formats
     2. Build VAD configuration from turn_detection settings
     3. Passthrough properties to underlying UnifiedAgent
-    
+
     NOTE: These contracts will need to be preserved when we merge
     VoiceLiveAgentAdapter into UnifiedAgent.
     """
 
     def test_parses_modalities(self, unified_agent):
         """Should parse modalities from session config."""
-        try:
-            from apps.artagent.backend.voice.voicelive.agent_adapter import (
-                VoiceLiveAgentAdapter,
-            )
-        except ImportError:
-            pytest.skip("VoiceLive SDK not available")
+        from apps.artagent.backend.voice.voicelive.session import get_voicelive_modalities
 
-        adapter = VoiceLiveAgentAdapter(unified_agent)
-
-        # Should have parsed modalities
-        assert len(adapter.modalities) == 2
+        assert len(get_voicelive_modalities(unified_agent)) == 2
 
     def test_passthrough_properties(self, unified_agent):
         """Should passthrough name, description from underlying agent."""
-        try:
-            from apps.artagent.backend.voice.voicelive.agent_adapter import (
-                VoiceLiveAgentAdapter,
-            )
-        except ImportError:
-            pytest.skip("VoiceLive SDK not available")
+        from apps.artagent.backend.registries.definitions import (
+            agent_from_payload,
+            definition_payload,
+        )
 
-        adapter = VoiceLiveAgentAdapter(unified_agent)
-
-        assert adapter.name == unified_agent.name
-        assert adapter.description == unified_agent.description
-        assert adapter.voice_name == unified_agent.voice.name
+        restored = agent_from_payload(definition_payload(unified_agent))
+        assert restored.name == unified_agent.name
+        assert restored.description == unified_agent.description
+        assert restored.voice.name == unified_agent.voice.name
 
     def test_greeting_passthrough(self, unified_agent):
         """render_greeting should delegate to underlying agent."""
-        try:
-            from apps.artagent.backend.voice.voicelive.agent_adapter import (
-                VoiceLiveAgentAdapter,
-            )
-        except ImportError:
-            pytest.skip("VoiceLive SDK not available")
-
-        adapter = VoiceLiveAgentAdapter(unified_agent)
-
-        greeting = adapter.render_greeting({"caller_name": "Test"})
+        greeting = unified_agent.render_greeting({"caller_name": "Test"})
 
         assert greeting is not None
         assert "Test" in greeting
@@ -361,18 +339,15 @@ class TestVoiceLiveAgentAdapterToolBuilding:
     1. Build FunctionTool objects from UnifiedAgent.get_tools()
     2. Cache built tools (only build once)
     3. Return empty list if VoiceLive SDK not available
-    
+
     NOTE: This logic will move into UnifiedAgent.build_voicelive_tools()
     """
 
     def test_builds_function_tools(self, unified_agent):
         """Should build FunctionTool objects from tool schemas."""
-        try:
-            from apps.artagent.backend.voice.voicelive.agent_adapter import (
-                VoiceLiveAgentAdapter,
-            )
-        except ImportError:
-            pytest.skip("VoiceLive SDK not available")
+        from apps.artagent.backend.voice.voicelive.session import (
+            _build_voicelive_tools_with_handoffs,
+        )
 
         with patch.object(
             unified_agent,
@@ -388,8 +363,7 @@ class TestVoiceLiveAgentAdapterToolBuilding:
                 }
             ],
         ):
-            adapter = VoiceLiveAgentAdapter(unified_agent)
-            tools = adapter.tools
+            tools = _build_voicelive_tools_with_handoffs(unified_agent)
 
             assert len(tools) == 1
             assert tools[0].name == "test_tool"
@@ -407,7 +381,7 @@ class TestHandoffServiceContracts:
     2. select_greeting() respects discrete vs announced type
     3. Handoff map correctly maps tool_name → agent_name
     4. Generic handoffs respect scenario config
-    
+
     These are critical for the handoff state unification.
     """
 
@@ -455,9 +429,7 @@ class TestHandoffServiceContracts:
             assert resolution.greet_on_switch is True
             assert "is_handoff" in resolution.system_vars
 
-    def test_select_greeting_discrete_vs_announced(
-        self, handoff_service, multi_agent_registry
-    ):
+    def test_select_greeting_discrete_vs_announced(self, handoff_service, multi_agent_registry):
         """
         CONTRACT: select_greeting must:
         - Return None for discrete handoffs (greet_on_switch=False)
@@ -561,7 +533,7 @@ class TestScenarioConfigContracts:
 
     def test_get_generic_handoff_config_for_target(self, scenario_config):
         """get_generic_handoff_config should return HandoffConfig for valid target.
-        
+
         When there's an explicit edge, it returns the edge configuration.
         When there's no explicit edge, it uses generic_handoff settings.
         """
@@ -598,7 +570,7 @@ class TestConfigResolutionContracts:
     2. Scenario → filtered agents for that scenario
     3. Agents + scenario → handoff map
     4. Entry agent is correctly identified
-    
+
     This tests the end-to-end config resolution path.
     """
 
@@ -613,9 +585,7 @@ class TestConfigResolutionContracts:
 
         # Only Concierge should be included
         filtered = {
-            name: agent
-            for name, agent in multi_agent_registry.items()
-            if name in scenario.agents
+            name: agent for name, agent in multi_agent_registry.items() if name in scenario.agents
         }
 
         assert len(filtered) == 1
@@ -631,6 +601,85 @@ class TestConfigResolutionContracts:
         assert handoff_map["handoff_concierge"] == "Concierge"
         assert handoff_map["handoff_fraud_agent"] == "FraudAgent"
 
+    def test_agent_loader_merges_mode_specific_defaults(self, tmp_path):
+        """Mode-specific _defaults.yaml blocks are part of the runtime contract."""
+        from apps.artagent.backend.registries.agentstore.loader import (
+            load_agent,
+            load_defaults,
+        )
+
+        (tmp_path / "_defaults.yaml").write_text(
+            """
+model:
+  deployment_id: gpt-4o
+  temperature: 0.5
+  api_version: "2025-01-01-preview"
+cascade_model:
+  deployment_id: gpt-4o-mini
+  max_tokens: 2048
+voicelive_model:
+  deployment_id: gpt-realtime
+  temperature: 0.3
+  model_family: gpt-realtime
+""",
+            encoding="utf-8",
+        )
+        agent_dir = tmp_path / "concierge"
+        agent_dir.mkdir()
+        (agent_dir / "prompt.jinja").write_text("You are the concierge.", encoding="utf-8")
+        (agent_dir / "agent.yaml").write_text(
+            """
+name: Concierge
+description: Test agent
+prompt: prompt.jinja
+voicelive_model:
+  top_p: 0.7
+""",
+            encoding="utf-8",
+        )
+
+        agent = load_agent(agent_dir / "agent.yaml", load_defaults(tmp_path))
+
+        assert agent.model.deployment_id == "gpt-4o"
+        assert agent.model.temperature == 0.5
+        assert agent.cascade_model.deployment_id == "gpt-4o-mini"
+        assert agent.cascade_model.temperature == 0.5
+        assert agent.cascade_model.max_tokens == 2048
+        assert agent.cascade_model.api_version == "2025-01-01-preview"
+        assert agent.voicelive_model.deployment_id == "gpt-realtime"
+        assert agent.voicelive_model.temperature == 0.3
+        assert agent.voicelive_model.top_p == 0.7
+        assert agent.voicelive_model.model_family == "gpt-realtime"
+
+    def test_scenario_agents_do_not_mutate_base_registry(self, monkeypatch, multi_agent_registry):
+        """Scenario defaults must apply to per-session copies, not shared agents."""
+        from apps.artagent.backend.registries.scenariostore import loader as sl
+
+        scenario = sl.ScenarioConfig(
+            name="Support",
+            agents=["concierge"],
+            start_agent="Concierge",
+            agent_defaults=sl.AgentOverride(
+                greeting="Scenario greeting",
+                voice_name="en-US-GuyNeural",
+                template_vars={"scenario_name": "Support"},
+            ),
+            global_template_vars={"company": "Contoso"},
+        )
+        monkeypatch.setattr(sl, "_SCENARIOS", {"Support": scenario})
+
+        resolved = sl.get_scenario_agents("support", multi_agent_registry)
+
+        assert set(resolved.keys()) == {"Concierge"}
+        assert resolved["Concierge"].greeting == "Scenario greeting"
+        assert resolved["Concierge"].voice.name == "en-US-GuyNeural"
+        assert resolved["Concierge"].template_vars["company"] == "Contoso"
+        assert resolved["Concierge"].template_vars["scenario_name"] == "Support"
+
+        assert multi_agent_registry["Concierge"].greeting == "Hello, I'm your concierge!"
+        assert multi_agent_registry["Concierge"].voice.name == "en-US-JennyNeural"
+        assert "scenario_name" not in multi_agent_registry["Concierge"].template_vars
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONTRACT 6: Agent Visit Tracking Contracts (for greeting selection)
@@ -643,7 +692,7 @@ class TestAgentVisitTrackingContracts:
     1. First visit → render_greeting()
     2. Return visit → render_return_greeting()
     3. Visit tracking persists across handoffs
-    
+
     This is critical for the layer consolidation to unify visit tracking.
     """
 
@@ -673,37 +722,25 @@ class TestVoicePayloadContracts:
     1. Azure standard voices get correct payload structure
     2. Voice style, rate, pitch are applied correctly
     3. Fallback to default voice if none specified
-    
+
     NOTE: This logic will move into UnifiedAgent when we merge the adapter.
     """
 
     def test_azure_standard_voice_payload(self, unified_agent):
         """Should build correct payload for azure-standard voice."""
-        try:
-            from apps.artagent.backend.voice.voicelive.agent_adapter import (
-                VoiceLiveAgentAdapter,
-            )
-            from azure.ai.voicelive.models import AzureStandardVoice
-        except ImportError:
-            pytest.skip("VoiceLive SDK not available")
+        from apps.artagent.backend.voice.voicelive.session import build_voicelive_voice
+        from azure.ai.voicelive.models import AzureStandardVoice
 
-        adapter = VoiceLiveAgentAdapter(unified_agent)
-        payload = adapter._build_voice_payload()
+        payload = build_voicelive_voice(unified_agent)
 
         assert isinstance(payload, AzureStandardVoice)
         assert payload.name == "en-US-JennyNeural"
 
     def test_voice_style_applied(self, unified_agent):
         """Voice style from config should be applied."""
-        try:
-            from apps.artagent.backend.voice.voicelive.agent_adapter import (
-                VoiceLiveAgentAdapter,
-            )
-        except ImportError:
-            pytest.skip("VoiceLive SDK not available")
+        from apps.artagent.backend.voice.voicelive.session import build_voicelive_voice
 
-        adapter = VoiceLiveAgentAdapter(unified_agent)
-        payload = adapter._build_voice_payload()
+        payload = build_voicelive_voice(unified_agent)
 
         # Style should be passed to voice payload
         assert payload.style == "friendly"
@@ -722,17 +759,18 @@ class TestToolChoiceContracts:
     3. Passed correctly to session update
     """
 
-    def test_default_tool_choice_is_auto(self, unified_agent):
+    @pytest.mark.asyncio
+    async def test_default_tool_choice_is_auto(self, unified_agent):
         """Default tool_choice should be 'auto'."""
-        try:
-            from apps.artagent.backend.voice.voicelive.agent_adapter import (
-                VoiceLiveAgentAdapter,
-            )
-        except ImportError:
-            pytest.skip("VoiceLive SDK not available")
+        from unittest.mock import AsyncMock, MagicMock
 
-        adapter = VoiceLiveAgentAdapter(unified_agent)
-        assert adapter.tool_choice == "auto"
+        from apps.artagent.backend.voice.voicelive.session import apply_voicelive_session
+
+        conn = MagicMock()
+        conn.session.update = AsyncMock()
+        await apply_voicelive_session(unified_agent, conn)
+        request = conn.session.update.call_args.kwargs["session"]
+        assert request.tool_choice == "auto"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -766,7 +804,7 @@ class TestOrchestrationFlowContracts:
     def test_handoff_changes_active_agent(self, multi_agent_registry):
         """
         Handoff resolution should correctly identify new active agent.
-        
+
         This contract ensures that when a handoff is resolved:
         1. target_agent is correctly identified
         2. system_vars['active_agent'] is updated
@@ -816,32 +854,20 @@ class TestVADConfigurationContracts:
 
     def test_semantic_vad_default(self, unified_agent):
         """Default VAD type should be semantic."""
-        try:
-            from apps.artagent.backend.voice.voicelive.agent_adapter import (
-                VoiceLiveAgentAdapter,
-            )
-            from azure.ai.voicelive.models import AzureSemanticVad
-        except ImportError:
-            pytest.skip("VoiceLive SDK not available")
+        from apps.artagent.backend.voice.voicelive.session import build_voicelive_vad
+        from azure.ai.voicelive.models import AzureSemanticVad
 
-        adapter = VoiceLiveAgentAdapter(unified_agent)
-
-        assert isinstance(adapter.turn_detection, AzureSemanticVad)
+        assert isinstance(build_voicelive_vad(unified_agent), AzureSemanticVad)
 
     def test_vad_params_passed(self, unified_agent):
         """VAD parameters should be passed correctly."""
-        try:
-            from apps.artagent.backend.voice.voicelive.agent_adapter import (
-                VoiceLiveAgentAdapter,
-            )
-        except ImportError:
-            pytest.skip("VoiceLive SDK not available")
+        from apps.artagent.backend.voice.voicelive.session import build_voicelive_vad
 
-        adapter = VoiceLiveAgentAdapter(unified_agent)
+        vad = build_voicelive_vad(unified_agent)
 
         # From session config
-        assert adapter.turn_detection.threshold == 0.5
-        assert adapter.turn_detection.silence_duration_ms == 500
+        assert vad.threshold == 0.5
+        assert vad.silence_duration_ms == 500
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -853,14 +879,14 @@ class TestAgentOverrideVoiceContracts:
     """
     CONTRACT: Agent voice overrides from scenario agent_defaults must preserve:
     1. Voice name override is applied to agent.voice.name
-    2. Voice rate override is applied to agent.voice.rate  
+    2. Voice rate override is applied to agent.voice.rate
     3. Overrides work with VoiceConfig dataclass (attribute access, not dict access)
     4. Original agent is not mutated (deep copy)
-    
+
     This contract ensures that when scenarios specify voice overrides via
     agent_defaults, they are correctly applied during agent swap/handoff.
-    
-    BUG REGRESSION TEST: Previously, voice overrides used dict-style access 
+
+    BUG REGRESSION TEST: Previously, voice overrides used dict-style access
     (agent.voice["name"]) instead of attribute access (agent.voice.name),
     causing voice changes to be silently ignored during agent swaps.
     """
@@ -1011,7 +1037,7 @@ class TestAgentOverrideVoiceContracts:
 
     def test_dict_style_access_would_fail_regression_guard(self, base_agent_with_voice):
         """Regression test: ensure dict-style access fails on VoiceConfig.
-        
+
         This test guards against re-introducing the bug where voice overrides
         used dict-style access (agent.voice["name"]) instead of attribute
         access (agent.voice.name).
@@ -1022,12 +1048,232 @@ class TestAgentOverrideVoiceContracts:
 
         # This is the BUGGY pattern that was fixed:
         # agent.voice["name"] = "some-voice"  # This would raise TypeError
-        
+
         with pytest.raises(TypeError):
             agent.voice["name"] = "en-US-AvaNeural"  # type: ignore
 
         with pytest.raises(TypeError):
             agent.voice["rate"] = "+20%"  # type: ignore
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# QUICK TUNE: SESSION AGENT MUST NOT REPLACE THE ACTIVE SCENARIO
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestQuickTunePreservesScenario:
+    """Contracts for ``build_effective_registry``.
+
+    Applying Quick Tune settings persists a session-scoped agent and forces a
+    VoiceLive reconnect. On reconnect the active scenario must survive intact and
+    only its start agent may be repointed at the tuned agent — VoiceLive binds the
+    generative model and the BYOM profile at ``connect()`` time, so the start agent
+    is the only place a per-agent model override can take effect.
+    """
+
+    @pytest.fixture
+    def registry(self):
+        from apps.artagent.backend.registries.agentstore.loader import (
+            build_handoff_map,
+            discover_agents,
+        )
+
+        agents = discover_agents()
+        return agents, build_handoff_map(agents)
+
+    @pytest.fixture
+    def banking_config(self):
+        from apps.artagent.backend.voice.shared import resolve_orchestrator_config
+
+        return resolve_orchestrator_config(session_id="quick-tune-session", scenario_name="banking")
+
+    @staticmethod
+    def _tuned(agents: dict[str, Any], source: str, *, name: str | None = None):
+        import copy
+
+        agent = copy.deepcopy(agents[source])
+        agent.name = name or source
+        agent.greeting = "TUNED GREETING"
+        return agent
+
+    def test_full_registry_is_preserved_not_narrowed(self, registry, banking_config):
+        """A 13-agent deployment running a 5-agent scenario keeps all 13."""
+        from apps.artagent.backend.voice.shared import build_effective_registry
+
+        agents, app_state_map = registry
+        assert len(banking_config.agents) < len(agents), "scenario should be a subset"
+
+        merged, _start, _map = build_effective_registry(
+            banking_config,
+            base_agents=agents,
+            session_agent=self._tuned(agents, "BankingConcierge"),
+            app_state_handoff_map=app_state_map,
+        )
+
+        assert len(merged) == len(agents)
+        assert "ClaimsSpecialist" in merged, "agents outside the scenario stay reachable"
+
+    def test_tuned_agent_becomes_start_agent(self, registry, banking_config):
+        from apps.artagent.backend.voice.shared import build_effective_registry
+
+        agents, app_state_map = registry
+        _merged, start_agent, _map = build_effective_registry(
+            banking_config,
+            base_agents=agents,
+            session_agent=self._tuned(agents, "FraudAgent"),
+            app_state_handoff_map=app_state_map,
+        )
+
+        assert start_agent == "FraudAgent"
+        assert banking_config.start_agent == "FraudAgent"
+        assert banking_config.scenario.start_agent == "FraudAgent"
+
+    def test_scenario_wiring_survives_the_tune(self, registry, banking_config):
+        """Handoff edges, handoff type and the other agents are untouched."""
+        from apps.artagent.backend.registries.scenariostore import load_scenario
+        from apps.artagent.backend.voice.shared import build_effective_registry
+
+        pristine = load_scenario("banking")
+        edge_count = len(pristine.handoffs)
+        handoff_type = pristine.handoff_type
+
+        agents, app_state_map = registry
+        build_effective_registry(
+            banking_config,
+            base_agents=agents,
+            session_agent=self._tuned(agents, "FraudAgent"),
+            app_state_handoff_map=app_state_map,
+        )
+
+        assert len(banking_config.scenario.handoffs) == edge_count
+        assert banking_config.scenario.handoff_type == handoff_type
+        # Routing away from the (unchanged) concierge still resolves.
+        assert len(banking_config.scenario.get_outgoing_handoffs("BankingConcierge")) > 0
+
+    def test_cached_scenario_is_never_mutated(self, registry, banking_config):
+        """``load_scenario`` returns a module-cached object; a tune must not leak."""
+        from apps.artagent.backend.registries.scenariostore import load_scenario
+        from apps.artagent.backend.voice.shared import build_effective_registry
+
+        cached = load_scenario("banking")
+        original_start = cached.start_agent
+        original_agents = list(cached.agents)
+
+        agents, app_state_map = registry
+        build_effective_registry(
+            banking_config,
+            base_agents=agents,
+            session_agent=self._tuned(agents, "FraudAgent"),
+            app_state_handoff_map=app_state_map,
+        )
+
+        assert load_scenario("banking").start_agent == original_start
+        assert load_scenario("banking").agents == original_agents
+        assert banking_config.scenario is not cached
+
+    def test_tuned_agent_replaces_slot_case_insensitively(self, registry, banking_config):
+        """A case-mismatched name must replace the slot, not duplicate the agent."""
+        from apps.artagent.backend.voice.shared import build_effective_registry
+
+        agents, app_state_map = registry
+        tuned = self._tuned(agents, "BankingConcierge", name="bankingconcierge")
+
+        merged, start_agent, _map = build_effective_registry(
+            banking_config,
+            base_agents=agents,
+            session_agent=tuned,
+            app_state_handoff_map=app_state_map,
+        )
+
+        assert start_agent == "BankingConcierge"
+        assert "bankingconcierge" not in merged
+        assert merged["BankingConcierge"].greeting == "TUNED GREETING"
+        assert len(merged) == len(agents)
+
+    def test_scenario_handoff_edges_beat_the_global_map(self, registry, banking_config):
+        """Declarative scenario routing wins over the app-state handoff map."""
+        from apps.artagent.backend.voice.shared import build_effective_registry
+
+        agents, app_state_map = registry
+        assert app_state_map["handoff_concierge"] == "Concierge"
+
+        _merged, _start, handoff_map = build_effective_registry(
+            banking_config,
+            base_agents=agents,
+            session_agent=self._tuned(agents, "BankingConcierge"),
+            app_state_handoff_map=app_state_map,
+        )
+
+        assert handoff_map["handoff_concierge"] == "BankingConcierge"
+        assert handoff_map["handoff_to_agent"] == "FraudAgent"
+        # Tools for agents outside the scenario are still routable.
+        assert handoff_map["handoff_claims_specialist"] == "ClaimsSpecialist"
+
+    def test_custom_agent_joins_the_scenario(self, registry, banking_config):
+        """An Agent Builder agent with a new name is added, not swapped in."""
+        from apps.artagent.backend.voice.shared import build_effective_registry
+
+        agents, app_state_map = registry
+        tuned = self._tuned(agents, "FraudAgent", name="MyCustomAgent")
+
+        merged, start_agent, _map = build_effective_registry(
+            banking_config,
+            base_agents=agents,
+            session_agent=tuned,
+            app_state_handoff_map=app_state_map,
+        )
+
+        assert start_agent == "MyCustomAgent"
+        assert len(merged) == len(agents) + 1
+        assert "MyCustomAgent" in banking_config.scenario.agents
+        assert "BankingConcierge" in banking_config.scenario.agents
+
+    def test_without_session_agent_scenario_start_agent_is_kept(self, registry, banking_config):
+        from apps.artagent.backend.voice.shared import build_effective_registry
+
+        agents, app_state_map = registry
+        _merged, start_agent, _map = build_effective_registry(
+            banking_config,
+            base_agents=agents,
+            app_state_handoff_map=app_state_map,
+        )
+
+        assert start_agent == "BankingConcierge"
+        assert banking_config.scenario.start_agent == "BankingConcierge"
+
+    def test_scenario_less_session_leaves_the_global_map_untouched(self, registry):
+        """A session with no scenario must not have its routing rewritten.
+
+        The handoff-map overlay exists so declarative scenario edges win, but it
+        applies to every session that connects — not just tuned ones. With no
+        scenario resolved, ``config.handoff_map`` is derived from agent handoff
+        triggers rather than from a scenario, so overlaying it would silently
+        shadow the global routing that scenario-less deployments rely on. The
+        ``has_scenario`` guard is what prevents that, and this pins it.
+        """
+        from apps.artagent.backend.voice.shared import (
+            OrchestratorConfigResult,
+            build_effective_registry,
+        )
+
+        agents, app_state_map = registry
+
+        config = OrchestratorConfigResult()
+        assert config.has_scenario is False
+        # Populated but must be ignored: without a scenario this is agent-derived.
+        config.handoff_map = {
+            "handoff_concierge": "SomeOtherAgent",
+            "handoff_unrelated": "Stranger",
+        }
+
+        _merged, _start_agent, handoff_map = build_effective_registry(
+            config,
+            base_agents=agents,
+            app_state_handoff_map=app_state_map,
+        )
+
+        assert handoff_map == app_state_map
+        assert "handoff_unrelated" not in handoff_map
 
 
 if __name__ == "__main__":

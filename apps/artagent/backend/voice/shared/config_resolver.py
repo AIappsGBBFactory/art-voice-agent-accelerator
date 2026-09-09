@@ -31,7 +31,7 @@ Usage:
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -46,7 +46,11 @@ except ImportError:
 
     logger = logging.getLogger("voice.shared.config_resolver")
 
-from apps.artagent.backend.src.orchestration.naming import agent_key, find_agent_by_name
+from apps.artagent.backend.src.orchestration.naming import (
+    agent_key,
+    find_agent_by_name,
+    names_equal,
+)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -80,6 +84,12 @@ class OrchestratorConfigResult:
         scenario: Optional loaded scenario config
         scenario_name: Name of the active scenario (if any)
         template_vars: Global template variables from scenario
+        start_agent_authoritative: ``True`` when ``start_agent`` was *pinned* for
+            this connection by a session-scoped (Quick Tune / Agent Builder) agent
+            rather than merely inherited from the scenario or the deployment
+            default. Set by :func:`build_effective_registry`. Orchestrators use it
+            to know that the start agent is a deliberate, caller-visible choice —
+            and therefore that restored session state must not silently replace it.
     """
 
     start_agent: str = DEFAULT_START_AGENT
@@ -88,6 +98,7 @@ class OrchestratorConfigResult:
     scenario: ScenarioConfig | None = None
     scenario_name: str | None = None
     template_vars: dict[str, Any] = field(default_factory=dict)
+    start_agent_authoritative: bool = False
 
     @property
     def has_scenario(self) -> bool:
@@ -400,6 +411,130 @@ def resolve_orchestrator_config(
     return result
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Effective Registry (scenario + session agent merge)
+# ─────────────────────────────────────────────────────────────────────
+
+
+def _repoint_scenario_start_agent(
+    config: OrchestratorConfigResult,
+    start_agent: str,
+) -> None:
+    """
+    Point the resolved scenario's ``start_agent`` at ``start_agent``.
+
+    The scenario itself is otherwise left untouched: its ``handoffs`` edges,
+    ``handoff_type``, ``generic_handoff`` settings and template vars all survive,
+    so declarative routing keeps working for every other agent.
+
+    ``load_scenario()`` hands back the module-cached ``ScenarioConfig``, so the
+    config is copied with :func:`dataclasses.replace` rather than mutated — an
+    in-place edit would leak one session's tuned start agent into every other
+    session using the same scenario.
+
+    Args:
+        config: Resolved configuration whose ``scenario`` should be repointed.
+        start_agent: Registry key of the agent that should start the session.
+    """
+    config.start_agent = start_agent
+
+    scenario = config.scenario
+    if scenario is None:
+        return
+
+    # A scenario that lists its members must include the new start agent, or
+    # generic-handoff target checks would reject it as an outsider.
+    scenario_agents: list[str] = list(getattr(scenario, "agents", None) or [])
+    if scenario_agents and not any(names_equal(name, start_agent) for name in scenario_agents):
+        scenario_agents.append(start_agent)
+
+    config.scenario = replace(scenario, start_agent=start_agent, agents=scenario_agents)
+
+
+def build_effective_registry(
+    config: OrchestratorConfigResult | None,
+    *,
+    base_agents: dict[str, Any],
+    session_agent: Any | None = None,
+    app_state_handoff_map: dict[str, str] | None = None,
+) -> tuple[dict[str, Any], str, dict[str, str]]:
+    """Merge scenario overrides and a session agent into a connection-ready registry.
+
+    Shared by the VoiceLive start path, the VoiceLive warm-up path and the Genesys
+    handler so the three can never drift — they all bind the generative model and
+    the BYOM profile from the start agent at ``connect()`` time, and a warm
+    connection is only adopted when both match.
+
+    Semantics:
+
+    * Scenario agents are **overlaid** on the full registry, never substituted for
+      it. A 13-agent deployment running a 5-agent scenario keeps all 13 reachable.
+    * A Quick Tune / Agent Builder ``session_agent`` **replaces** its slot in the
+      registry (matched case-insensitively) instead of being added alongside the
+      untuned original, and becomes the start agent — the only way a per-agent
+      model or BYOM profile can take effect, since VoiceLive binds both at connect.
+    * The active scenario is preserved and merely repointed at the tuned agent.
+    * ``config.start_agent_authoritative`` is set when a session agent took over, so
+      downstream orchestrators can distinguish a deliberately pinned start agent from
+      a scenario default.
+    * Scenario handoff edges are overlaid **on top of** the global handoff map, so
+      declarative routing wins while agents outside the scenario stay routable.
+
+    Args:
+        config: Resolved configuration, or ``None`` when resolution was skipped.
+            Mutated in place — ``start_agent`` and, when a session agent is present,
+            a copy of ``scenario`` are updated.
+
+    Keyword Args:
+        base_agents: Full agent registry (typically ``app.state.unified_agents``).
+        session_agent: Optional session-scoped ``UnifiedAgent`` to make authoritative.
+        app_state_handoff_map: Global tool→agent map from app state, if any.
+
+    Returns:
+        Tuple of ``(agents, start_agent, handoff_map)`` ready to hand to an
+        orchestrator.
+    """
+    if config is None:
+        config = OrchestratorConfigResult()
+
+    agents: dict[str, Any] = dict(base_agents or {})
+
+    # Scenario agents carry per-scenario overrides (greeting, voice, template
+    # vars) — overlay them without dropping agents outside the scenario.
+    if config.has_scenario and config.agents:
+        agents.update(config.agents)
+
+    start_agent = config.start_agent or DEFAULT_START_AGENT
+
+    if session_agent is not None:
+        session_agent_name = getattr(session_agent, "name", None)
+        if session_agent_name:
+            existing_key, _ = find_agent_by_name(agents, session_agent_name)
+            start_agent = existing_key or session_agent_name
+            agents[start_agent] = session_agent
+            _repoint_scenario_start_agent(config, start_agent)
+            # Record *that* the choice was deliberate, not just what it was. The
+            # start agent alone is indistinguishable from a scenario default, and
+            # an orchestrator that cannot tell the two apart will happily let
+            # restored session state overwrite a freshly tuned agent.
+            config.start_agent_authoritative = True
+            logger.info(
+                "Session agent is authoritative | agent=%s scenario=%s replaced_slot=%s",
+                start_agent,
+                config.scenario_name or "(none)",
+                existing_key is not None,
+            )
+
+    handoff_map: dict[str, str] = dict(app_state_handoff_map or {})
+    if not handoff_map:
+        handoff_map = _build_base_handoff_map(agents)
+    if config.has_scenario and config.handoff_map:
+        # Scenario edges are the declarative source of truth for routing.
+        handoff_map.update(config.handoff_map)
+
+    return agents, start_agent, handoff_map
+
+
 def get_scenario_greeting(
     agent_name: str,
     config: OrchestratorConfigResult,
@@ -470,6 +605,7 @@ __all__ = [
     "DEFAULT_START_AGENT",
     "SCENARIO_ENV_VAR",
     "OrchestratorConfigResult",
+    "build_effective_registry",
     "resolve_orchestrator_config",
     "resolve_from_app_state",
     "get_scenario_greeting",

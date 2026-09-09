@@ -214,6 +214,7 @@ async def test_start_and_consume_voicelive_warmup(monkeypatch: pytest.MonkeyPatc
     consumed = await voicelive_handler.consume_voicelive_call_warmup(
         app_state,
         call_connection_id="call-123",
+        cleanup_tasks=set(),
         timeout_sec=1.0,
     )
 
@@ -252,17 +253,17 @@ async def test_consume_voicelive_warmup_timeout_returns_none(
         session_id="session-456",
     )
 
+    cleanup_tasks = set()
     consumed = await voicelive_handler.consume_voicelive_call_warmup(
         app_state,
         call_connection_id="call-456",
+        cleanup_tasks=cleanup_tasks,
         timeout_sec=0.001,
     )
 
     assert consumed is None
+    assert len(cleanup_tasks) == 1
 
     release_event.set()
-    for _ in range(10):
-        await asyncio.sleep(0)
-        if cm.__aexit__.await_count:
-            break
+    await asyncio.gather(*cleanup_tasks)
     cm.__aexit__.assert_awaited_once_with(None, None, None)

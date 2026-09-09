@@ -42,6 +42,45 @@ logger.error(f"Failed to fetch resource {id}: {e}")
 raise HTTPException(status_code=500, detail=str(e))
 ```
 
+## WebSocket Error Responses
+
+Never let a voice WebSocket die with a bare `raise` — the client sees an opaque
+1006 close and the user just hears silence. Classify the failure and surface it.
+
+```python
+from apps.artagent.backend.voice.shared.errors import (
+    classify_voice_error,
+    emit_voice_error,
+    fail_websocket_session,
+)
+
+# Non-fatal: tell the client, keep the session alive.
+info = classify_voice_error(exc, source="llm", model=model_name)
+await emit_voice_error(ws, info, session_id=session_id)
+
+# Fatal: tell the client, then close with a descriptive reason (close code 4500).
+await fail_websocket_session(ws, exc, session_id=session_id, source="voicelive")
+```
+
+`source` is one of `llm`, `tts`, `stt`, `voicelive`, `config`, `connection`.
+
+This emits an `error` envelope whose payload the frontend renders as an error
+card:
+
+```json
+{
+  "type": "error",
+  "payload": {
+    "code": "DeploymentNotFound",
+    "message": "The model deployment 'gpt-4o-mini' was not found.",
+    "remediation": "Check that the agent's model/deployment name matches...",
+    "details": "Error code: 404 - {...}",
+    "source": "llm",
+    "fatal": true
+  }
+}
+```
+
 ## Tags for OpenAPI
 - `Health` — health/readiness endpoints
 - `Calls` — call management

@@ -230,7 +230,7 @@ async def _sync_app_state_mcp_status(app_state: Any) -> None:
     for name, config in all_servers.items():
         url = config["url"]
         transport = config.get("transport", "streamable-http")
-        headers = config.get("headers", {})
+        headers = await _resolve_server_headers(config)
         
         # Quick health check
         is_healthy, health_data, error = await _check_server_health(
@@ -267,6 +267,25 @@ def _merge_auth_headers(headers: dict[str, str], auth_token: str | None) -> dict
         if "Authorization" not in merged and "authorization" not in merged:
             merged["Authorization"] = f"Bearer {auth_token}"
     return merged
+
+
+async def _resolve_server_headers(config: dict[str, Any]) -> dict[str, str]:
+    """Resolve request headers for a server, acquiring managed-identity auth.
+
+    Env-configured servers carry auth_enabled/app_id but no bearer token, so
+    health probes must acquire one (matching startup registration); otherwise
+    EasyAuth-protected servers are reported "unhealthy" despite working tools.
+    """
+    headers = dict(config.get("headers", {}) or {})
+    if "Authorization" in headers or "authorization" in headers:
+        return headers
+    if config.get("auth_enabled") and config.get("app_id"):
+        from apps.artagent.backend.registries.toolstore.mcp.auth import (
+            get_mcp_auth_headers,
+        )
+
+        headers.update(await get_mcp_auth_headers(config["app_id"]))
+    return headers
 
 
 async def _check_server_health(
@@ -443,7 +462,7 @@ async def list_mcp_servers(request: Request) -> dict[str, Any]:
         url = config["url"]
         timeout = config.get("timeout", MCP_SERVER_TIMEOUT)
         source = config.get("source", "unknown")
-        headers = config.get("headers", {})
+        headers = await _resolve_server_headers(config)
 
         # Check health (with auth headers if configured)
         is_healthy, health_data, error = await _check_server_health(

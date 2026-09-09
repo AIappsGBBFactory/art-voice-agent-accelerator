@@ -1,0 +1,36 @@
+# Quarantined tests
+#
+# Tests listed here are EXCLUDED from the blocking unit-test CI job, but are
+# still executed by the non-blocking "quarantined" job in test-unit.yml so a
+# fix gets noticed instead of the quarantine becoming permanent.
+#
+# Every entry must record WHY it is here. Nothing lands here to silence a
+# regression in new work -- these are pre-existing failures that predate the
+# introduction of the unit-test gate, captured so the gate could be switched on
+# without being red from day one.
+#
+# THIS FILE IS THE TRACKING RECORD. GitHub Issues are disabled on this
+# repository, so there is no ticket to point at: the rationale below is the
+# record, and the non-blocking `quarantined` job in test-unit.yml is the
+# reminder. An entry that starts passing shows up as "✅ Quarantined tests are
+# passing" in the workflow summary and should be deleted from this file.
+#
+# Definition of done: every entry is either fixed or deliberately removed with a
+# rationale, at which point this file and the `quarantined` job both go away.
+#
+# Baseline when this file was created: 953 passed, 8 failed, 27 skipped
+# (verified with no .env present, so these are genuine failures rather than
+# local environment artifacts).
+#
+# Format: one pytest node id per line.
+
+# --- ACS managed-identity selection ------------------------------------------
+# These four tests expect authentication behavior not currently implemented:
+# Call Automation and Email prefer a supplied connection string even when the
+# standalone MI preference helper returns True, and SMS has no credential-based
+# client path. Changing auth priority or adding SMS MI requires an owner decision;
+# do not change credential selection merely to satisfy these tests.
+tests/test_acs_managed_identity.py::test_acs_caller_prefers_managed_identity_when_endpoint_set
+tests/test_acs_managed_identity.py::test_email_service_prefers_managed_identity
+tests/test_acs_managed_identity.py::test_sms_service_prefers_managed_identity
+tests/test_acs_managed_identity.py::test_sms_service_uses_endpoint_mi_when_no_connection_string

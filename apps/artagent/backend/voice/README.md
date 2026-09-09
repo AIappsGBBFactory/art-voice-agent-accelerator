@@ -1,236 +1,65 @@
-# Voice Module - Developer Reference
+# Voice runtime ownership
 
-Quick reference for developers working with the voice processing module.
+The runtime has two native engines and three channel integrations, not a generic
+event bus. Agent definitions, tool effects, routing policy and close postconditions
+are shared; provider execution remains native.
 
-## Directory Structure
+| Channel | Cascade | VoiceLive |
+| --- | --- | --- |
+| Browser | `VoiceHandler` | `VoiceLiveSDKHandler` |
+| ACS | `VoiceHandler` | `VoiceLiveSDKHandler` |
+| Genesys AudioHook | Not supported | `GenesysVoiceLiveHandler` |
 
-```
-voice/
-├── README.md                    ← You are here
-├── __init__.py                  Public API exports
-├── handler.py                   VoiceHandler - main entry point
-│
-├── tts/                         Text-to-Speech
-│   ├── __init__.py
-│   └── playback.py              TTSPlayback class
-│
-├── speech_cascade/              Speech processing pipeline
-│   ├── __init__.py
-│   ├── handler.py               Multi-threaded speech handler
-│   ├── orchestrator.py          Turn routing and LLM coordination
-│   ├── tts_processor.py         Text utilities (markdown, sentence detection)
-│   └── metrics.py               TTS telemetry
-│
-├── shared/                      Shared utilities
-│   ├── __init__.py
-│   ├── context.py               VoiceSessionContext
-│   └── config_resolver.py       Agent config resolution
-│
-└── messaging/                   WebSocket messaging
-    ├── __init__.py
-    ├── transcripts.py           Transcript formatting
-    └── barge_in.py              Barge-in controllers
-```
+## Where changes belong
 
-## Quick Start
+| Concern | Owner |
+| --- | --- |
+| Tool argument validation, identity/profile/slot effects, exposed handoff schemas | `shared/tool_policy.py` |
+| Scenario route selection and context-sharing permissions | `shared/handoff_service.py` |
+| Agent/scenario definition projection and validation | `../registries/definitions.py` and existing dataclasses |
+| VoiceLive SDK session settings and greeting requests | `voicelive/session.py` |
+| Cascade turn/model/TTS sequencing | `speech_cascade/orchestrator.py` |
+| VoiceLive response-ID batches and continuation epochs | `voicelive/orchestrator.py` |
+| Native lifecycle ownership | `handler.py`, `voicelive/handler.py`, `genesys/handler.py` |
+| Bounded task joins and strict final snapshot/flush | `shared/close.py` |
+| Current memo lookup and async definition priming | `../src/orchestration/session_memory.py` |
+| STT callback ingress and serialized turns | `speech_cascade/handler.py` (`ThreadBridge`, SDK and turn workers) |
+| Speech synthesis, streaming and cancellation | `tts/playback.py` and `src/speech/` |
+| Markdown cleanup and sentence boundaries | `speech_cascade/tts_processor.py` |
 
-### Basic Voice Session
+## Caller-facing close contract
 
-```python
-from apps.artagent.backend.voice import VoiceHandler, VoiceSessionContext, TransportType
-from apps.artagent.backend.voice.tts import TTSPlayback
+Use `await handler.stop()` in a `finally`. Concurrent and later callers await the
+same retained, shielded cleanup task and observe the same completion or failure.
+Cancelling a caller does not cancel cleanup. A closed handler cannot restart.
+An owned producer that initiates close can itself receive cancellation while the
+retained cleanup finishes; a supervisor can await `stop()` again.
 
-# 1. Create session context
-context = VoiceSessionContext(
-    session_id=session_id,
-    websocket=ws,
-    transport=TransportType.BROWSER,  # or TransportType.ACS
-    cancel_event=asyncio.Event(),
-    current_agent=agent
-)
+Cleanup joins startup and native producers before capturing the final memo.
+With Redis configured, it awaits `persist_to_redis_async(..., raise_on_failure=True)`
+and always awaits `flush_pending_persist(raise_on_failure=True)`. Local-only
+sessions skip the Redis snapshot but still drain submitted work.
 
-# 2. Create voice handler
-handler = await VoiceHandler.create(config, app_state)
-await handler.start()
+Unacknowledged native work is retained/quarantined: no stable final snapshot and
+no speech lease recycling are claimed. Already-submitted persistence is still
+drained and independent safe cleanup is attempted. Persistence failure after
+producer quiescence does not leak otherwise safe leases. Failed cleanup is not
+silently retried; late provider completion does not turn its retained failure
+into success. Endpoint cleanup is separately retained: browser keeps analytics
+and socket work independent; ACS/media and Genesys also attempt safe session and
+socket cleanup and propagate failures rather than labelling a failed stop OK.
+Registry entries are detached without releasing quarantined native leases.
 
-# 3. Use TTS
-tts = TTSPlayback(context, app_state)
-await tts.speak("Hello! How can I help you?")
+## Extension and component references
 
-# 4. Cleanup
-await handler.stop()
-```
+- [Human extension guide](../../../../docs/voice-extension-guide.md)
+- [MemoManager ordering and limits](../../../../docs/memo-persistence.md)
+- [Cascade native ownership](speech_cascade/README.md)
+- [VoiceLive reader and response lifecycle](voicelive/README.md)
+- [Genesys audio and protocol ownership](genesys/README.md)
 
-## Module Reference
-
-### Core Handlers
-
-| Module | Use For | Status |
-|--------|---------|--------|
-| `handler.py` (VoiceHandler) | New features and endpoints | ✅ Recommended |
-| `api/../media_handler.py` (MediaHandler) | Existing browser/ACS endpoints | ⚠️ Legacy |
-
-### TTS (Text-to-Speech)
-
-| Module | Purpose | When to Use |
-|--------|---------|-------------|
-| `tts/playback.py` | Audio synthesis and streaming | All new code |
-| `speech_cascade/tts_processor.py` | Text cleanup utilities | Markdown removal, sentence splitting |
-
-### Speech Processing
-
-| Module | Purpose |
-|--------|---------|
-| `speech_cascade/handler.py` | STT, Turn processing, Barge-in handling |
-| `speech_cascade/orchestrator.py` | Agent selection and LLM routing |
-| `speech_cascade/metrics.py` | TTS telemetry recording |
-
-### Infrastructure
-
-| Module | Purpose |
-|--------|---------|
-| `shared/context.py` | Session state container (VoiceSessionContext) |
-| `shared/config_resolver.py` | Resolve orchestrator config from agent |
-| `messaging/transcripts.py` | Format WebSocket transcript messages |
-| `messaging/barge_in.py` | Handle user interruptions |
-
-## Common Tasks
-
-### Play TTS Audio
-
-```python
-from apps.artagent.backend.voice.tts import TTSPlayback
-
-tts = TTSPlayback(context, app_state)
-
-# Auto-routes to browser or ACS based on context.transport
-await tts.speak("Your balance is $1,234.56")
-
-# With custom voice
-await tts.speak(
-    "Welcome!",
-    voice_name="en-US-JennyNeural",
-    style="friendly"
-)
-```
-
-### Clean Text for TTS
-
-```python
-from apps.artagent.backend.voice.speech_cascade.tts_processor import TTSTextProcessor
-
-# Remove markdown formatting
-clean = TTSTextProcessor.sanitize_tts_text("**Bold** and _italic_")
-
-# Split streaming chunks into sentences
-sentences, buffer = TTSTextProcessor.process_streaming_text(chunk, buffer)
-for sentence in sentences:
-    await tts.speak(sentence)
-```
-
-### Handle Barge-in (User Interrupts)
-
-```python
-# Set cancel event to stop current TTS
-context.cancel_event.set()
-
-# Clear for next turn
-context.cancel_event.clear()
-```
-
-## Audio Format Reference
-
-### Browser (Websocket)
-- Sample Rate: **48 kHz**
-- Format: PCM16 mono
-- Chunk Size: **9,600 bytes** (100ms)
-- Transport: WebSocket JSON
-
-### ACS (Telephony)
-- Sample Rate: **16 kHz**
-- Format: PCM16 mono
-- Chunk Size: **1,280 bytes** (40ms)
-- Pacing: 40ms between chunks
-- Transport: ACS AudioData messages
-
-## File Locations
-
-### Want to modify TTS behavior?
-- **Playback logic**: `voice/tts/playback.py`
-- **Text processing**: `voice/speech_cascade/tts_processor.py`
-- **Azure TTS wrapper**: `src/speech/text_to_speech.py`
-- **TTS pool**: `src/pools/tts_pool.py`
-
-### Want to modify speech cascade?
-- **Handler threads**: `voice/speech_cascade/handler.py`
-- **Turn routing**: `voice/speech_cascade/orchestrator.py`
-- **Metrics**: `voice/speech_cascade/metrics.py`
-
-### Want to modify session context?
-- **Context definition**: `voice/shared/context.py`
-- **Config resolver**: `voice/shared/config_resolver.py`
-
-## Testing
-
-**Prerequisites:** Install dev dependencies first with `uv sync --extra dev` or `pip install -e ".[dev]"`
-
-```bash
-# Voice handler component tests
-pytest tests/test_voice_handler_components.py -v
-pytest tests/test_voice_handler_compat.py -v
-
-# Cascade orchestrator tests
-pytest tests/test_cascade_orchestrator_entry_points.py -v
-pytest tests/test_cascade_llm_processing.py -v
-
-# Integration tests - full media lifecycle
-pytest tests/test_acs_media_lifecycle.py -v
-
-# Run all voice-related tests
-pytest tests/ -k "voice or cascade" -v
-
-# Interactive orchestrator test
-./devops/scripts/misc/quick_test.sh
-
-# TTS health check
-curl http://localhost:8000/api/v1/tts/health
-```
-
-## Common Pitfalls
-
-### ❌ Don't use text processor for audio playback
-```python
-# WRONG - tts_processor is not for playing audio
-from voice.speech_cascade.tts_processor import TTSTextProcessor
-# This is only for text utilities!
-```
-
-### ✅ Use TTSPlayback for audio
-```python
-# CORRECT
-from voice.tts import TTSPlayback
-tts = TTSPlayback(context, app_state)
-await tts.speak(text)
-```
-
-### ❌ Don't manually route transports
-```python
-# WRONG - unnecessary complexity
-if transport == "browser":
-    await tts.play_to_browser(text)
-else:
-    await tts.play_to_acs(text)
-```
-
-### ✅ Use transport-agnostic speak()
-```python
-# CORRECT - auto-routes based on context
-await tts.speak(text)
-```
-
-## Documentation
-
-For more details see:
-- **Architecture Overview**: `docs/architecture/voice/README.md`
-- **Troubleshooting**: `docs/operations/troubleshooting.md`
-- **Orchestration**: `docs/architecture/orchestration/README.md`
+The unused `SessionAgentManager`, aggregate `SpeechCascadeHandler`, deprecated
+Cascade continuation/factory wrappers, and test-only VoiceLive pending-output
+path are removed. Low-level SDK/thread/audio components remain supported.
+Public WebSocket TTS helpers remain because the development sample
+`samples/labs/dev/gpt_flow.py` still consumes them; they are not a second engine.

@@ -56,6 +56,14 @@ if "config" not in sys.modules:
     config_mock.ACS_WEBSOCKET_PATH = "/api/v1/media/stream"
     config_mock.AZURE_SPEECH_ENDPOINT = "https://test.cognitiveservices.azure.com"
     config_mock.AZURE_STORAGE_CONTAINER_URL = "https://test.blob.core.windows.net/container"
+    # Auth (JWT validation) settings — consumed by src/utils/auth.py
+    config_mock.ACS_AUDIENCE = "test-acs-audience"
+    config_mock.ACS_ISSUER = "https://test.acs.issuer"
+    config_mock.ACS_JWKS_URL = "https://test.acs.issuer/.well-known/jwks.json"
+    config_mock.ALLOWED_CLIENT_IDS = ["test-client-id"]
+    config_mock.ENTRA_AUDIENCE = "test-entra-audience"
+    config_mock.ENTRA_ISSUER = "https://login.microsoftonline.com/test-tenant/v2.0"
+    config_mock.ENTRA_JWKS_URL = "https://login.microsoftonline.com/test-tenant/discovery/v2.0/keys"
     config_mock.BASE_URL = "https://test.example.com"
     # Azure settings
     config_mock.AZURE_CLIENT_ID = "test-client-id"

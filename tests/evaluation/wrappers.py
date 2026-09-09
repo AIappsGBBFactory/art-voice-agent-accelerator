@@ -19,9 +19,11 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
+from apps.artagent.backend.voice.shared.metrics import OrchestratorMetrics
+from utils.ml_logging import get_logger
+
 from tests.evaluation.recorder import EventRecorder
 from tests.evaluation.schemas import EvalModelConfig
-from utils.ml_logging import get_logger
 
 if TYPE_CHECKING:
     from apps.artagent.backend.voice import OrchestratorContext, OrchestratorResult
@@ -43,7 +45,7 @@ class EvaluationOrchestratorWrapper:
     - Composition over inheritance (self._orchestrator holds real instance)
     - Non-invasive (wraps callbacks, doesn't modify orchestrator methods)
     - Transparent (uses __getattr__ for drop-in compatibility)
-    - Standalone (only depends on EventRecorder, not production internals)
+    - Observes native metric counters without mutating runtime state
     """
 
     def __init__(
@@ -122,10 +124,46 @@ class EvaluationOrchestratorWrapper:
             context=context_dict,
         )
 
-        # Wrap callbacks to also record (chain with original callbacks)
-        wrapped_on_tool_start = self._wrap_tool_start_callback(on_tool_start)
+        # Native results expose agent-session counters, not per-turn usage.
+        # Observe their deltas before handoffs reset them; never mutate metrics.
+        metrics = getattr(self._orchestrator, "_metrics", None)
+        native_metrics = metrics if isinstance(metrics, OrchestratorMetrics) else None
+        usage_checkpoint = (
+            (native_metrics.input_tokens, native_metrics.output_tokens)
+            if native_metrics is not None
+            else (0, 0)
+        )
+        usage = [0, 0]
+
+        def capture_usage() -> None:
+            nonlocal usage_checkpoint
+            if native_metrics is None:
+                return
+            current = (native_metrics.input_tokens, native_metrics.output_tokens)
+            delta = tuple(value - previous for value, previous in zip(current, usage_checkpoint))
+            if any(value < 0 for value in delta):
+                raise RuntimeError(
+                    "Native usage counters reset without an agent-switch notification"
+                )
+            usage[0] += delta[0]
+            usage[1] += delta[1]
+            usage_checkpoint = current
+
+        async def tool_start_with_usage(tool_name: str, arguments: Any) -> None:
+            capture_usage()
+            if on_tool_start:
+                await on_tool_start(tool_name, arguments)
+
+        async def agent_switch_with_usage(previous_agent: str, new_agent: str) -> None:
+            nonlocal usage_checkpoint
+            usage_checkpoint = (0, 0)
+            if on_agent_switch:
+                await on_agent_switch(previous_agent, new_agent)
+
+        # Wrap callbacks to also record (chain with original callbacks).
+        wrapped_on_tool_start = self._wrap_tool_start_callback(tool_start_with_usage)
         wrapped_on_tool_end = self._wrap_tool_end_callback(on_tool_end)
-        wrapped_on_agent_switch = self._wrap_agent_switch_callback(on_agent_switch)
+        wrapped_on_agent_switch = self._wrap_agent_switch_callback(agent_switch_with_usage)
         wrapped_on_tts_chunk = self._wrap_tts_chunk_callback(on_tts_chunk)
 
         # Register agent switch callback (must be set before process_turn)
@@ -156,6 +194,10 @@ class EvaluationOrchestratorWrapper:
                 getattr(result, "response_tokens", None)
                 or getattr(result, "output_tokens", None)
             )
+            input_tokens = getattr(result, "input_tokens", None)
+            if native_metrics is not None:
+                capture_usage()
+                input_tokens, response_tokens = usage
             self._recorder.record_turn_end(
                 turn_id=turn_id,
                 agent=final_agent,
@@ -164,7 +206,7 @@ class EvaluationOrchestratorWrapper:
                 timestamp=turn_end,
                 model_config=model_config,
                 response_tokens=response_tokens,
-                input_tokens=getattr(result, "input_tokens", None),
+                input_tokens=input_tokens,
                 error=result.error if hasattr(result, "error") else None,
                 # TTFT (request -> first streamed token, first LLM iteration) is
                 # computed by the orchestrator and is the meaningful voice
@@ -244,20 +286,19 @@ class EvaluationOrchestratorWrapper:
 
         return wrapped
 
-    def _wrap_tts_chunk_callback(
-        self, original_callback: Optional[Callable]
-    ) -> Callable:
+    def _wrap_tts_chunk_callback(self, original_callback: Optional[Callable]) -> Callable:
         """
         Wrap on_tts_chunk to capture per-chunk timing.
 
         The recorder uses the first observed chunk timestamp to compute
-        time-to-first-audio (tts_first_chunk_ms) and tracks the running
+        text-to-TTS dispatch latency (tts_first_chunk_ms) and tracks the running
         chunk count for the active turn. Always returns a callable so the
         production orchestrator's dispatch path is uniform (even when no
         downstream consumer is attached, as in headless scenario runs).
+        Actual audio arrival is measured separately by the WebSocket driver.
         """
 
-        async def wrapped(chunk: str):
+        async def wrapped(chunk: str, **kwargs: Any):
             try:
                 self._recorder.record_tts_chunk(
                     timestamp=time.perf_counter(),
@@ -267,7 +308,7 @@ class EvaluationOrchestratorWrapper:
                 logger.debug(f"record_tts_chunk failed (non-fatal): {e}")
 
             if original_callback:
-                await original_callback(chunk)
+                await original_callback(chunk, **kwargs)
 
         return wrapped
 

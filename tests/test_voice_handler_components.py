@@ -15,23 +15,22 @@ import asyncio
 import time
 from dataclasses import dataclass
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 
 import pytest
-from fastapi.websockets import WebSocketState
 from apps.artagent.backend.registries.agentstore.base import (
     ModelConfig,
     UnifiedAgent,
     VoiceConfig,
 )
+from apps.artagent.backend.voice.shared.context import TransportType, VoiceSessionContext
 from apps.artagent.backend.voice.tts import (
     SAMPLE_RATE_ACS,
     SAMPLE_RATE_BROWSER,
     TTSPlayback,
 )
 from apps.artagent.backend.voice.tts.playback import _PCM16_BYTES_PER_SAMPLE
-from apps.artagent.backend.voice.shared.context import VoiceSessionContext, TransportType
-
+from fastapi.websockets import WebSocketState
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # FIXTURES
@@ -392,6 +391,7 @@ class TestTTSPlaybackWarmup:
             sample_rate=SAMPLE_RATE_ACS,
             style="cheerful",
             rate="+0%",
+            cancel_event=ANY,
         )
 
     @pytest.mark.asyncio
@@ -533,7 +533,7 @@ class TestTTSPlaybackCancelOwnership:
         playback._context._websocket = ws
         voice_context.cancel_event.set()
 
-        sent = await playback._send_acs_json({"kind": "AudioData", "audioData": {}})
+        sent = await playback._send_transport_json({"kind": "AudioData", "audioData": {}})
 
         assert sent is False
         ws.send_json.assert_not_called()
@@ -547,7 +547,7 @@ class TestTTSPlaybackCancelOwnership:
         playback._context._websocket = ws
         voice_context.cancel_event.set()
 
-        sent = await playback._send_acs_json(
+        sent = await playback._send_transport_json(
             {"kind": "StopAudio", "AudioData": None, "StopAudio": {}},
             allow_during_cancel=True,
         )
@@ -575,7 +575,7 @@ class TestTTSPlaybackCancelOwnership:
         assert any(m.get("kind") == "StopAudio" for m in sent_messages)
 
         # A frame that loses the race and tries to send after the stop is dropped.
-        sent = await playback._send_acs_json(
+        sent = await playback._send_transport_json(
             {"kind": "AudioData", "audioData": {"data": "AAAA"}}
         )
         assert sent is False
@@ -644,7 +644,6 @@ class TestTTSPlaybackCancelOwnership:
 
         assert result is False  # stream aborted by the cancel signal
         assert audiodata_count["n"] == 1  # only the in-flight frame, none after
-
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

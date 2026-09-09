@@ -439,3 +439,6 @@ runs/
 apps/CardDeclineAPI.md
 apps/DeclineCodes.md
 decline_codes_policy_pack.json
+
+# azd environment state (contains resolved endpoints/ids; never commit)
+.azure/
