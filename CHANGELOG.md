@@ -10,6 +10,8 @@ All notable changes to the **Azure Real-Time (ART) Agent Accelerator** are docum
 
 ### Fixed
 
+- Container Apps region attribution now matches the complete DNS-label suffix,
+  rejecting look-alike domains and preserving the configured region fallback.
 - VoiceLive announces the initial active agent once and emits a single notification per
   agent transition, rather than repeating "Active agent" on every turn.
 - Context-only VoiceLive acknowledgements no longer interrupt playback or cancel responses.

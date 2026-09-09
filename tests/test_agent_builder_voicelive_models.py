@@ -246,6 +246,9 @@ def test_region_key_canonicalizes_both_azure_spellings(raw, expected):
         # A custom environment DNS suffix no longer encodes the region, so
         # parsing it would invent one.
         ("apps.contoso.com", ""),
+        ("calmstone.westus2.notazurecontainerapps.io", ""),
+        ("calmstone.westus2.azurecontainerapps.io.example.com", ""),
+        ("azurecontainerapps.io", ""),
         ("", ""),
     ],
 )
@@ -255,8 +258,20 @@ def test_app_region_reads_the_container_apps_dns_suffix(monkeypatch, dns_suffix,
     assert ab._app_region() == expected
 
 
-def test_app_region_falls_back_to_azure_location_off_container_apps(monkeypatch):
-    monkeypatch.delenv("CONTAINER_APP_ENV_DNS_SUFFIX", raising=False)
+@pytest.mark.parametrize(
+    "dns_suffix",
+    [
+        None,
+        "apps.contoso.com",
+        "calmstone.northeurope.notazurecontainerapps.io",
+        "calmstone.northeurope.azurecontainerapps.io.example.com",
+    ],
+)
+def test_app_region_falls_back_to_azure_location_off_container_apps(monkeypatch, dns_suffix):
+    if dns_suffix is None:
+        monkeypatch.delenv("CONTAINER_APP_ENV_DNS_SUFFIX", raising=False)
+    else:
+        monkeypatch.setenv("CONTAINER_APP_ENV_DNS_SUFFIX", dns_suffix)
     monkeypatch.setenv("AZURE_LOCATION", "westus2")
     assert ab._app_region() == "westus2"
 

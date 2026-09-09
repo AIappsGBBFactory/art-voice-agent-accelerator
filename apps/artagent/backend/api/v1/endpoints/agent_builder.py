@@ -1416,11 +1416,11 @@ def _app_region() -> str:
     ``<hash>.<region>.azurecontainerapps.io``, so the region the app serves from
     is already in the environment — no new deployment output needed. An
     environment configured with a custom DNS suffix no longer encodes the
-    region, hence the explicit suffix check before parsing. ``AZURE_LOCATION``
+    region, hence the DNS-label boundary check before parsing. ``AZURE_LOCATION``
     covers local/non-Container-Apps hosting.
     """
     suffix = (os.getenv("CONTAINER_APP_ENV_DNS_SUFFIX") or "").strip().lower()
-    if suffix.endswith("azurecontainerapps.io"):
+    if suffix.endswith(".azurecontainerapps.io"):
         labels = suffix.split(".")
         # <hash>.<region>.azurecontainerapps.io -> the label before "azurecontainerapps"
         if len(labels) >= 3:
