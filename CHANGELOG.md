@@ -6,6 +6,16 @@ All notable changes to the **Azure Real-Time (ART) Agent Accelerator** are docum
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- VoiceLive announces the initial active agent once and emits a single notification per
+  agent transition, rather than repeating "Active agent" on every turn.
+- Context-only VoiceLive acknowledgements no longer interrupt playback or cancel responses.
+  Identical instruction updates are skipped, while changed conversation context and full
+  agent/scenario configuration updates are preserved.
+
 ## [2.1.0] - 2026-02-01
 
 ### 🔌 MCP Protocol & Lifecycle Management

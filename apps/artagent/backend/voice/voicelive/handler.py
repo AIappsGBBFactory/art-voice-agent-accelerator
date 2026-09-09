@@ -195,6 +195,7 @@ class _SessionMessenger:
         self._pending_user_turn_id: str | None = None
         self._active_agent_name: str | None = None
         self._active_agent_label: str | None = None
+        self._last_announced_agent: str | None = None
         self._turn_sequence: int = 0  # Track tool call boundaries within a turn
         self._base_turn_id: str | None = None  # Original turn_id before tool calls
         self._turn_id_advanced: bool = False  # Flag to prevent overwriting advanced turn_id
@@ -361,6 +362,7 @@ class _SessionMessenger:
                 ),
                 label="agent_change_envelope",
             )
+            self._last_announced_agent = agent_name
             logger.info(
                 "[VoiceLive] Agent change emitted: %s → %s",
                 previous_agent,
@@ -592,8 +594,10 @@ class _SessionMessenger:
         session_obj: Any | None,
         transport: str | None = None,
     ) -> None:
-        """Broadcast session configuration updates to the UI."""
+        """Announce the initial agent without repeating agent-change notifications."""
         if not self._can_emit():
+            return
+        if agent_name == self._last_announced_agent:
             return
 
         payload: dict[str, Any] = {
@@ -653,6 +657,7 @@ class _SessionMessenger:
             ),
             label="session_update_envelope",
         )
+        self._last_announced_agent = agent_name
 
     async def send_status_update(
         self,

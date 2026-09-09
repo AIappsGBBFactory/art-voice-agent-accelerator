@@ -295,6 +295,9 @@ class LiveOrchestrator:
         self._last_session_update_time: float = 0.0
         self._session_update_min_interval: float = 2.0  # Min seconds between updates
         self._pending_session_update: bool = False
+        self._session_ready_agent: str | None = None
+        self._last_session_instructions: tuple[str, str] | None = None
+        self._session_context_lock = asyncio.Lock()
 
         if self.messenger:
             try:
@@ -520,6 +523,8 @@ class LiveOrchestrator:
 
         # Reset tracking variables
         self._active_response_id = None
+        self._session_ready_agent = None
+        self._last_session_instructions = None
         self._system_vars.clear()
         self.visited_agents.clear()
 
@@ -640,13 +645,15 @@ class LiveOrchestrator:
                 # CRITICAL: Apply the FULL agent session config, not just instructions
                 # This includes voice, tools, VAD settings, etc.
                 # This is the same as what _switch_to() does during handoffs
-                await agent.apply_voicelive_session(
-                    self.conn,
-                    system_vars=system_vars,
-                    say=None,  # Don't trigger a greeting on scenario switch
-                    session_id=session_id,
-                    call_connection_id=self.call_connection_id,
-                )
+                async with self._session_context_lock:
+                    self._last_session_instructions = None
+                    await agent.apply_voicelive_session(
+                        self.conn,
+                        system_vars=system_vars,
+                        say=None,  # Don't trigger a greeting on scenario switch
+                        session_id=session_id,
+                        call_connection_id=self.call_connection_id,
+                    )
 
                 # Update messenger's active agent
                 if self.messenger:
@@ -803,19 +810,20 @@ class LiveOrchestrator:
                 context_vars["last_assistant_response"] = self._last_assistant_message
 
             # Render base instructions from agent prompt template
-            base_instructions = agent._agent.render_prompt(context_vars) or ""
+            ua = getattr(agent, "_agent", agent)
+            base_instructions = ua.render_prompt(context_vars) or ""
 
             # Inject handoff instructions from scenario configuration
             # Use the cached orchestrator config (supports both file-based and session-scoped)
             config = self._orchestrator_config
-            if config.scenario and agent._agent.name:
+            if config.scenario and ua.name:
                 # Use scenario.build_handoff_instructions directly (works for session scenarios)
-                handoff_instructions = config.scenario.build_handoff_instructions(agent._agent.name)
+                handoff_instructions = config.scenario.build_handoff_instructions(ua.name)
                 if handoff_instructions:
                     base_instructions = f"{base_instructions}\n\n{handoff_instructions}" if base_instructions else handoff_instructions
                     logger.info(
                         "[LiveOrchestrator] Injected handoff instructions | agent=%s scenario=%s len=%d",
-                        agent._agent.name,
+                        ua.name,
                         config.scenario_name,
                         len(handoff_instructions),
                     )
@@ -823,7 +831,7 @@ class LiveOrchestrator:
                 logger.debug(
                     "[LiveOrchestrator] No scenario or agent name for handoff instructions | scenario=%s agent=%s",
                     config.scenario_name if config.scenario else None,
-                    agent._agent.name if hasattr(agent, '_agent') else None,
+                    ua.name,
                 )
 
             # Build conversation recap to append to instructions
@@ -842,9 +850,18 @@ class LiveOrchestrator:
             # Update session with new instructions
             from azure.ai.voicelive.models import RequestSession
 
-            await self.conn.session.update(
-                session=RequestSession(instructions=updated_instructions)
-            )
+            async with self._session_context_lock:
+                if self.agents.get(self.active) is not agent:
+                    logger.debug("Skipping context update for an inactive agent")
+                    return
+                instruction_state = (self.active, updated_instructions)
+                if instruction_state == self._last_session_instructions:
+                    logger.debug("Skipping unchanged VoiceLive session instructions")
+                    return
+                await self.conn.session.update(
+                    session=RequestSession(instructions=updated_instructions)
+                )
+                self._last_session_instructions = instruction_state
 
             logger.debug(
                 "[LiveOrchestrator] Updated session | agent=%s history_len=%d slots=%s",
@@ -1202,6 +1219,12 @@ class LiveOrchestrator:
 
     async def _handle_session_updated(self, event) -> None:
         """Handle SESSION_UPDATED event."""
+        # Context and live-setting acknowledgements are not agent transitions.
+        if self._session_ready_agent == self.active:
+            logger.debug("Session configuration acknowledged | agent=%s", self.active)
+            return
+        self._session_ready_agent = self.active
+
         session_obj = getattr(event, "session", None)
         session_id = getattr(session_obj, "id", "unknown") if session_obj else "unknown"
         voice_info = getattr(session_obj, "voice", None) if session_obj else None
@@ -1617,13 +1640,16 @@ class LiveOrchestrator:
                         getattr(self.messenger, "session_id", None) if self.messenger else None
                     )
                     t_apply = time.perf_counter()
-                    await agent.apply_voicelive_session(
-                        self.conn,
-                        system_vars=system_vars,
-                        say=None,
-                        session_id=session_id,
-                        call_connection_id=self.call_connection_id,
-                    )
+                    async with self._session_context_lock:
+                        self._session_ready_agent = None
+                        self._last_session_instructions = None
+                        await agent.apply_voicelive_session(
+                            self.conn,
+                            system_vars=system_vars,
+                            say=None,
+                            session_id=session_id,
+                            call_connection_id=self.call_connection_id,
+                        )
                     apply_ms = (time.perf_counter() - t_apply) * 1000
                     logger.info(
                         "[VoiceLive Startup] apply_session_ms=%.1f | agent=%s",
