@@ -105,6 +105,10 @@ scenario graph editing, and responsive layouts against mocked APIs. Failure
 screenshots and first-failure traces are uploaded as `authoring-browser-results`;
 automatic retries remain disabled. Real HTTP/Redis
 registration tests are opt-in and are not enabled in this browser CI job.
+Prompt-opening regressions include a deliberate pointer press on desktop and
+mobile. Quick Tune's main configuration sections expand without height animation
+so scrolling and autosizing instructions cannot move the launcher between
+pointer-down and pointer-up and lose the click.
 
 ## 🚀 Quick Start
 

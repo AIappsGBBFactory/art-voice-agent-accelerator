@@ -27,6 +27,25 @@ async function selectText(source, start, end) {
   }, { start, end });
 }
 
+for (const viewport of [
+  { name: 'desktop', width: 1280, height: 720 },
+  { name: 'mobile', width: 390, height: 844 },
+]) {
+  test(`keeps the prompt opener under the pointer during a deliberate click on ${viewport.name}`, async ({ page }) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    const { state, panel } = await prepare(page);
+    const opener = panel.getByRole('button', { name: 'Open prompt editor', exact: true });
+    await opener.scrollIntoViewIfNeeded();
+    // Keep the pointer down across the former accordion animation: the action
+    // must not move away before pointerup and silently lose the user's click.
+    await opener.click({ delay: 250 });
+    const dialog = page.getByRole('dialog', { name: 'Prompt editor', exact: true });
+    await expect(dialog.getByRole('textbox', { name: 'Prompt source', exact: true }))
+      .toHaveValue(state.agents.BankingConcierge.prompt);
+    expect(state.calls).toEqual([]);
+  });
+}
+
 test('inserts Jinja at the cursor, supports undo/redo, and preserves the draft when closing', async ({ page }) => {
   const { state, panel } = await prepare(page);
   const dialog = await openPrompt(page, panel);

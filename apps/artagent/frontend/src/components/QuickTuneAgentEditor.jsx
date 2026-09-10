@@ -30,6 +30,10 @@ const sectionStyle = {
   '& .MuiAccordionDetails-root': { p: 2 },
 };
 
+// Height animation moves scrolled controls between pointerdown and pointerup,
+// especially when the long prompt textarea resizes as its section opens.
+const sectionTransition = { timeout: 0 };
+
 function TuneSlider({ label, value, onChange, min, max, step = 1, unit = '' }) {
   const id = useId();
   return (
@@ -118,7 +122,7 @@ const QuickTuneAgentEditor = memo(function QuickTuneAgentEditor({
         ...authoringSurfaceSx, border: 0, p: 0, m: 0,
         '& .MuiTextField-root': { bgcolor: 'background.paper' },
       }}>
-      <Accordion disableGutters elevation={0} sx={sectionStyle}
+      <Accordion disableGutters elevation={0} sx={sectionStyle} slotProps={{ transition: sectionTransition }}
         expanded={section === 'behavior'} onChange={(_, expanded) => setSection(expanded ? 'behavior' : '')}>
         {summary('behavior', 'Behavior', config.description || 'Instructions, identity, and greetings')}
         <AccordionDetails id={`${sectionId}-behavior`}>
@@ -146,6 +150,7 @@ const QuickTuneAgentEditor = memo(function QuickTuneAgentEditor({
 
       <Accordion disableGutters elevation={0} sx={sectionStyle}
         slotProps={{ transition: {
+          ...sectionTransition,
           onEntered: () => toolsHeadingRef.current?.scrollIntoView({ block: 'start', inline: 'nearest' }),
         } }}
         expanded={section === 'tools'} onChange={(_, expanded) => setSection(expanded ? 'tools' : '')}>
@@ -169,7 +174,7 @@ const QuickTuneAgentEditor = memo(function QuickTuneAgentEditor({
         </AccordionDetails>
       </Accordion>
 
-      <Accordion disableGutters elevation={0} sx={sectionStyle}
+      <Accordion disableGutters elevation={0} sx={sectionStyle} slotProps={{ transition: sectionTransition }}
         expanded={section === 'voice'} onChange={(_, expanded) => setSection(expanded ? 'voice' : '')}>
         {summary('voice', 'Voice & model', [modelId, voiceName].filter(Boolean).join(' / ') || 'How the agent sounds and responds')}
         <AccordionDetails id={`${sectionId}-voice`}>
