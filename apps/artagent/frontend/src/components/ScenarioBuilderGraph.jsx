@@ -13,7 +13,7 @@
  * - Compatible with existing scenario configuration format
  */
 
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo, useId } from 'react';
 import {
   Accordion,
   AccordionDetails,
@@ -82,18 +82,24 @@ import RouteIcon from '@mui/icons-material/Route';
 import { API_BASE_URL } from '../config/constants.js';
 import logger from '../utils/logger.js';
 import { AgentDetailsDialog } from './AgentBuilderContent.jsx';
+import { authoringMenuSx, authoringSurfaceSx } from '../styles/authoringStyles.js';
+import { scenarioAgentNames } from '../utils/scenarioGraph.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONSTANTS & STYLES
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const colors = {
+  idle: { bg: '#ffffff', border: '#cbd5e1', avatar: '#e2e8f0', text: '#334155' },
   start: { bg: '#ecfdf5', border: '#10b981', avatar: '#059669', text: '#065f46' },
   active: { bg: '#f5f3ff', border: '#8b5cf6', avatar: '#7c3aed', text: '#5b21b6' },
   session: { bg: '#fef3c7', border: '#f59e0b', avatar: '#d97706', text: '#92400e' },
   selected: { bg: '#dbeafe', border: '#3b82f6', avatar: '#2563eb', text: '#1e40af' },
   invalid: { bg: '#fef2f2', border: '#ef4444', avatar: '#dc2626', text: '#991b1b' },
 };
+
+const GRAPH_NODE_WIDTH = 248;
+const GRAPH_NODE_HEIGHT = 136;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // HANDOFF CONDITION PATTERNS
@@ -295,7 +301,7 @@ function HighlightedPromptPreview({ previewData, targetAgent }) {
             ## Agent Handoff Instructions
           </span>
           <span>{beforeTarget}</span>
-          <span ref={handoffRef} style={{ backgroundColor: '#fef9e7', display: 'inline-block', paddingLeft: '4px', borderLeft: '3px solid #fbbf24' }}>
+          <span ref={handoffRef} style={{ backgroundColor: '#fef9e7', display: 'inline-block', maxWidth: '100%', boxSizing: 'border-box', padding: '4px' }}>
             {targetSection}
           </span>
           <span>{afterTarget}</span>
@@ -322,6 +328,7 @@ function HighlightedPromptPreview({ previewData, targetAgent }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const HandoffEditorDialog = React.memo(function HandoffEditorDialog({ open, onClose, handoff, agents, scenarioAgents = [], handoffs, onSave, onDelete }) {
+  const titleId = useId();
   const [type, setType] = useState(handoff?.type || 'announced');
   const [shareContext, setShareContext] = useState(handoff?.share_context !== false);
   const [handoffCondition, setHandoffCondition] = useState(handoff?.handoff_condition || '');
@@ -442,35 +449,43 @@ const HandoffEditorDialog = React.memo(function HandoffEditorDialog({ open, onCl
   const targetAgentCategories = categorizeAgents(availableTargetAgents);
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
-      <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth aria-labelledby={titleId}
+      slotProps={{ paper: { sx: {
+        ...authoringSurfaceSx, borderRadius: 3, m: { xs: 1, sm: 3 },
+        width: { xs: 'calc(100% - 16px)', sm: 'calc(100% - 48px)' },
+        maxHeight: 'calc(100dvh - 16px)',
+      } } }}>
+      <DialogTitle id={`${titleId}-header`} component="div" sx={{ display: 'flex', alignItems: 'center', gap: 1, px: { xs: 2, sm: 3 } }}>
         <LinkIcon color="primary" />
-        <Box sx={{ flex: 1 }}>
-          <Typography variant="h6" sx={{ fontWeight: 600 }}>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography id={titleId} component="h2" variant="h6" sx={{ fontWeight: 600 }}>
             Edit Handoff
           </Typography>
         </Box>
-        <IconButton onClick={onClose}>
+        <IconButton aria-label="Close handoff editor" onClick={onClose}>
           <CloseIcon />
         </IconButton>
       </DialogTitle>
       
-      <DialogContent dividers>
+      <DialogContent dividers sx={{ px: { xs: 2, sm: 3 }, overscrollBehavior: 'contain' }}>
         <Stack spacing={3} sx={{ mt: 1 }}>
           {/* Flow visualization with clickable agent selection */}
           <Paper variant="outlined" sx={{ p: 2, backgroundColor: '#f8fafc', borderRadius: 2 }}>
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'center', mb: 1.5 }}>
               Click on an agent to change it
             </Typography>
-            <Stack direction="row" alignItems="center" justifyContent="center" spacing={2}>
+            <Stack direction={{ xs: 'column', sm: 'row' }} alignItems="center" justifyContent="center" spacing={1.5}>
               {/* Source Agent - Clickable */}
               <Tooltip title="Click to change source agent" arrow>
                 <Chip
                   avatar={<Avatar sx={{ bgcolor: colors.active.avatar }}>{sourceAgent?.name?.[0] || '?'}</Avatar>}
                   label={fromAgent}
+                  aria-label={`Change source agent: ${fromAgent}`}
                   onClick={(e) => setSourceAnchorEl(e.currentTarget)}
                   sx={{
                     fontWeight: 600,
+                    minWidth: 0, maxWidth: '100%', height: 'auto', minHeight: 36,
+                    '& .MuiChip-label': { whiteSpace: 'normal', overflowWrap: 'anywhere', py: 0.75 },
                     cursor: 'pointer',
                     border: '2px solid transparent',
                     '&:hover': {
@@ -482,16 +497,19 @@ const HandoffEditorDialog = React.memo(function HandoffEditorDialog({ open, onCl
                 />
               </Tooltip>
 
-              <ArrowForwardIcon sx={{ color: '#6366f1' }} />
+              <ArrowForwardIcon sx={{ color: 'text.secondary', flexShrink: 0, transform: { xs: 'rotate(90deg)', sm: 'none' } }} />
 
               {/* Target Agent - Clickable */}
               <Tooltip title="Click to change target agent" arrow>
                 <Chip
                   avatar={<Avatar sx={{ bgcolor: colors.start.avatar }}>{targetAgent?.name?.[0] || '?'}</Avatar>}
                   label={toAgent}
+                  aria-label={`Change target agent: ${toAgent}`}
                   onClick={(e) => setTargetAnchorEl(e.currentTarget)}
                   sx={{
                     fontWeight: 600,
+                    minWidth: 0, maxWidth: '100%', height: 'auto', minHeight: 36,
+                    '& .MuiChip-label': { whiteSpace: 'normal', overflowWrap: 'anywhere', py: 0.75 },
                     cursor: 'pointer',
                     border: '2px solid transparent',
                     '&:hover': {
@@ -523,8 +541,9 @@ const HandoffEditorDialog = React.memo(function HandoffEditorDialog({ open, onCl
             onClose={() => setSourceAnchorEl(null)}
             anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
             transformOrigin={{ vertical: 'top', horizontal: 'center' }}
+            slotProps={{ paper: { sx: authoringMenuSx } }}
           >
-            <Box sx={{ p: 1, minWidth: 250, maxHeight: 400, overflowY: 'auto' }}>
+            <Box sx={{ p: 1, width: 340, maxWidth: 'calc(100vw - 32px)', boxSizing: 'border-box', maxHeight: 400, overflowY: 'auto' }}>
               <Typography variant="caption" color="text.secondary" sx={{ px: 1, py: 0.5, display: 'block' }}>
                 Select Source Agent
               </Typography>
@@ -558,10 +577,10 @@ const HandoffEditorDialog = React.memo(function HandoffEditorDialog({ open, onCl
                       }}
                       sx={{ borderRadius: 1, my: 0.25, backgroundColor: 'rgba(16, 185, 129, 0.04)' }}
                     >
-                      <Avatar sx={{ width: 24, height: 24, mr: 1, bgcolor: colors.active.avatar, fontSize: 12 }}>
+                      <Avatar aria-hidden="true" sx={{ width: 24, height: 24, mr: 1, bgcolor: colors.active.avatar, fontSize: 12 }}>
                         {agent.name[0]}
                       </Avatar>
-                      <Box sx={{ flex: 1 }}>
+                      <Box sx={{ flex: 1, minWidth: 0 }}>
                         <Typography variant="body2" sx={{ fontWeight: agent.name === fromAgent ? 600 : 400 }}>
                           {agent.name}
                         </Typography>
@@ -606,10 +625,10 @@ const HandoffEditorDialog = React.memo(function HandoffEditorDialog({ open, onCl
                       }}
                       sx={{ borderRadius: 1, my: 0.25, opacity: 0.7 }}
                     >
-                      <Avatar sx={{ width: 24, height: 24, mr: 1, bgcolor: colors.active.avatar, fontSize: 12 }}>
+                      <Avatar aria-hidden="true" sx={{ width: 24, height: 24, mr: 1, bgcolor: colors.active.avatar, fontSize: 12 }}>
                         {agent.name[0]}
                       </Avatar>
-                      <Box sx={{ flex: 1 }}>
+                      <Box sx={{ flex: 1, minWidth: 0 }}>
                         <Typography variant="body2" sx={{ fontWeight: agent.name === fromAgent ? 600 : 400 }}>
                           {agent.name}
                         </Typography>
@@ -634,8 +653,9 @@ const HandoffEditorDialog = React.memo(function HandoffEditorDialog({ open, onCl
             onClose={() => setTargetAnchorEl(null)}
             anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
             transformOrigin={{ vertical: 'top', horizontal: 'center' }}
+            slotProps={{ paper: { sx: authoringMenuSx } }}
           >
-            <Box sx={{ p: 1, minWidth: 250, maxHeight: 400, overflowY: 'auto' }}>
+            <Box sx={{ p: 1, width: 340, maxWidth: 'calc(100vw - 32px)', boxSizing: 'border-box', maxHeight: 400, overflowY: 'auto' }}>
               <Typography variant="caption" color="text.secondary" sx={{ px: 1, py: 0.5, display: 'block' }}>
                 Select Target Agent
               </Typography>
@@ -676,10 +696,10 @@ const HandoffEditorDialog = React.memo(function HandoffEditorDialog({ open, onCl
                       }}
                       sx={{ borderRadius: 1, my: 0.25, backgroundColor: 'rgba(16, 185, 129, 0.04)' }}
                     >
-                      <Avatar sx={{ width: 24, height: 24, mr: 1, bgcolor: colors.start.avatar, fontSize: 12 }}>
+                      <Avatar aria-hidden="true" sx={{ width: 24, height: 24, mr: 1, bgcolor: colors.start.avatar, fontSize: 12 }}>
                         {agent.name[0]}
                       </Avatar>
-                      <Box sx={{ flex: 1 }}>
+                      <Box sx={{ flex: 1, minWidth: 0 }}>
                         <Typography variant="body2" sx={{ fontWeight: agent.name === toAgent ? 600 : 400 }}>
                           {agent.name}
                         </Typography>
@@ -731,10 +751,10 @@ const HandoffEditorDialog = React.memo(function HandoffEditorDialog({ open, onCl
                       }}
                       sx={{ borderRadius: 1, my: 0.25, opacity: 0.7 }}
                     >
-                      <Avatar sx={{ width: 24, height: 24, mr: 1, bgcolor: colors.start.avatar, fontSize: 12 }}>
+                      <Avatar aria-hidden="true" sx={{ width: 24, height: 24, mr: 1, bgcolor: colors.start.avatar, fontSize: 12 }}>
                         {agent.name[0]}
                       </Avatar>
-                      <Box sx={{ flex: 1 }}>
+                      <Box sx={{ flex: 1, minWidth: 0 }}>
                         <Typography variant="body2" sx={{ fontWeight: agent.name === toAgent ? 600 : 400 }}>
                           {agent.name}
                         </Typography>
@@ -796,7 +816,7 @@ const HandoffEditorDialog = React.memo(function HandoffEditorDialog({ open, onCl
                 <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5, fontWeight: 600 }}>
                   All Handoff Patterns:
                 </Typography>
-                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 1 }}>
+                <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 200px), 1fr))', gap: 1 }}>
                   {HANDOFF_CONDITION_PATTERNS.map((pattern) => {
                     const Icon = pattern.IconComponent;
                     return (
@@ -816,7 +836,7 @@ const HandoffEditorDialog = React.memo(function HandoffEditorDialog({ open, onCl
                       >
                         <Stack direction="row" spacing={1} alignItems="flex-start">
                           <Icon sx={{ fontSize: 22, color: selectedPattern === pattern.id ? '#6366f1' : '#64748b' }} />
-                          <Box sx={{ flex: 1 }}>
+                          <Box sx={{ flex: 1, minWidth: 0 }}>
                             <Typography variant="body2" sx={{ fontWeight: 600, fontSize: 12 }}>
                               {pattern.name}
                             </Typography>
@@ -837,6 +857,7 @@ const HandoffEditorDialog = React.memo(function HandoffEditorDialog({ open, onCl
 
             {/* Condition text area */}
             <TextField
+              label="Handoff condition"
               value={handoffCondition}
               onChange={(e) => {
                 setHandoffCondition(e.target.value);
@@ -858,13 +879,13 @@ const HandoffEditorDialog = React.memo(function HandoffEditorDialog({ open, onCl
                   )}
                 </span>
               }
-              sx={{ '& .MuiOutlinedInput-root': { fontFamily: 'monospace', fontSize: 13 } }}
+              sx={{ '& .MuiOutlinedInput-root': { fontSize: 14, lineHeight: 1.6 } }}
             />
 
             {/* Runtime prompt preview */}
             <Paper variant="outlined" sx={{ mt: 1.5, p: 1.5, borderRadius: '12px', bgcolor: '#f8fafc' }}>
-              <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
-                <Stack direction="row" alignItems="center" spacing={0.75}>
+              <Stack gap={0.75} sx={{ mb: 1 }}>
+                <Stack direction="row" alignItems="center" gap={0.75} flexWrap="wrap">
                   <Typography variant="caption" color="text.secondary">
                     <strong style={{ color: '#1976d2' }}>{fromAgent}</strong>'s Runtime System Prompt
                   </Typography>
@@ -892,7 +913,7 @@ const HandoffEditorDialog = React.memo(function HandoffEditorDialog({ open, onCl
                 <Typography
                   component="div"
                   variant="caption"
-                  sx={{ fontFamily: 'monospace', whiteSpace: 'pre-wrap', fontSize: 11, lineHeight: 1.6 }}
+                  sx={{ whiteSpace: 'pre-wrap', fontSize: 12, lineHeight: 1.6 }}
                 >
                   <HighlightedPromptPreview previewData={runtimePromptPreview} targetAgent={toAgent} />
                 </Typography>
@@ -943,7 +964,7 @@ const HandoffEditorDialog = React.memo(function HandoffEditorDialog({ open, onCl
           </Stack>
         </Stack>
       </DialogContent>
-      <DialogActions sx={{ justifyContent: 'space-between', px: 2, py: 1.5 }}>
+      <DialogActions disableSpacing sx={{ justifyContent: 'space-between', px: 2, py: 1.5, flexWrap: 'wrap', gap: 1 }}>
         <Button
           color="error"
           startIcon={<DeleteIcon />}
@@ -954,8 +975,8 @@ const HandoffEditorDialog = React.memo(function HandoffEditorDialog({ open, onCl
         >
           Delete
         </Button>
-        <Box>
-          <Button onClick={onClose} sx={{ mr: 1 }}>Cancel</Button>
+        <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1, ml: 'auto' }}>
+          <Button onClick={onClose}>Cancel</Button>
           <Tooltip 
             title={!isValidHandoff ? "Source and target must be different agents" : isDuplicateHandoff ? "This handoff already exists" : ""}
             arrow
@@ -986,14 +1007,27 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
   onConfigChange,
   onCreateAgent,
   onViewAgentDetails,
+  layout,
+  onLayoutChange,
+  showSummary = true,
 }) {
+  const rootRef = useRef(null);
   const containerRef = useRef(null);
+  const panelId = useId();
+  const [compact, setCompact] = useState(false);
+  const [openPanel, setOpenPanel] = useState(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 500 });
   const [selectedNode, setSelectedNode] = useState(null);
   const [selectedEdge, setSelectedEdge] = useState(null);
   const [connectingFrom, setConnectingFrom] = useState(null);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
-  const [nodePositions, setNodePositions] = useState({});
+  // Drag positions are uncontrolled by default (legacy Advanced Builder usage).
+  // Callers that need positions to survive an unmount (e.g. a review dialog
+  // that closes/reopens) can pass a controlled `layout`/`onLayoutChange` pair
+  // instead - the same updater-function contract as onConfigChange.
+  const [internalPositions, setInternalPositions] = useState({});
+  const nodePositions = layout ?? internalPositions;
+  const setNodePositions = onLayoutChange ?? setInternalPositions;
   const [dragging, setDragging] = useState(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [draggingAgent, setDraggingAgent] = useState(null);
@@ -1018,26 +1052,31 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
   // Track container dimensions
   useEffect(() => {
     const updateDimensions = () => {
+      if (rootRef.current) setCompact(rootRef.current.getBoundingClientRect().width < 960);
       if (containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect();
-        setDimensions({ width: rect.width || 800, height: rect.height || 500 });
+        if (rect.width && rect.height) {
+          setDimensions((previous) => previous.width === rect.width && previous.height === rect.height
+            ? previous : { width: rect.width, height: rect.height });
+        }
       }
     };
     updateDimensions();
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateDimensions) : null;
+    if (observer && containerRef.current) observer.observe(containerRef.current);
+    if (observer && rootRef.current) observer.observe(rootRef.current);
     window.addEventListener('resize', updateDimensions);
-    return () => window.removeEventListener('resize', updateDimensions);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', updateDimensions);
+    };
   }, []);
 
-  // Get agents that are part of the scenario
-  const scenarioAgents = useMemo(() => {
-    const agentSet = new Set();
-    if (config.start_agent) agentSet.add(config.start_agent);
-    (config.handoffs || []).forEach(h => {
-      agentSet.add(h.from_agent);
-      agentSet.add(h.to_agent);
-    });
-    return Array.from(agentSet);
-  }, [config]);
+  // Get agents that are part of the scenario. `config.agents` is the explicit
+  // membership list (same field the flow list editor and the backend
+  // ScenarioDraft schema use) so isolated/new draft agents render even before
+  // they have a handoff connecting them - no invented edges required.
+  const scenarioAgents = useMemo(() => scenarioAgentNames(config), [config]);
 
   // Calculate base node layout (without user-dragged positions)
   // This only recalculates when the graph structure changes, NOT during drag
@@ -1089,14 +1128,14 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
     });
 
     // Calculate positions - larger nodes for better readability
-    const nodeWidth = 180;
-    const nodeHeight = 90;
+    const nodeWidth = GRAPH_NODE_WIDTH;
+    const nodeHeight = GRAPH_NODE_HEIGHT;
     const horizontalGap = 80;
-    const verticalGap = 120;
+    const verticalGap = 88;
     const result = [];
 
     Object.entries(levelGroups).forEach(([lvl, agentsInLevel]) => {
-      const y = 80 + parseInt(lvl) * (nodeHeight + verticalGap);
+      const y = 56 + parseInt(lvl) * (nodeHeight + verticalGap);
       const totalWidth = agentsInLevel.length * nodeWidth + (agentsInLevel.length - 1) * horizontalGap;
       const startX = (dimensions.width - totalWidth) / 2;
 
@@ -1239,10 +1278,11 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
     setConnectingFrom(null);
   }, []);
 
-  // Handle canvas mouse down for panning
-  const handleCanvasMouseDown = useCallback((e) => {
+  const handleCanvasPointerDown = useCallback((e) => {
+    if (e.button !== 0) return;
     // Only start panning if clicking on canvas background (not a node)
     if (e.target === e.currentTarget || e.target.tagName === 'svg') {
+      e.currentTarget.setPointerCapture(e.pointerId);
       setIsPanning(true);
       setPanStart({ x: e.clientX - panOffset.x, y: e.clientY - panOffset.y });
     }
@@ -1320,7 +1360,8 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
     });
   }, [onConfigChange]);
 
-  // Remove node from scenario
+  // Remove node from scenario - also drop it from the explicit membership
+  // list and any handoffs that reference it.
   const handleRemoveNode = useCallback((nodeId) => {
     onConfigChange(prev => {
       const newHandoffs = (prev.handoffs || []).filter(
@@ -1330,6 +1371,7 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
         ...prev,
         start_agent: prev.start_agent === nodeId ? null : prev.start_agent,
         handoffs: newHandoffs,
+        agents: (prev.agents || []).filter(name => name !== nodeId),
       };
     });
     setSelectedNode(null);
@@ -1350,13 +1392,14 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
       onConfigChange(prev => ({
         ...prev,
         start_agent: agentName,
+        agents: [...new Set([...(prev.agents || []), agentName])],
       }));
     }
-    // For non-first agents, they need to be connected - add to canvas as floating (invalid)
-    // and let user connect them
+    // For non-first agents, connect to the selected node if one is active;
+    // otherwise just add it to the scenario's explicit membership so it
+    // renders as a floating node the user can connect deliberately - never
+    // invent a handoff or condition just to make it visible.
     if (!isFirst && !scenarioAgents.includes(agentName)) {
-      // Add a placeholder handoff that will show the node as floating/invalid
-      // Actually, just clicking starts a connection from selected node
       if (selectedNode) {
         onConfigChange(prev => ({
           ...prev,
@@ -1369,6 +1412,12 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
             handoff_condition: '',
             context_vars: {},
           }],
+          agents: [...new Set([...(prev.agents || []), agentName])],
+        }));
+      } else {
+        onConfigChange(prev => ({
+          ...prev,
+          agents: [...new Set([...(prev.agents || []), agentName])],
         }));
       }
     }
@@ -1388,8 +1437,8 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
     if (!agentName || !containerRef.current) return;
     
     const rect = containerRef.current.getBoundingClientRect();
-    const dropX = e.clientX - rect.left - 70 - panOffset.x; // Center the node, account for pan
-    const dropY = e.clientY - rect.top - 30 - panOffset.y;
+    const dropX = e.clientX - rect.left - GRAPH_NODE_WIDTH / 2 - panOffset.x;
+    const dropY = e.clientY - rect.top - GRAPH_NODE_HEIGHT / 2 - panOffset.y;
     
     // Save the drop position
     setNodePositions(prev => ({
@@ -1403,6 +1452,7 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
       onConfigChange(prev => ({
         ...prev,
         start_agent: agentName,
+        agents: [...new Set([...(prev.agents || []), agentName])],
       }));
     }
     // If not first and has a selected node, create connection
@@ -1418,37 +1468,23 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
           handoff_condition: '',
           context_vars: {},
         }],
+        agents: [...new Set([...(prev.agents || []), agentName])],
       }));
     }
-    // If dropping without connection, just add to scenario (will be floating/invalid)
+    // Dropping without a connection just adds the agent to the scenario's
+    // explicit membership - it renders as a floating node (with the "Needs
+    // connection" hint) that the user can wire up deliberately. No invented
+    // handoff or condition.
     else if (!scenarioAgents.includes(agentName)) {
-      // Force add by creating a self-reference that we'll clean up
-      // Actually, we need to add to scenario agents - simplest is to make it start agent temporarily
-      // But that would break flow. Instead, we mark it as needing connection
-      onConfigChange(prev => {
-        // Add as handoff target from start agent if exists
-        if (prev.start_agent && prev.start_agent !== agentName) {
-          return {
-            ...prev,
-            handoffs: [...(prev.handoffs || []), {
-              from_agent: prev.start_agent,
-              to_agent: agentName,
-              tool: 'handoff_to_agent',
-              type: prev.handoff_type || 'announced',
-              share_context: true,
-              handoff_condition: '',
-              context_vars: {},
-            }],
-          };
-        }
-        // No start agent, make this the start
-        return { ...prev, start_agent: agentName };
-      });
+      onConfigChange(prev => ({
+        ...prev,
+        agents: [...new Set([...(prev.agents || []), agentName])],
+      }));
     }
     
     setDraggingAgent(null);
     setSelectedNode(agentName);
-  }, [scenarioAgents, selectedNode, onConfigChange, panOffset]);
+  }, [scenarioAgents, selectedNode, onConfigChange, panOffset, setNodePositions]);
 
   const handleCanvasDragOver = useCallback((e) => {
     e.preventDefault();
@@ -1456,13 +1492,14 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
   }, []);
 
   // Node drag handlers
-  const handleNodeMouseDown = useCallback((nodeId, e) => {
+  const handleNodePointerDown = useCallback((nodeId, e) => {
     e.stopPropagation();
-    // Don't start drag if connecting
-    if (connectingFrom) return;
+    if (connectingFrom || e.button !== 0) return;
     const node = nodes.find(n => n.id === nodeId);
     if (node && containerRef.current) {
       const rect = containerRef.current.getBoundingClientRect();
+      // Keep a drag active when the pointer leaves a small canvas.
+      e.currentTarget.setPointerCapture(e.pointerId);
       setDragging(nodeId);
       setDragOffset({
         x: e.clientX - rect.left - panOffset.x - node.x,
@@ -1471,7 +1508,7 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
     }
   }, [nodes, connectingFrom, panOffset]);
 
-  const handleMouseMove = useCallback((e) => {
+  const handlePointerMove = useCallback((e) => {
     // Handle canvas panning
     if (isPanning && !dragging && !connectingFrom) {
       const newX = e.clientX - panStart.x;
@@ -1497,9 +1534,9 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
         [dragging]: { x: newX, y: newY },
       }));
     }
-  }, [connectingFrom, dragging, dragOffset, isPanning, panStart, panOffset]);
+  }, [connectingFrom, dragging, dragOffset, isPanning, panStart, panOffset, setNodePositions]);
 
-  const handleMouseUp = useCallback(() => {
+  const handlePointerUp = useCallback(() => {
     setDragging(null);
     setIsPanning(false);
     // Don't clear connectingFrom here - let node click or canvas click handle it
@@ -1511,7 +1548,7 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
     if (node.isFloating) return colors.invalid; // Floating nodes are invalid
     if (node.isStart) return colors.start;
     if (node.isSession) return colors.session;
-    return colors.active;
+    return colors.idle;
   };
 
   // Build initials
@@ -1527,17 +1564,53 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
   const availableAgents = agents.filter(a => !scenarioAgents.includes(a.name));
 
   return (
-    <Box sx={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
+    <Box ref={rootRef} sx={{
+      ...authoringSurfaceSx,
+      display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, overflow: 'hidden',
+    }}>
+      <Stack direction="row" alignItems="center" gap={1} flexWrap="wrap"
+        sx={{ px: 1.5, py: 1, borderBottom: 1, borderColor: 'divider', bgcolor: 'background.paper', flexShrink: 0 }}>
+        {compact && (
+          <>
+            <Button size="small" startIcon={<AddIcon />} aria-label="Show available agents"
+              aria-expanded={openPanel === 'agents'} aria-controls={`${panelId}-agents`}
+              onClick={() => setOpenPanel((current) => current === 'agents' ? null : 'agents')}>
+              Agents
+            </Button>
+            {showSummary && (
+              <Button size="small" startIcon={<RouteIcon />} aria-label="Show scenario flow"
+                aria-expanded={openPanel === 'flow'} aria-controls={`${panelId}-flow`}
+                onClick={() => setOpenPanel((current) => current === 'flow' ? null : 'flow')}>
+                Routes
+              </Button>
+            )}
+          </>
+        )}
+        <Typography variant="body2" color="text.secondary" sx={{ ml: compact ? 'auto' : 0 }}>
+          {scenarioAgents.length} agents / {edges.length} {edges.length === 1 ? 'route' : 'routes'}
+        </Typography>
+      </Stack>
+      <Box sx={{ display: 'flex', flex: 1, minWidth: 0, minHeight: 0, position: 'relative' }}>
+      {compact && (openPanel === 'agents' || (openPanel === 'flow' && showSummary)) && (
+        <Box aria-hidden="true" onClick={() => setOpenPanel(null)}
+          sx={{ position: 'absolute', inset: 0, bgcolor: 'rgba(15,23,42,0.12)', zIndex: 150 }} />
+      )}
       {/* Sidebar - Available Agents */}
+      {(!compact || openPanel === 'agents') && (
       <Box
+        component="section" aria-label="Available agents" id={`${panelId}-agents`}
         sx={{
-          width: 200,
-          minWidth: 200,
-          borderRight: '1px solid #e5e7eb',
-          backgroundColor: '#fafbfc',
+          width: compact ? 300 : 224, minWidth: 0, maxWidth: 'calc(100% - 24px)',
+          boxSizing: 'border-box', flexShrink: 0,
+          borderRight: '1px solid', borderColor: 'divider',
+          backgroundColor: '#f8fafc',
           overflowY: 'auto',
           display: 'flex',
           flexDirection: 'column',
+          ...(compact && {
+            position: 'absolute', top: 0, bottom: 0, left: 0, zIndex: 200,
+            boxShadow: '8px 0 24px rgba(15,23,42,0.12)',
+          }),
         }}
       >
         {onCreateAgent && (
@@ -1563,73 +1636,61 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
         )}
 
         <Box sx={{ p: 1.5, borderBottom: '1px solid #e5e7eb', backgroundColor: '#fff' }}>
-          <Stack direction="row" alignItems="center" spacing={1}>
-            <AddIcon fontSize="small" sx={{ color: '#6366f1' }} />
-            <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+          <Stack direction="row" alignItems="center" gap={1}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 600, flex: 1 }}>
               Add to Flow
             </Typography>
+            {compact && (
+              <IconButton size="small" aria-label="Close available agents" onClick={() => setOpenPanel(null)}>
+                <CloseIcon fontSize="small" />
+              </IconButton>
+            )}
           </Stack>
-          <Typography variant="caption" sx={{ color: '#94a3b8', display: 'block', mt: 0.5 }}>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
             Drag to canvas or click to add
           </Typography>
         </Box>
 
         <Box sx={{ flex: 1, overflowY: 'auto', p: 1 }}>
-          {availableAgents.map(agent => {
-            const colorScheme = colors.active;
-            return (
+          {availableAgents.map(agent => (
               <Paper
                 key={agent.name}
                 elevation={0}
                 draggable
                 onDragStart={(e) => handleAgentDragStart(agent.name, e)}
                 onDragEnd={() => setDraggingAgent(null)}
-                onClick={() => handleAddAgent(agent.name)}
                 sx={{
                   mb: 1,
-                  p: 1.25,
+                  p: 0.5,
                   cursor: 'grab',
-                  background: draggingAgent === agent.name ? colors.selected.bg : colorScheme.bg,
-                  border: `2px solid ${draggingAgent === agent.name ? colors.selected.border : colorScheme.border}`,
-                  borderRadius: '12px',
-                  transition: 'all 0.2s ease',
+                  backgroundColor: draggingAgent === agent.name ? colors.selected.bg : 'background.paper',
+                  border: '1px solid',
+                  borderColor: draggingAgent === agent.name ? colors.selected.border : 'divider',
+                  borderRadius: 2,
+                  transition: 'border-color 150ms ease',
                   opacity: draggingAgent === agent.name ? 0.5 : 1,
-                  '&:hover': {
-                    transform: 'translateY(-2px)',
-                    boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-                  },
+                  '&:hover': { borderColor: 'primary.main' },
                   '&:active': {
                     cursor: 'grabbing',
                   },
                 }}
               >
-                <Stack direction="row" alignItems="center" spacing={1}>
-                  <DragIndicatorIcon sx={{ fontSize: 16, color: '#94a3b8', mr: -0.5 }} />
-                  <Avatar
-                    sx={{
-                      width: 28,
-                      height: 28,
-                      bgcolor: colorScheme.avatar,
-                      fontSize: 12,
-                      fontWeight: 600,
-                    }}
+                <Stack direction="row" alignItems="flex-start">
+                  <Button
+                    aria-label={`Add ${agent.name} to flow`}
+                    onClick={() => { handleAddAgent(agent.name); setOpenPanel(null); }}
+                    startIcon={<DragIndicatorIcon sx={{ color: 'text.secondary' }} />}
+                    sx={{ flex: 1, minWidth: 0, textAlign: 'left', justifyContent: 'flex-start', color: 'text.primary', py: 1, px: 1 }}
                   >
-                    {agent.name?.[0] || 'A'}
-                  </Avatar>
-                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <Typography
-                      variant="body2"
-                      sx={{
-                        fontWeight: 600,
-                        fontSize: 12,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {agent.name}
-                    </Typography>
-                  </Box>
+                    <Box sx={{ minWidth: 0 }}>
+                      <Typography variant="body2" fontWeight={600}>{agent.name}</Typography>
+                      {agent.description && (
+                        <Typography variant="caption" component="div" color="text.secondary" sx={{
+                          mt: 0.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+                        }}>{agent.description}</Typography>
+                      )}
+                    </Box>
+                  </Button>
                   <Tooltip title="View details">
                     <IconButton
                       size="small"
@@ -1637,39 +1698,44 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
                         e.stopPropagation();
                         onViewAgentDetails?.(agent);
                       }}
-                      sx={{ p: 0.5 }}
+                      sx={{ mt: 0.5 }}
                     >
-                      <SettingsIcon sx={{ fontSize: 14, color: '#94a3b8' }} />
+                      <SettingsIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
                     </IconButton>
                   </Tooltip>
                 </Stack>
               </Paper>
-            );
-          })}
+          ))}
 
           {availableAgents.length === 0 && (
-            <Box sx={{ textAlign: 'center', py: 4, color: '#94a3b8' }}>
+            <Box sx={{ textAlign: 'center', py: 4, color: 'text.secondary' }}>
               <Typography variant="caption">All agents added</Typography>
             </Box>
           )}
         </Box>
       </Box>
+      )}
 
       {/* Graph Canvas */}
       <Box
         ref={containerRef}
+        data-testid="graph-canvas"
         onClick={handleCanvasClick}
-        onMouseDown={handleCanvasMouseDown}
+        onPointerDown={handleCanvasPointerDown}
         onDrop={handleCanvasDrop}
         onDragOver={handleCanvasDragOver}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        onLostPointerCapture={handlePointerUp}
         sx={{
           flex: 1,
+          minWidth: 0,
+          minHeight: 0,
+          touchAction: 'none',
           position: 'relative',
           backgroundColor: '#f8fafc',
-          backgroundImage: 'radial-gradient(circle, #d1d5db 1px, transparent 1px)',
+          backgroundImage: 'radial-gradient(circle, #cbd5e1 0.75px, transparent 0.75px)',
           backgroundSize: '20px 20px',
           backgroundPosition: `${panOffset.x}px ${panOffset.y}px`,
           overflow: 'hidden',
@@ -1739,7 +1805,8 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
             const labelWidth = isBidirectional ? 90 : 80;
             
             return (
-              <g key={edge.id} style={{ cursor: 'pointer', pointerEvents: 'auto' }} onClick={(e) => handleEdgeClick(edge, e)}>
+              <g key={edge.id} data-testid={`graph-edge-${edge.from}-${edge.to}`}
+                style={{ cursor: 'pointer', pointerEvents: 'auto' }} onClick={(e) => handleEdgeClick(edge, e)}>
                 {/* Invisible wider path for easier clicking */}
                 <path
                   d={`M ${edge.fromX} ${edge.fromY} C ${edge.fromX} ${midY}, ${edge.toX} ${midY}, ${edge.toX} ${edge.toY}`}
@@ -1844,54 +1911,30 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
 
               {/* Node Body */}
               <Paper
-                elevation={selectedNode === node.id ? 4 : (isConnectTarget ? 3 : 1)}
+                data-testid={`graph-node-${node.id}`}
+                elevation={0}
                 onClick={(e) => handleNodeClick(node.id, e)}
-                onMouseDown={(e) => handleNodeMouseDown(node.id, e)}
+                onPointerDown={(e) => handleNodePointerDown(node.id, e)}
                 sx={{
                   height: node.height,
+                  boxSizing: 'border-box',
                   background: isConnectTarget ? '#dbeafe' : nodeColors.bg,
-                  border: `2px solid ${isConnectTarget ? '#3b82f6' : nodeColors.border}`,
+                  border: `1px solid ${isConnectTarget ? '#3b82f6' : nodeColors.border}`,
                   borderRadius: '12px',
                   cursor: dragging === node.id ? 'grabbing' : (isConnectTarget ? 'pointer' : 'grab'),
-                  transition: 'all 0.2s ease',
+                  transition: 'border-color 150ms ease, box-shadow 150ms ease',
+                  boxShadow: selectedNode === node.id || isConnectTarget
+                    ? '0 4px 16px rgba(15,23,42,0.16)' : '0 2px 6px rgba(15,23,42,0.06)',
                   display: 'flex',
                   flexDirection: 'column',
-                  alignItems: 'center',
                   justifyContent: 'center',
+                  gap: 1,
+                  p: 1.5,
                   userSelect: 'none',
                   position: 'relative',
-                  animation: isConnectTarget ? 'targetPulse 1.5s infinite' : 'none',
-                  '@keyframes targetPulse': {
-                    '0%, 100%': { boxShadow: '0 0 0 0 rgba(59, 130, 246, 0.4)' },
-                    '50%': { boxShadow: '0 0 0 8px rgba(59, 130, 246, 0)' },
-                  },
-                  '&:hover': isConnectTarget ? {
-                    transform: 'scale(1.05)',
-                    boxShadow: '0 4px 20px rgba(59, 130, 246, 0.4)',
-                  } : {},
+                  '&:hover': { borderColor: 'primary.main' },
                 }}
               >
-                {/* Details button */}
-                <Tooltip title="View agent details">
-                  <IconButton
-                    size="small"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onViewAgentDetails?.(node.agent);
-                    }}
-                    sx={{
-                      position: 'absolute',
-                      top: 4,
-                      right: 4,
-                      p: 0.5,
-                      opacity: 0.5,
-                      '&:hover': { opacity: 1, backgroundColor: 'rgba(0,0,0,0.08)' },
-                    }}
-                  >
-                    <SettingsIcon sx={{ fontSize: 16 }} />
-                  </IconButton>
-                </Tooltip>
-
                 {node.isStart && (
                   <Chip
                     icon={<PlayArrowIcon sx={{ fontSize: 14 }} />}
@@ -1900,64 +1943,52 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
                     sx={{
                       position: 'absolute',
                       top: -14,
-                      left: '50%',
-                      transform: 'translateX(-50%)',
+                      left: 12,
                       height: 24,
                       fontSize: 11,
                       fontWeight: 700,
-                      backgroundColor: '#10b981',
+                      backgroundColor: '#047857',
                       color: 'white',
                       '& .MuiChip-icon': { color: 'white' },
                     }}
                   />
                 )}
-                <Avatar
-                  sx={{
-                    width: 40,
-                    height: 40,
-                    bgcolor: nodeColors.avatar,
-                    fontSize: 14,
-                    fontWeight: 700,
-                    mb: 0.5,
-                  }}
-                >
-                  {buildInitials(node.name)}
-                </Avatar>
-                <Typography
-                  variant="body2"
-                  sx={{
-                    fontWeight: 600,
-                    color: nodeColors.text,
-                    textAlign: 'center',
-                    px: 1,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                    maxWidth: '100%',
-                    fontSize: 13,
-                    lineHeight: 1.2,
-                  }}
-                >
-                  {node.name}
-                </Typography>
+                <Stack direction="row" alignItems="center" gap={1}>
+                  <Avatar sx={{
+                    width: 30, height: 30, bgcolor: nodeColors.avatar,
+                    color: nodeColors === colors.idle ? nodeColors.text : '#fff',
+                    fontSize: 12, fontWeight: 700, flexShrink: 0,
+                  }}>{buildInitials(node.name)}</Avatar>
+                  <Tooltip title={node.name} describeChild>
+                    <Typography variant="body2" sx={{
+                      flex: 1, minWidth: 0, fontWeight: 600, color: nodeColors.text,
+                      display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+                      overflow: 'hidden', overflowWrap: 'anywhere', lineHeight: 1.4,
+                    }}>{node.name}</Typography>
+                  </Tooltip>
+                  <Tooltip title="View agent details">
+                    <IconButton
+                      size="small"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onViewAgentDetails?.(node.agent);
+                      }}
+                      sx={{ color: 'text.secondary', mr: -0.5 }}
+                    >
+                      <SettingsIcon sx={{ fontSize: 18 }} />
+                    </IconButton>
+                  </Tooltip>
+                </Stack>
                 {node.agent?.description && (
-                  <Typography
-                    variant="caption"
+                  <Typography variant="caption" title={node.agent.description}
                     sx={{
-                      color: 'text.secondary',
-                      textAlign: 'center',
-                      px: 1,
+                      color: nodeColors.text, lineHeight: 1.5,
+                      display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
                       overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                      maxWidth: '100%',
-                      fontSize: 10,
-                      opacity: 0.8,
                     }}
                   >
-                    {node.agent.description.length > 25 
-                      ? node.agent.description.slice(0, 25) + '...' 
-                      : node.agent.description}
+                    {node.agent.description}
                   </Typography>
                 )}
               </Paper>
@@ -2025,21 +2056,20 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
               color: 'white',
               px: 2.5,
               py: 1,
-              borderRadius: '20px',
+              borderRadius: 2,
+              width: 'max-content',
+              maxWidth: 'calc(100% - 24px)',
+              boxSizing: 'border-box',
               display: 'flex',
               alignItems: 'center',
+              flexWrap: 'wrap',
               gap: 1.5,
               boxShadow: '0 4px 12px rgba(59, 130, 246, 0.4)',
               zIndex: 100,
-              animation: 'fadeIn 0.2s ease',
-              '@keyframes fadeIn': {
-                from: { opacity: 0, transform: 'translateX(-50%) translateY(-10px)' },
-                to: { opacity: 1, transform: 'translateX(-50%) translateY(0)' },
-              },
             }}
           >
             <LinkIcon sx={{ fontSize: 18 }} />
-            <Typography variant="body2" sx={{ fontWeight: 600, fontSize: 13 }}>
+            <Typography variant="body2" sx={{ flex: 1, minWidth: 0, fontWeight: 600, fontSize: 13 }}>
               Click any agent to connect from "{connectingFrom}"
             </Typography>
             <Chip
@@ -2066,6 +2096,7 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
               top: '50%',
               left: '50%',
               transform: 'translate(-50%, -50%)',
+              width: 'calc(100% - 40px)',
               textAlign: 'center',
               color: '#94a3b8',
               pointerEvents: 'none',
@@ -2165,13 +2196,14 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
               bottom: 16,
               left: '50%',
               transform: 'translateX(-50%)',
-              backgroundColor: 'rgba(59, 130, 246, 0.9)',
+              backgroundColor: '#2563eb',
               color: 'white',
               px: 3,
               py: 1.5,
               borderRadius: '20px',
               fontSize: 13,
               fontWeight: 600,
+              maxWidth: 'calc(100% - 24px)', boxSizing: 'border-box', textAlign: 'center',
               boxShadow: '0 4px 12px rgba(59, 130, 246, 0.3)',
             }}
           >
@@ -2187,14 +2219,17 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
               bottom: 16,
               left: '50%',
               transform: 'translateX(-50%)',
-              backgroundColor: 'rgba(100, 116, 139, 0.9)',
-              color: 'white',
-              px: 2,
+              backgroundColor: 'rgba(255,255,255,0.96)',
+              border: '1px solid', borderColor: 'divider',
+              color: 'text.secondary',
+              px: 1.5,
               py: 0.75,
-              borderRadius: '20px',
+              borderRadius: 2,
               fontSize: 12,
               fontWeight: 500,
-              whiteSpace: 'nowrap',
+              width: 'max-content', maxWidth: 'calc(100% - 24px)', boxSizing: 'border-box',
+              textAlign: 'center',
+              pointerEvents: 'none',
             }}
           >
             <span style={{ marginRight: 6 }}>⊕</span>
@@ -2206,76 +2241,86 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
       </Box>
 
       {/* Right sidebar - Stats & Handoffs */}
+      {showSummary && (!compact || openPanel === 'flow') && (
       <Box
+        component="section" aria-label="Scenario flow" id={`${panelId}-flow`}
         sx={{
-          width: 180,
-          minWidth: 180,
-          borderLeft: '1px solid #e5e7eb',
-          backgroundColor: '#fff',
-          p: 1.5,
+          width: compact ? 300 : 240, maxWidth: 'calc(100% - 24px)', minWidth: 0,
+          boxSizing: 'border-box', flexShrink: 0,
+          borderLeft: '1px solid', borderColor: 'divider',
+          backgroundColor: 'background.paper', p: 2,
           overflowY: 'auto',
+          ...(compact && {
+            position: 'absolute', top: 0, bottom: 0, right: 0, zIndex: 200,
+            boxShadow: '-8px 0 24px rgba(15,23,42,0.12)',
+          }),
         }}
       >
-        <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
-          Scenario Flow
-        </Typography>
+        <Stack direction="row" alignItems="center" gap={1} sx={{ mb: 2 }}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 600, flex: 1 }}>Scenario Flow</Typography>
+          {compact && (
+            <IconButton size="small" aria-label="Close scenario flow" onClick={() => setOpenPanel(null)}>
+              <CloseIcon fontSize="small" />
+            </IconButton>
+          )}
+        </Stack>
         
         <Stack spacing={2}>
-          <Paper variant="outlined" sx={{ p: 1.5, borderRadius: '10px' }}>
-            <Typography variant="caption" color="text.secondary">
+          <Box>
+            <Typography variant="caption" color="text.secondary" component="div">
               Start Agent
             </Typography>
             <Typography variant="body2" sx={{ fontWeight: 600 }}>
               {config.start_agent || '—'}
             </Typography>
-          </Paper>
-
-          <Paper variant="outlined" sx={{ p: 1.5, borderRadius: '10px' }}>
-            <Typography variant="caption" color="text.secondary">
-              Total Agents
-            </Typography>
-            <Typography variant="body2" sx={{ fontWeight: 600 }}>
-              {scenarioAgents.length}
-            </Typography>
-          </Paper>
-
-          <Paper variant="outlined" sx={{ p: 1.5, borderRadius: '10px' }}>
-            <Typography variant="caption" color="text.secondary">
-              Handoff Routes
-            </Typography>
-            <Typography variant="body2" sx={{ fontWeight: 600 }}>
-              {config.handoffs?.length || 0}
-            </Typography>
-          </Paper>
+          </Box>
+          <Stack direction="row" gap={2} sx={{ py: 1.5, borderTop: 1, borderBottom: 1, borderColor: 'divider' }}>
+            <Box sx={{ flex: 1 }}>
+              <Typography variant="caption" color="text.secondary" component="div">Total Agents</Typography>
+              <Typography variant="body2" fontWeight={600}>{scenarioAgents.length}</Typography>
+            </Box>
+            <Box sx={{ flex: 1 }}>
+              <Typography variant="caption" color="text.secondary" component="div">Handoff Routes</Typography>
+              <Typography variant="body2" fontWeight={600}>{config.handoffs?.length || 0}</Typography>
+            </Box>
+          </Stack>
 
           {(config.handoffs?.length || 0) > 0 && (
             <>
-              <Divider />
               <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
                 Connections (click to edit)
               </Typography>
-              <Stack spacing={0.5}>
+              <Stack spacing={1}>
                 {config.handoffs.map((h, i) => (
-                  <Chip
-                    key={i}
-                    label={`${h.from_agent} → ${h.to_agent}`}
-                    size="small"
-                    variant="outlined"
-                    icon={h.type === 'announced' ? <VolumeUpIcon /> : <VolumeOffIcon />}
-                    onClick={() => {
-                      setSelectedEdge({ id: `${h.from_agent}->${h.to_agent}`, handoff: h });
-                      setShowHandoffEditor(true);
-                    }}
-                    onDelete={() => handleDeleteHandoff(h.from_agent, h.to_agent)}
-                    sx={{
-                      justifyContent: 'flex-start',
-                      height: 28,
-                      fontSize: 10,
-                      cursor: 'pointer',
-                      '& .MuiChip-label': { flex: 1 },
-                      '&:hover': { backgroundColor: '#f1f5f9' },
-                    }}
-                  />
+                  <Paper key={i} variant="outlined" sx={{ borderRadius: 2 }}>
+                    <Stack direction="row" alignItems="flex-start">
+                      <Button
+                        aria-label={`Edit handoff from ${h.from_agent} to ${h.to_agent}`}
+                        onClick={() => {
+                          setSelectedEdge({ id: `${h.from_agent}->${h.to_agent}`, handoff: h });
+                          setShowHandoffEditor(true);
+                        }}
+                        sx={{ flex: 1, minWidth: 0, p: 1.25, textAlign: 'left', color: 'text.primary' }}
+                      >
+                        <Box sx={{ minWidth: 0, width: '100%' }}>
+                          <Typography variant="body2" fontWeight={600}>{h.from_agent} → {h.to_agent}</Typography>
+                          <Typography component="div" variant="caption" color="text.secondary"
+                            title={h.handoff_condition} sx={{
+                              mt: 0.75, display: '-webkit-box', WebkitLineClamp: 2,
+                              WebkitBoxOrient: 'vertical', overflow: 'hidden',
+                            }}>
+                            {h.handoff_condition || 'No condition set'}
+                          </Typography>
+                        </Box>
+                      </Button>
+                      <Tooltip title="Delete handoff">
+                        <IconButton size="small" aria-label={`Delete handoff from ${h.from_agent} to ${h.to_agent}`}
+                          onClick={() => handleDeleteHandoff(h.from_agent, h.to_agent)} sx={{ mt: 0.5, mr: 0.5 }}>
+                          <DeleteIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    </Stack>
+                  </Paper>
                 ))}
               </Stack>
             </>
@@ -2302,6 +2347,8 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
           )}
         </Stack>
       </Box>
+      )}
+      </Box>
 
       {/* Handoff Editor Dialog */}
       <HandoffEditorDialog
@@ -2320,6 +2367,11 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
     </Box>
   );
 });
+
+// Exported alongside the default Advanced Builder so other surfaces (e.g. a
+// draft-review dialog) can reuse the same pure canvas and handoff editor
+// instead of reimplementing the graph.
+export { ScenarioGraphCanvas, HandoffEditorDialog };
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // MAIN COMPONENT

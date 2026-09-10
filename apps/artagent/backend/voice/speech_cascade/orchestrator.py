@@ -16,19 +16,22 @@ import contextvars
 import inspect
 import json
 import os
-import re
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack, contextmanager
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
+from apps.artagent.backend.src.orchestration.naming import find_agent_by_name
+from apps.artagent.backend.src.orchestration.prompt_context import cascade_runtime_prompt_context
 from apps.artagent.backend.voice.shared.base import (
     OrchestratorContext,
     OrchestratorResult,
 )
 from apps.artagent.backend.voice.shared.config_resolver import (
     DEFAULT_START_AGENT,
+    OrchestratorConfigResult,
     resolve_orchestrator_config,
 )
 from apps.artagent.backend.voice.shared.errors import (
@@ -51,7 +54,7 @@ from apps.artagent.backend.voice.shared.tool_policy import (
 from apps.artagent.backend.voice.speech_cascade.tts_processor import TTSTextProcessor
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
-from src.enums.monitoring import GenAIOperation, GenAIProvider, SpanAttr
+from src.enums.monitoring import GenAIOperation, SpanAttr
 from utils.eval_span import annotate_eval_content
 
 
@@ -69,6 +72,7 @@ class HandoffResult:
 
 if TYPE_CHECKING:
     from apps.artagent.backend.registries.agentstore.base import UnifiedAgent
+    from apps.artagent.backend.registries.scenariostore.loader import ScenarioConfig
     from src.stateful.state_managment import MemoManager
 
 try:
@@ -79,8 +83,6 @@ except ImportError:
     import logging
 
     logger = logging.getLogger("cascade.adapter")
-
-from apps.artagent.backend.src.orchestration.naming import find_agent_by_name
 
 tracer = trace.get_tracer(__name__)
 
@@ -212,6 +214,294 @@ class CascadeConfig:
     session_id: str | None = None
     enable_rag: bool = True
     streaming: bool = False  # Non-streaming matches legacy gpt_flow behavior
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Model Request Preparation Helpers
+#
+# Pure, module-level functions (no adapter classes) so Cascade model
+# binding can be unit tested without constructing a full orchestrator, and
+# so `_streaming_completion` can dispatch to either OpenAI endpoint without
+# duplicating its chunk-consumption loop. All parameter names below were
+# confirmed against the installed openai SDK's actual call signatures
+# (`Completions.create` / `Responses.create`), not assumed from docs.
+# ─────────────────────────────────────────────────────────────────────
+
+
+class UnsupportedModelOptionError(ValueError):
+    """A stored ``ModelConfig`` option has no supported parameter on the
+    installed OpenAI SDK's chat.completions or responses endpoints.
+
+    Cascade must reject these clearly instead of silently dropping them so
+    the Advanced Builder UI can disable/label the offending controls.
+    """
+
+    def __init__(self, options: list[str]):
+        self.options = list(options)
+        super().__init__(
+            "Unsupported model configuration option(s) for the installed "
+            f"OpenAI SDK: {', '.join(self.options)}"
+        )
+
+
+def _validate_model_config_capabilities(model_config: Any, endpoint_choice: str) -> None:
+    """Reject ``ModelConfig`` options with no supported equivalent for the
+    endpoint this request is about to use, instead of silently dropping
+    them from the request.
+
+    ``min_p`` and ``typical_p`` are not accepted keyword arguments of either
+    ``chat.completions.create`` or ``responses.create`` in the installed
+    openai package (verified via ``inspect.signature`` against both
+    methods — neither exposes these names) — unsupported on both endpoints.
+
+    ``include_reasoning`` means "surface an available reasoning SUMMARY",
+    never raw hidden chain-of-thought. The Responses endpoint supports this
+    via ``reasoning.summary`` (``response_create_params`` / the installed
+    SDK's ``Reasoning`` TypedDict), so it is honored — see
+    ``_prepare_responses_streaming_params`` — only when this request is
+    actually going to ``responses.create``. ``chat.completions.create`` has
+    no summary (or any reasoning-visibility) concept at all in the
+    installed SDK, so ``include_reasoning`` is rejected when the resolved
+    endpoint is "chat".
+    """
+    if model_config is None:
+        return
+
+    unsupported: list[str] = []
+    if getattr(model_config, "min_p", None) is not None:
+        unsupported.append("min_p")
+    if getattr(model_config, "typical_p", None) is not None:
+        unsupported.append("typical_p")
+    if getattr(model_config, "include_reasoning", False) and endpoint_choice != "responses":
+        unsupported.append("include_reasoning")
+
+    if unsupported:
+        raise UnsupportedModelOptionError(unsupported)
+
+
+# ModelConfig.verbosity is stored as an int (0=minimal, 1=standard,
+# 2=detailed) but both endpoints only accept the string literals below.
+_VERBOSITY_LEVEL_NAMES: dict[int, str] = {0: "low", 1: "medium", 2: "high"}
+
+
+def _map_verbosity_level(verbosity: int | str) -> str:
+    """Map ModelConfig's numeric verbosity to the "low"/"medium"/"high"
+    string literal required by chat.completions.create and responses.create.
+    """
+    if isinstance(verbosity, str):
+        normalized = verbosity.strip().lower()
+        if normalized in ("low", "medium", "high"):
+            return normalized
+        raise UnsupportedModelOptionError([f"verbosity={verbosity!r}"])
+    return _VERBOSITY_LEVEL_NAMES.get(int(verbosity), "medium")
+
+
+def _resolve_endpoint_choice(model_config: Any) -> str:
+    """Resolve which OpenAI endpoint services a Cascade streaming request.
+
+    Only an explicit ``endpoint_preference == "responses"`` routes off
+    chat.completions. Every other value — ``"auto"``, ``"chat"``, ``None``,
+    or an unset attribute — preserves the existing default streaming
+    behavior. Once "responses" is chosen it is the only endpoint attempted
+    for that turn; there is no silent fallback to the other endpoint.
+    """
+    preference = getattr(model_config, "endpoint_preference", "auto") if model_config else "auto"
+    return "responses" if preference == "responses" else "chat"
+
+
+# ModelConfig.api_version defaults to "v1", which is not a valid Azure
+# `api-version` value (Azure expects dated strings like
+# "2025-01-01-preview"). Treat that default as "no override requested" so
+# an agent that never touched this Advanced Builder field keeps using the
+# shared client's configured api_version unchanged.
+_API_VERSION_SENTINEL_DEFAULT = "v1"
+
+
+def _resolve_api_version_override(model_config: Any) -> str | None:
+    """Return an explicit Azure ``api-version`` override, or ``None``.
+
+    ``None`` means "reuse the shared client's configured api_version
+    unchanged". The caller applies a non-``None`` override via
+    ``client.with_options(api_version=...)``, which reuses the existing
+    transport/credentials instead of constructing a fresh client.
+    """
+    if model_config is None:
+        return None
+    api_version = getattr(model_config, "api_version", None)
+    if not api_version or api_version == _API_VERSION_SENTINEL_DEFAULT:
+        return None
+    return api_version
+
+
+def _convert_messages_to_responses_input(
+    messages: list[dict[str, Any]],
+) -> tuple[str | None, list[dict[str, Any]]]:
+    """Convert chat.completions-style messages into Responses API
+    ``instructions`` + ``input`` items.
+
+    Preserves:
+      - system/developer content as ``instructions`` (Responses has no
+        "system" role in ``input``; the dedicated ``instructions`` field is
+        the documented equivalent).
+      - assistant tool calls as ``function_call`` input items keyed by
+        ``call_id`` (from the chat-format ``tool_calls[].id``).
+      - tool results as ``function_call_output`` items, threaded back to
+        their originating call via that same ``call_id``.
+      - plain user/assistant text turns as simple role/content items.
+    """
+    instructions_parts: list[str] = []
+    input_items: list[dict[str, Any]] = []
+
+    for msg in messages:
+        role = msg.get("role")
+        content = msg.get("content")
+
+        if role in ("system", "developer"):
+            if content:
+                instructions_parts.append(
+                    content if isinstance(content, str) else json.dumps(content)
+                )
+            continue
+
+        if role == "assistant":
+            if content:
+                input_items.append({"role": "assistant", "content": content})
+            for tool_call in msg.get("tool_calls") or []:
+                function = tool_call.get("function", {}) or {}
+                input_items.append(
+                    {
+                        "type": "function_call",
+                        "call_id": tool_call.get("id"),
+                        "name": function.get("name"),
+                        "arguments": function.get("arguments", "{}"),
+                    }
+                )
+            continue
+
+        if role == "tool":
+            input_items.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": msg.get("tool_call_id"),
+                    "output": content if isinstance(content, str) else json.dumps(content),
+                }
+            )
+            continue
+
+        # user (and any other conversational role) maps directly.
+        if content is not None:
+            input_items.append({"role": role or "user", "content": content})
+
+    instructions = "\n\n".join(instructions_parts) if instructions_parts else None
+    return instructions, input_items
+
+
+def _convert_tools_to_responses_format(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Flatten chat.completions-style tool definitions
+    (``{"type": "function", "function": {...}}``) into the Responses API's
+    flat tool shape (``{"type": "function", "name": ..., "parameters": ...}``),
+    confirmed against the installed SDK's ``FunctionToolParam`` TypedDict.
+    """
+    responses_tools: list[dict[str, Any]] = []
+    for tool in tools:
+        if tool.get("type") != "function":
+            # Only the function shape differs between the two endpoints;
+            # pass any other tool type through unmodified.
+            responses_tools.append(tool)
+            continue
+        function = tool.get("function", {}) or {}
+        definition = {
+            "type": "function",
+            "name": function.get("name"),
+            "description": function.get("description"),
+            "parameters": function.get("parameters"),
+        }
+        if "strict" in function:
+            definition["strict"] = function["strict"]
+        responses_tools.append(definition)
+    return responses_tools
+
+
+def _normalize_responses_stream_event(event: Any, state: dict[str, Any]) -> Any | None:
+    """Convert a single Responses API streaming event into a
+    ChatCompletionChunk-shaped ``SimpleNamespace`` so the existing Cascade
+    streaming consumption loop (written for chat.completions chunks) can
+    process both endpoints identically without any change to that loop.
+
+    ``state`` tracks ``item_id -> tool_call index`` across the stream since
+    Responses events key function-call deltas by ``item_id``, not the
+    stable numeric ``index`` chat.completions chunks provide.
+
+    Returns ``None`` for event types that carry no text/tool/usage delta
+    (e.g. lifecycle events like ``response.created``); the caller skips
+    those exactly like a chat.completions chunk with no choices/usage.
+    """
+    event_type = getattr(event, "type", None)
+
+    if event_type == "response.output_text.delta":
+        delta = SimpleNamespace(content=event.delta, tool_calls=None)
+        return SimpleNamespace(choices=[SimpleNamespace(delta=delta)], usage=None)
+
+    if event_type == "response.output_item.added":
+        item = event.item
+        if getattr(item, "type", None) != "function_call":
+            return None
+        item_id = getattr(item, "id", None)
+        index = state["next_index"]
+        state["next_index"] += 1
+        if item_id is not None:
+            state["item_index"][item_id] = index
+        function = SimpleNamespace(name=getattr(item, "name", None), arguments=None)
+        tool_call = SimpleNamespace(
+            index=index, id=getattr(item, "call_id", None), function=function
+        )
+        delta = SimpleNamespace(content=None, tool_calls=[tool_call])
+        return SimpleNamespace(choices=[SimpleNamespace(delta=delta)], usage=None)
+
+    if event_type == "response.function_call_arguments.delta":
+        index = state["item_index"].get(event.item_id)
+        if index is None:
+            index = state["next_index"]
+            state["next_index"] += 1
+            state["item_index"][event.item_id] = index
+        function = SimpleNamespace(name=None, arguments=event.delta)
+        tool_call = SimpleNamespace(index=index, id=None, function=function)
+        delta = SimpleNamespace(content=None, tool_calls=[tool_call])
+        return SimpleNamespace(choices=[SimpleNamespace(delta=delta)], usage=None)
+
+    if event_type == "response.completed":
+        usage = getattr(event.response, "usage", None)
+        usage_ns = None
+        if usage is not None:
+            usage_ns = SimpleNamespace(
+                prompt_tokens=getattr(usage, "input_tokens", 0),
+                completion_tokens=getattr(usage, "output_tokens", 0),
+            )
+        return SimpleNamespace(choices=[], usage=usage_ns)
+
+    if event_type in ("error", "response.failed", "response.error", "response.incomplete"):
+        response_obj = getattr(event, "response", None)
+        error = (
+            getattr(response_obj, "error", None)
+            if response_obj is not None
+            else getattr(event, "message", None)
+        )
+        raise RuntimeError(f"Responses API stream event={event_type} error={error}")
+
+    return None
+
+
+def _normalize_responses_stream(raw_stream: Any):
+    """Normalize a recorded sequence of Responses events without performing I/O.
+
+    The live runtime normalizes individual events on its owned async stream so
+    cancellation and close always target the original SDK stream.
+    """
+    state: dict[str, Any] = {"next_index": 0, "item_index": {}}
+    for event in raw_stream:
+        normalized = _normalize_responses_stream_event(event, state)
+        if normalized is not None:
+            yield normalized
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -468,8 +758,8 @@ class CascadeOrchestratorAdapter:
         """
         if not hasattr(self, "_cached_orchestrator_config"):
             # Get scenario_name from session memo_manager using centralized utility
-            scenario_name = None
-            if self._current_memo_manager:
+            scenario_name = getattr(self, "_active_scenario_name", None)
+            if not scenario_name and self._current_memo_manager:
                 from apps.artagent.backend.src.orchestration.naming import (
                     get_scenario_from_corememory,
                 )
@@ -612,6 +902,8 @@ class CascadeOrchestratorAdapter:
         handoff_map: dict[str, str],
         start_agent: str | None = None,
         scenario_name: str | None = None,
+        *,
+        scenario: ScenarioConfig | None = None,
     ) -> None:
         """
         Update the adapter with a new scenario configuration.
@@ -624,6 +916,7 @@ class CascadeOrchestratorAdapter:
             handoff_map: New handoff routing map
             start_agent: Optional new start agent to switch to
             scenario_name: Optional scenario name for logging
+            scenario: Optional authoritative in-memory scenario definition
         """
         old_agents = list(self.agents.keys())
         old_active = self._active_agent
@@ -633,10 +926,22 @@ class CascadeOrchestratorAdapter:
 
         # Update handoff map
         self.handoff_map = handoff_map
+        self._active_scenario_name = scenario_name
 
         # Clear cached HandoffService so it's recreated with new values
         if hasattr(self, "_handoff_service"):
             self._handoff_service = None
+        if hasattr(self, "_cached_orchestrator_config"):
+            delattr(self, "_cached_orchestrator_config")
+        if scenario is not None:
+            self._cached_orchestrator_config = OrchestratorConfigResult(
+                start_agent=start_agent or scenario.start_agent,
+                agents=agents,
+                handoff_map=handoff_map,
+                scenario=scenario,
+                scenario_name=scenario.name,
+                template_vars=dict(scenario.global_template_vars),
+            )
 
         # Clear visited agents for fresh scenario experience
         self._visited_agents.clear()
@@ -776,18 +1081,9 @@ class CascadeOrchestratorAdapter:
         Returns:
             Dict with session variables for Jinja templates
         """
-        return {
-            "memo_manager": cm,
-            "session_profile": cm.get_value_from_corememory("session_profile"),
-            "caller_name": cm.get_value_from_corememory("caller_name"),
-            "client_id": cm.get_value_from_corememory("client_id"),
-            "customer_intelligence": cm.get_value_from_corememory("customer_intelligence"),
-            "institution_name": cm.get_value_from_corememory("institution_name"),
-            "active_agent": cm.get_value_from_corememory("active_agent"),
-            "previous_agent": cm.get_value_from_corememory("previous_agent"),
-            "visited_agents": cm.get_value_from_corememory("visited_agents"),
-            "handoff_context": cm.get_value_from_corememory("handoff_context"),
-        }
+        from apps.artagent.backend.src.orchestration.prompt_context import cascade_prompt_context
+
+        return {"memo_manager": cm, **cascade_prompt_context(cm)}
 
     # ─────────────────────────────────────────────────────────────────
     # Turn Processing
@@ -1107,7 +1403,7 @@ class CascadeOrchestratorAdapter:
                             )
 
                             new_messages = self._build_messages(new_context, new_agent)
-                            new_tools = new_agent.get_tools()
+                            new_tools = self._get_tools_with_handoffs(new_agent)
 
                             try:
                                 # Get response from new agent
@@ -1258,12 +1554,7 @@ class CascadeOrchestratorAdapter:
                     span.set_status(Status(StatusCode.ERROR, str(e)))
                     logger.exception("Turn processing failed: %s", e)
 
-                    info = classify_voice_error(
-                        e,
-                        source="llm",
-                        model=self._last_model_name,
-                        agent=self._active_agent,
-                    )
+                    info = self._classify_llm_error(e)
                     self._last_error_info = info
                     span.set_attribute("error.code", info.code)
                     await self._surface_error(info, context)
@@ -1315,11 +1606,8 @@ class CascadeOrchestratorAdapter:
 
         # A resolved handoff owns the target's prompt scope, including later turns.
         # MemoManager remains transport/runtime state, never a template variable.
-        prompt_vars = (
-            self._session_vars if self._session_vars.get("is_handoff") else context.metadata
-        )
         system_content = agent.render_prompt(
-            {key: value for key, value in (prompt_vars or {}).items() if key != "memo_manager"}
+            cascade_runtime_prompt_context(context.metadata, session_vars=self._session_vars)
         )
 
         # Inject handoff instructions from scenario configuration
@@ -1446,12 +1734,36 @@ class CascadeOrchestratorAdapter:
         all_tool_calls: list[dict[str, Any]] = []
         output_tokens = 0
 
-        # Prepare streaming parameters early for telemetry
-        streaming_params = self._prepare_streaming_params(model_config, model_name, messages, tools)
+        # Resolve endpoint dispatch once so telemetry, param building, and
+        # the actual client call all agree. Only an explicit "responses"
+        # preference routes off chat.completions; auto/chat/unset preserve
+        # the existing default streaming behavior.
+        endpoint_choice = _resolve_endpoint_choice(model_config)
+
+        # Reject genuinely unsupported Advanced Builder controls before
+        # building any request params, instead of silently dropping them.
+        # min_p / typical_p have no equivalent parameter on either endpoint.
+        # include_reasoning (an available reasoning SUMMARY, never raw
+        # chain-of-thought) is only supported on the Responses endpoint, so
+        # it is only rejected here when this turn is going to chat.completions.
+        # This propagates out of _process_llm and is converted into a clear
+        # structured error by _extract_error_details.
+        _validate_model_config_capabilities(model_config, endpoint_choice)
+
+        if endpoint_choice == "responses":
+            streaming_params = self._prepare_responses_streaming_params(
+                model_config, model_name, messages, tools
+            )
+        else:
+            streaming_params = self._prepare_streaming_params(
+                model_config, model_name, messages, tools
+            )
         temp_attr = streaming_params.get("temperature")
         top_p_attr = streaming_params.get("top_p")
-        max_tokens_attr = streaming_params.get("max_tokens") or streaming_params.get(
-            "max_completion_tokens"
+        max_tokens_attr = (
+            streaming_params.get("max_tokens")
+            or streaming_params.get("max_completion_tokens")
+            or streaming_params.get("max_output_tokens")
         )
 
         # Extract endpoint preference and reasoning params from model_config for logging
@@ -1496,9 +1808,8 @@ class CascadeOrchestratorAdapter:
             attributes=span_attributes,
         ) as span:
             try:
-                # Build log message based on endpoint preference
-                # Streaming always uses chat.completions, but show configured params appropriately
-                if endpoint_pref == "responses":
+                # Build log message based on the resolved endpoint dispatch
+                if endpoint_choice == "responses":
                     # Responses API config: show reasoning-specific parameters
                     params_str = f"reasoning_effort={reasoning_effort or 'N/A'} verbosity={verbosity if verbosity is not None else 'N/A'} max_tokens={max_tokens_attr or 'N/A'}"
                 else:
@@ -1570,13 +1881,27 @@ class CascadeOrchestratorAdapter:
                         # Extract telemetry values for span attributes
                         temp_value = api_params.get("temperature")
                         top_p_value = api_params.get("top_p")
-                        max_tokens_value = api_params.get("max_tokens") or api_params.get(
-                            "max_completion_tokens"
+                        max_tokens_value = (
+                            api_params.get("max_tokens")
+                            or api_params.get("max_completion_tokens")
+                            or api_params.get("max_output_tokens")
                         )
 
-                        # SIMPLIFIED: Always use chat.completions for streaming
-                        # Params are built by _prepare_streaming_params for chat API
-                        endpoint_name = "chat.completions"
+                        # Dispatch to the endpoint explicitly resolved above
+                        # (endpoint_choice). Only "responses" routes off
+                        # chat.completions; once chosen it is the only
+                        # endpoint attempted this turn — never silently
+                        # substituted for the other on error.
+                        endpoint_name = (
+                            "responses" if endpoint_choice == "responses" else "chat.completions"
+                        )
+
+                        request_client = client
+                        api_version_override = _resolve_api_version_override(model_config)
+                        if api_version_override:
+                            # Reuse the shared client's transport/credentials;
+                            # only the api-version query param changes.
+                            request_client = client.with_options(api_version=api_version_override)
 
                         # Create a span for the OpenAI streaming call
                         with tracer.start_as_current_span(
@@ -1591,16 +1916,25 @@ class CascadeOrchestratorAdapter:
                                 "gen_ai.request.top_p": top_p_value,
                                 "gen_ai.request.max_tokens": max_tokens_value,
                                 "gen_ai.streaming": True,
-                                "gen_ai.endpoint_type": "chat",
+                                "gen_ai.endpoint_type": (
+                                    "responses" if endpoint_choice == "responses" else "chat"
+                                ),
                             },
                         ) as openai_span:
-                            # Always use chat completions API for streaming
                             ttft_tracker["request_start"] = time.perf_counter()
-                            stream = await client.chat.completions.create(**api_params)
+                            if endpoint_choice == "responses":
+                                stream = await request_client.responses.create(**api_params)
+                            else:
+                                stream = await request_client.chat.completions.create(**api_params)
 
+                            response_state = {"next_index": 0, "item_index": {}}
                             async for chunk in stream:
                                 if self._cancel_event.is_set():
                                     raise asyncio.CancelledError
+                                if endpoint_choice == "responses":
+                                    chunk = _normalize_responses_stream_event(chunk, response_state)
+                                    if chunk is None:
+                                        continue
                                 chunk_count += 1
 
                                 # Capture usage data from final chunk (stream_options.include_usage)
@@ -2047,12 +2381,7 @@ class CascadeOrchestratorAdapter:
                 # Classify so the operator UI can show the real cause (missing
                 # deployment, bad credentials, exhausted quota) instead of a
                 # generic apology. process_turn picks this up and emits it.
-                info = classify_voice_error(
-                    e,
-                    source="llm",
-                    model=self._last_model_name,
-                    agent=self._active_agent,
-                )
+                info = self._classify_llm_error(e)
                 self._last_error_info = info
                 span.set_attribute("error.code", info.code)
                 response_text = info.spoken_message or (
@@ -2206,11 +2535,161 @@ class CascadeOrchestratorAdapter:
             if top_p is not None:
                 params["top_p"] = top_p
 
+        # Propagate advanced request properties confirmed present on the
+        # installed OpenAI SDK's chat.completions.create signature
+        # (verified via inspect.signature: metadata, reasoning_effort,
+        # response_format, store, and verbosity are all real keyword
+        # params). These were previously computed only for telemetry/span
+        # attributes and never added to the request dict. Only forwarded
+        # when explicitly configured (non-default/non-None) so agents that
+        # never touch these Advanced Builder controls keep receiving
+        # byte-for-byte the same request they always have.
+        if model_config:
+            reasoning_effort = getattr(model_config, "reasoning_effort", None)
+            if reasoning_effort:
+                params["reasoning_effort"] = reasoning_effort
+
+            verbosity = getattr(model_config, "verbosity", None)
+            if verbosity:
+                params["verbosity"] = _map_verbosity_level(verbosity)
+
+            store = getattr(model_config, "store", None)
+            if store is not None:
+                params["store"] = store
+
+            metadata = getattr(model_config, "metadata", None)
+            if metadata:
+                params["metadata"] = metadata
+
+            response_format = getattr(model_config, "response_format", None)
+            if response_format:
+                params["response_format"] = response_format
+
         logger.debug(
             "Prepared streaming params | model=%s uses_max_completion_tokens=%s no_custom_temp=%s",
             model_name,
             uses_max_completion_tokens,
             no_custom_temp,
+        )
+
+        return params
+
+    def _prepare_responses_streaming_params(
+        self,
+        model_config: Any,
+        model_name: str,
+        messages: list[dict],
+        tools: list[dict] | None,
+    ) -> dict[str, Any]:
+        """
+        Prepare API parameters for an explicit Responses API streaming call.
+
+        Only used when ``model_config.endpoint_preference == "responses"``.
+        Builds the Responses-shaped request (``input``/``instructions``/
+        ``max_output_tokens``/``reasoning``/``text``) instead of reusing
+        ``_prepare_streaming_params``'s chat.completions shape.
+
+        Deliberately does NOT reuse
+        ``src.aoai.manager.AzureOpenAIManager._prepare_responses_params``:
+        that helper flattens conversation history (including tool calls and
+        tool results) into a single text blob and emits parameter
+        names/values not present on the installed SDK, which would silently
+        break multi-turn tool-calling for the voice streaming path.
+
+        Args:
+            model_config: ModelConfig instance (or None for defaults)
+            model_name: Deployment ID
+            messages: Conversation messages (chat.completions shape)
+            tools: Tool definitions (chat.completions shape; converted below)
+
+        Returns:
+            Dict of parameters for ``client.responses.create()``.
+        """
+        instructions, input_items = _convert_messages_to_responses_input(messages)
+
+        params: dict[str, Any] = {
+            "model": model_name,
+            "input": input_items,
+            "stream": True,
+            "timeout": 60,
+        }
+        if instructions:
+            params["instructions"] = instructions
+        if tools:
+            params["tools"] = _convert_tools_to_responses_format(tools)
+
+        deployment_lower = model_name.lower() if model_name else ""
+        no_custom_temp = any(p in deployment_lower for p in ["o1", "o3-", "o4-"])
+        if model_config:
+            model_family = getattr(model_config, "model_family", None)
+            if model_family in ["o1", "o3", "o4"]:
+                no_custom_temp = True
+
+        max_tokens = 4096
+        if model_config:
+            max_tokens = (
+                getattr(model_config, "max_completion_tokens", None)
+                or getattr(model_config, "max_tokens", None)
+                or 4096
+            )
+        params["max_output_tokens"] = max_tokens
+
+        if not no_custom_temp:
+            temp = getattr(model_config, "temperature", None) if model_config else None
+            if temp is None:
+                temp = 0.7
+            params["temperature"] = temp
+
+            top_p = getattr(model_config, "top_p", None) if model_config else None
+            if top_p is not None:
+                params["top_p"] = top_p
+
+        reasoning_effort = getattr(model_config, "reasoning_effort", None) if model_config else None
+        include_reasoning = (
+            getattr(model_config, "include_reasoning", False) if model_config else False
+        )
+        reasoning_config: dict[str, Any] = {}
+        if reasoning_effort:
+            reasoning_config["effort"] = reasoning_effort
+        if include_reasoning:
+            # "auto" surfaces whatever reasoning SUMMARY the model makes
+            # available (openai.types.shared_params.reasoning.Reasoning.summary) —
+            # never the raw hidden chain-of-thought, which no endpoint exposes.
+            reasoning_config["summary"] = "auto"
+        if reasoning_config:
+            params["reasoning"] = reasoning_config
+
+        verbosity = getattr(model_config, "verbosity", None) if model_config else None
+        text_config: dict[str, Any] = {}
+        if verbosity:
+            text_config["verbosity"] = _map_verbosity_level(verbosity)
+        response_format = getattr(model_config, "response_format", None) if model_config else None
+        if response_format:
+            if response_format.get("type") == "json_schema" and isinstance(
+                response_format.get("json_schema"), dict
+            ):
+                text_config["format"] = {"type": "json_schema", **response_format["json_schema"]}
+            else:
+                text_config["format"] = response_format
+        if text_config:
+            params["text"] = text_config
+
+        store = getattr(model_config, "store", None) if model_config else None
+        if store is not None:
+            params["store"] = store
+
+        metadata = getattr(model_config, "metadata", None) if model_config else None
+        if metadata:
+            params["metadata"] = metadata
+
+        logger.debug(
+            "Prepared responses streaming params | model=%s no_custom_temp=%s has_reasoning=%s "
+            "has_summary=%s has_verbosity=%s",
+            model_name,
+            no_custom_temp,
+            bool(reasoning_effort),
+            include_reasoning,
+            bool(verbosity),
         )
 
         return params
@@ -2227,12 +2706,33 @@ class CascadeOrchestratorAdapter:
         Returns:
             JSON string with ``code``, ``message``, ``details`` and ``remediation``.
         """
+        return self._classify_llm_error(exception).as_json()
+
+    def _classify_llm_error(self, exception: Exception) -> VoiceErrorInfo:
+        if isinstance(exception, UnsupportedModelOptionError):
+            return VoiceErrorInfo(
+                code="UnsupportedModelOption",
+                message=(
+                    "This agent's model configuration uses option(s) with no "
+                    "supported parameter for the endpoint this turn used: "
+                    + ", ".join(exception.options)
+                ),
+                details=str(exception),
+                remediation=(
+                    "Remove min_p and typical_p; neither endpoint supports them. "
+                    "For include_reasoning, select endpoint_preference='responses' "
+                    "to request an available reasoning summary, not hidden chain-of-thought."
+                ),
+                source="config",
+                fatal=True,
+                metadata={"unsupported_options": list(exception.options)},
+            )
         return classify_voice_error(
             exception,
             source="llm",
             model=self._last_model_name,
             agent=self._active_agent,
-        ).as_json()
+        )
 
     async def cancel_current(self) -> None:
         """Signal cancellation for barge-in."""
@@ -2373,30 +2873,31 @@ class CascadeOrchestratorAdapter:
         # Use shared sync utility
         state = sync_state_from_memo(cm, available_agents=set(self.agents.keys()))
 
-        # Handle pending handoff (clears the pending key)
-        if state.pending_handoff:
-            target = state.pending_handoff.get("target_agent")
-            if target and target in self.agents:
-                logger.info("Pending handoff detected: %s", target)
-                self._active_agent = target
-                sync_state_to_memo(cm, active_agent=self._active_agent, clear_pending_handoff=True)
-
         # If a scenario switch is pending, the adapter's _active_agent is
         # authoritative — write it to MemoManager instead of reading from it.
-        if self._scenario_switch_pending:
+        scenario_switched = self._scenario_switch_pending
+        if scenario_switched:
             logger.info(
                 "Scenario switch pending — writing active_agent to MemoManager | active=%s memo_active=%s",
                 self._active_agent,
                 state.active_agent,
             )
-            sync_state_to_memo(cm, active_agent=self._active_agent)
+            sync_state_to_memo(
+                cm,
+                active_agent=self._active_agent,
+                visited_agents=self._visited_agents,
+                clear_pending_handoff=True,
+            )
             self._scenario_switch_pending = False
             self._session_vars = {}
+        elif state.pending_handoff and state.pending_handoff.get("target_agent") in self.agents:
+            self._active_agent = state.pending_handoff["target_agent"]
+            sync_state_to_memo(cm, active_agent=self._active_agent, clear_pending_handoff=True)
         elif state.active_agent:
             # Normal path: MemoManager is authoritative
             self._active_agent = state.active_agent
 
-        if state.visited_agents:
+        if state.visited_agents and not scenario_switched:
             self._visited_agents = state.visited_agents
         if (
             self._session_vars.get("is_handoff")

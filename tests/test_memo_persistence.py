@@ -5,17 +5,19 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import time
+from collections import deque
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from src.redis import manager as redis_module
-from src.redis.manager import AzureRedisManager
+from src.redis.manager import AUTHORING_REVISION_KEY, AzureRedisManager, merge_session_snapshot
 from src.stateful.state_managment import MemoManager
 from src.tools.latency_helpers import PersistentLatency
 
 
 class ControlledRedis:
-    """Block real executor HSET/HGETALL/EXPIRE calls without contacting Redis."""
+    """Block executor CAS/HGETALL/EXPIRE calls without contacting Redis."""
 
     def __init__(self) -> None:
         self.loop = asyncio.get_running_loop()
@@ -30,6 +32,8 @@ class ControlledRedis:
         self.block_expiry = False
         self.expiry_success = True
         self.closing = False
+        self.lock = threading.Lock()
+        self.write_labels: deque[str] = deque()
 
     def release(self, operation: str) -> None:
         self.releases.setdefault(operation, threading.Event()).set()
@@ -51,6 +55,55 @@ class ControlledRedis:
         self.store.setdefault(key, {}).update(mapping)
         self.completed.append(revision)
         return 0  # Updating existing Redis fields is a successful HSET.
+
+    def eval(
+        self,
+        script: str,
+        key_count: int,
+        key: str,
+        receipts_field: str,
+        operation_id: str,
+        digest: str,
+        receipt_ttl: int,
+        expected_count: int,
+        *pairs: str,
+    ) -> list:
+        """Model the single-key CAS protocol; the real-Redis suite checks its Lua."""
+        assert key_count == 1
+        expected = dict(
+            zip(pairs[: expected_count * 2 : 2], pairs[1 : expected_count * 2 : 2], strict=True)
+        )
+        updates = dict(
+            zip(pairs[expected_count * 2 :: 2], pairs[expected_count * 2 + 1 :: 2], strict=True)
+        )
+        revision = (
+            self.write_labels.popleft()
+            if self.write_labels
+            else json.loads(updates["corememory"]).get("revision", "write")
+        )
+        self._wait(revision)
+        if revision in self.failures:
+            raise ValueError(f"failed {revision}")
+        with self.lock:
+            current = self.store.get(key, {})
+            now = time.time()
+            receipts = json.loads(current.get(receipts_field, "{}"))
+            receipt = receipts.get(operation_id)
+            if receipt and receipt["expires"] >= now:
+                assert receipt["digest"] == digest
+            else:
+                if {
+                    name: value for name, value in current.items() if name != receipts_field
+                } != expected:
+                    return [0]
+                receipts = {
+                    name: value for name, value in receipts.items() if value["expires"] >= now
+                }
+                receipts[operation_id] = {"digest": digest, "expires": now + receipt_ttl}
+                current = {**current, **updates, receipts_field: json.dumps(receipts)}
+                self.store[key] = current
+                self.completed.append(revision)
+            return [1, current.get("corememory", ""), current.get("chat_history", "")]
 
     def hgetall(self, key: str) -> dict[str, str]:
         if self.block_read:
@@ -335,6 +388,207 @@ async def test_snapshot_is_coherent_and_configuration_update_preserves_tool_stat
     assert updated.get_context("tool_outputs") == tool_output
     assert updated.get_context("configuration") == {"enabled": False}
     assert updated.histories == restored.histories
+
+
+def seed_authored_session(memo, client):
+    memo.set_context("active_agent", "Before")
+    memo.set_context("session_agents_all", {"Before": {"name": "Before", "voice": {"rate": "0%"}}})
+    memo.set_context(AUTHORING_REVISION_KEY, "initial")
+    memo._capture_activation_baseline()
+    client.store["session:ordering"] = memo.to_redis_dict()
+
+
+async def test_pending_stale_runtime_snapshot_cannot_undo_an_authoring_activation(storage):
+    memo, redis, client = storage
+    seed_authored_session(memo, client)
+    client.write_labels.append("authoring")
+    memo.set_context("active_agent", "Authored")
+    memo.set_context("revision", "authoring")
+    authoring = asyncio.create_task(
+        memo.persist_to_redis_async(
+            redis, raise_on_failure=True, authoring_fields=("active_agent",)
+        )
+    )
+    await client.wait_started("authoring")
+
+    memo.set_context("active_agent", "Before")
+    await submit_background(memo, "stale-runtime")
+    client.release("authoring")
+    client.release("stale-runtime")
+    assert await authoring
+    assert await memo.flush_pending_persist(raise_on_failure=True)
+    assert client.completed == ["authoring", "stale-runtime"]
+    assert json.loads(client.store["session:ordering"]["corememory"])["active_agent"] == "Authored"
+
+
+async def test_authoring_only_snapshot_does_not_acknowledge_an_unsaved_runtime_handoff(storage):
+    memo, redis, client = storage
+    seed_authored_session(memo, client)
+    client.write_labels.append("authoring")
+    memo.set_context("active_agent", "Handoff")
+    memo.set_context("revision", "authoring")
+    memo.set_context("session_agents_all", {"Before": {"name": "Before", "voice": {"rate": "9%"}}})
+    client.release("authoring")
+    assert await memo.persist_to_redis_async(
+        redis, raise_on_failure=True, authoring_fields=("session_agents_all",)
+    )
+    assert json.loads(client.store["session:ordering"]["corememory"])["active_agent"] == "Before"
+
+    await submit_background(memo, "handoff")
+    client.release("handoff")
+    assert await memo.flush_pending_persist(raise_on_failure=True)
+    assert json.loads(client.store["session:ordering"]["corememory"])["active_agent"] == "Handoff"
+
+
+async def test_authoring_activation_consumes_the_pending_handoff_it_supersedes(storage):
+    memo, redis, client = storage
+    seed_authored_session(memo, client)
+    client.write_labels.append("authoring")
+    memo.set_context("pending_handoff", {"target_agent": "OldTarget"})
+    memo.set_context("active_agent", "Authored")
+    client.release("authoring")
+    assert await memo.persist_to_redis_async(
+        redis, raise_on_failure=True, authoring_fields=("active_agent",)
+    )
+    await submit_background(memo, "stale-pending")
+    client.release("stale-pending")
+    assert await memo.flush_pending_persist(raise_on_failure=True)
+    saved = json.loads(client.store["session:ordering"]["corememory"])
+    assert saved["active_agent"] == "Authored"
+    assert saved["pending_handoff"] is None
+
+
+async def test_queued_repeated_handoff_cannot_replay_after_newer_authoring(storage, monkeypatch):
+    memo, redis, client = storage
+    seed_authored_session(memo, client)
+    original_store = redis.store_session_data_async
+
+    async def write_then_activate(key, data, **kwargs):
+        revision = json.loads(data["corememory"]).get("revision")
+        result = await original_store(key, data, **kwargs)
+        if revision == "handoff":
+            current = client.store[key]
+            core = json.loads(current["corememory"])
+            core["active_agent"] = "LaterAuthor"
+            current.update(
+                merge_session_snapshot(
+                    current,
+                    {"corememory": json.dumps(core)},
+                    authoring_fields=("active_agent",),
+                )
+            )
+        return result
+
+    monkeypatch.setattr(redis, "store_session_data_async", write_then_activate)
+    memo.set_context("active_agent", "Handoff")
+    await submit_background(memo, "handoff")
+    await client.wait_started("handoff")
+    await submit_background(memo, "repeated")
+    client.release("handoff")
+    client.release("repeated")
+    assert await memo.flush_pending_persist(raise_on_failure=True)
+    assert (
+        json.loads(client.store["session:ordering"]["corememory"])["active_agent"] == "LaterAuthor"
+    )
+
+
+async def test_authoring_barriers_capture_metadata_and_preserve_newer_local_edits(storage):
+    memo, redis, client = storage
+    seed_authored_session(memo, client)
+    client.write_labels.extend(("first-edit", "second-edit"))
+    first_record = {"name": "Before", "voice": {"rate": "1%"}}
+    updates = {"session_agents_all": {"Before": first_record}}
+    memo.set_context("session_agents_all", {"Before": first_record})
+    memo.set_context("revision", "first-edit")
+    first = asyncio.create_task(
+        memo.persist_to_redis_async(redis, raise_on_failure=True, registry_updates=updates)
+    )
+    await client.wait_started("first-edit")
+    first_record["voice"]["rate"] = "mutated after submission"
+    second_record = {"name": "Before", "voice": {"rate": "2%"}}
+    memo.set_context("session_agents_all", {"Before": second_record})
+    memo.set_context("revision", "second-edit")
+    second = asyncio.create_task(
+        memo.persist_to_redis_async(
+            redis,
+            raise_on_failure=True,
+            registry_updates={"session_agents_all": {"Before": second_record}},
+        )
+    )
+    await asyncio.sleep(0)
+    client.release("first-edit")
+    assert await first
+    await client.wait_started("second-edit")
+    saved = json.loads(client.store["session:ordering"]["corememory"])
+    assert saved["session_agents_all"]["Before"]["voice"]["rate"] == "1%"
+    assert memo.get_context("session_agents_all")["Before"]["voice"]["rate"] == "2%"
+
+    client.release("second-edit")
+    assert await second
+    assert await memo.flush_pending_persist(raise_on_failure=True)
+    saved = json.loads(client.store["session:ordering"]["corememory"])
+    assert memo.get_context("session_agents_all") == saved["session_agents_all"]
+    assert memo.get_context(AUTHORING_REVISION_KEY) == saved[AUTHORING_REVISION_KEY]
+    assert client.completed == ["first-edit", "second-edit"]
+
+
+async def test_queued_authoring_acknowledges_edits_over_a_newly_published_definition_view(
+    storage, monkeypatch
+):
+    memo, redis, client = storage
+    seed_authored_session(memo, client)
+    client.write_labels.extend(("first-edit", "second-edit"))
+    original_store = redis.store_session_data_async
+
+    async def write_then_publish(key, data, **kwargs):
+        revision = json.loads(data["corememory"]).get("revision")
+        result = await original_store(key, data, **kwargs)
+        if revision == "first-edit":
+            current = client.store[key]
+            published = merge_session_snapshot(
+                current,
+                current,
+                registry_updates={"session_agents_all": {"Other": {"name": "Other"}}},
+            )
+            current.update(published)
+            core = json.loads(published["corememory"])
+            memo.set_context("session_agents_all", core["session_agents_all"])
+            memo.set_context(AUTHORING_REVISION_KEY, core[AUTHORING_REVISION_KEY])
+            memo._authoring_baseline["session_agents_all"] = core["session_agents_all"]
+        return result
+
+    monkeypatch.setattr(redis, "store_session_data_async", write_then_publish)
+    first_record = {"name": "Before", "voice": {"rate": "1%"}}
+    memo.set_context("session_agents_all", {"Before": first_record})
+    memo.set_context("revision", "first-edit")
+    first = asyncio.create_task(
+        memo.persist_to_redis_async(
+            redis,
+            raise_on_failure=True,
+            registry_updates={"session_agents_all": {"Before": first_record}},
+        )
+    )
+    await client.wait_started("first-edit")
+    second_record = {"name": "Before", "voice": {"rate": "2%"}}
+    memo.set_context("session_agents_all", {"Before": second_record})
+    memo.set_context("revision", "second-edit")
+    second = asyncio.create_task(
+        memo.persist_to_redis_async(
+            redis,
+            raise_on_failure=True,
+            registry_updates={"session_agents_all": {"Before": second_record}},
+        )
+    )
+    await asyncio.sleep(0)
+    client.release("first-edit")
+    client.release("second-edit")
+    assert await first
+    assert await second
+    assert await memo.flush_pending_persist(raise_on_failure=True)
+    assert set(memo.get_context("session_agents_all")) == {"Before", "Other"}
+    assert memo.get_context("session_agents_all")["Before"]["voice"]["rate"] == "2%"
+    stored = json.loads(client.store["session:ordering"]["corememory"])
+    assert memo.get_context(AUTHORING_REVISION_KEY) == stored[AUTHORING_REVISION_KEY]
 
 
 async def test_final_persist_flushes_latest_unsaved_state(storage):
@@ -693,9 +947,17 @@ async def test_latency_stop_submission_errors_propagate(storage):
 @pytest.mark.parametrize("failure", [False, True])
 def test_latency_stop_retains_synchronous_off_loop_path(monkeypatch, failure):
     client = MagicMock()
-    client.hset.return_value = 0
+    client.hgetall.return_value = {}
+    snapshots = []
+
+    def write_snapshot(script, key_count, key, receipts, operation_id, digest, ttl, count, *pairs):
+        snapshot = dict(zip(pairs[count * 2 :: 2], pairs[count * 2 + 1 :: 2], strict=True))
+        snapshots.append(snapshot)
+        return [1, snapshot["corememory"], snapshot["chat_history"]]
+
+    client.eval.side_effect = write_snapshot
     if failure:
-        client.hset.side_effect = ValueError("synchronous write failed")
+        client.eval.side_effect = ValueError("synchronous write failed")
     monkeypatch.setattr(redis_module.redis, "Redis", lambda **kwargs: client)
     redis = AzureRedisManager(
         host="example.redis.local", access_key="test", credential=object(), ssl=False
@@ -709,9 +971,8 @@ def test_latency_stop_retains_synchronous_off_loop_path(monkeypatch, failure):
     else:
         sample = latency.stop("llm", redis_mgr=redis)
         assert sample.stage == "llm"
-        snapshot = client.hset.call_args.kwargs["mapping"]
-        assert "latency" in json.loads(snapshot["corememory"])
-    client.hset.assert_called_once()
+        assert "latency" in json.loads(snapshots[0]["corememory"])
+    client.eval.assert_called_once()
     assert memo._pending_persist_task is None
 
 

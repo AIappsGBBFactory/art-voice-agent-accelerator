@@ -8,19 +8,25 @@ from utils.ml_logging import get_logger
 
 if TYPE_CHECKING:
     from apps.artagent.backend.registries.agentstore.base import UnifiedAgent
+    from apps.artagent.backend.voice.shared.config_resolver import OrchestratorConfigResult
 
 logger = get_logger("voice.voicelive.session")
 
 
 def _build_voicelive_tools_with_handoffs(
-    agent: UnifiedAgent, session_id: str | None = None
+    agent: UnifiedAgent,
+    session_id: str | None = None,
+    *,
+    orchestrator_config: OrchestratorConfigResult | None = None,
 ) -> list[Any]:
     from apps.artagent.backend.voice.shared.config_resolver import resolve_orchestrator_config
     from apps.artagent.backend.voice.shared.handoff_service import HandoffService
     from apps.artagent.backend.voice.shared.tool_policy import agent_tool_schemas
     from azure.ai.voicelive.models import FunctionTool
 
-    config = resolve_orchestrator_config(session_id=session_id) if session_id else None
+    config = orchestrator_config
+    if config is None and session_id:
+        config = resolve_orchestrator_config(session_id=session_id)
     scenario = config.scenario if config else None
     agents = config.agents if config else {agent.name: agent}
     service = HandoffService(
@@ -151,6 +157,9 @@ async def apply_voicelive_session(
     say: str | None = None,
     session_id: str | None = None,
     call_connection_id: str | None = None,
+    connection_model: str | None = None,
+    connection_byom_profile: str | None = None,
+    orchestrator_config: OrchestratorConfigResult | None = None,
 ) -> None:
     """
     Apply this agent's configuration to a VoiceLive session.
@@ -165,13 +174,34 @@ async def apply_voicelive_session(
         say: Optional greeting text to trigger after session update
         session_id: Session ID for tracing
         call_connection_id: Call connection ID for tracing
+        connection_model: Actual connect-time model, including during handoffs.
+        connection_byom_profile: Actual connect-time BYOM profile, if any.
+        orchestrator_config: Configuration resolved for this connection or scenario switch.
     """
+    from apps.artagent.backend.registries.agentstore.base import (
+        validate_voicelive_transcription,
+    )
     from azure.ai.voicelive.models import (
         AudioInputTranscriptionOptions,
         RequestSession,
     )
     from opentelemetry import trace
     from opentelemetry.trace import SpanKind, Status, StatusCode
+
+    agent = getattr(agent, "_agent", agent)
+    transcription_cfg = validate_voicelive_transcription(
+        agent.session.get("input_audio_transcription_settings"),
+        model_name=connection_model or agent.get_model_for_mode("voicelive").deployment_id,
+        byom_profile=(
+            connection_byom_profile
+            if connection_model is not None
+            else (agent.byom.mode if agent.byom else None)
+        ),
+    )
+    if orchestrator_config is None and session_id:
+        from apps.artagent.backend.voice.shared.config_resolver import resolve_orchestrator_config
+
+        orchestrator_config = resolve_orchestrator_config(session_id=session_id)
 
     tracer = trace.get_tracer(__name__)
 
@@ -186,16 +216,25 @@ async def apply_voicelive_session(
         },
     ) as span:
         # Render instructions
-        system_vars = system_vars or {}
+        system_vars = dict(system_vars or {})
         system_vars.setdefault("active_agent", agent.name)
         instructions = agent.render_prompt(system_vars)
+        scenario = orchestrator_config.scenario if orchestrator_config else None
+        if scenario is not None:
+            handoff_instructions = scenario.build_handoff_instructions(agent.name)
+            if handoff_instructions:
+                instructions = "\n\n".join(
+                    part for part in (instructions, handoff_instructions) if part
+                )
 
         # Build session components
         voice_payload = build_voicelive_voice(agent)
         vad = build_voicelive_vad(agent)
         modalities = get_voicelive_modalities(agent)
         in_fmt, out_fmt = get_voicelive_audio_formats(agent)
-        tools = _build_voicelive_tools_with_handoffs(agent, session_id)
+        tools = _build_voicelive_tools_with_handoffs(
+            agent, session_id, orchestrator_config=orchestrator_config
+        )
 
         logger.debug(
             "[%s] Applying session | voice=%s",
@@ -227,12 +266,14 @@ async def apply_voicelive_session(
             )
 
         # Build transcription settings
-        transcription_cfg = agent.session.get("input_audio_transcription_settings") or {}
         transcription_kwargs: dict[str, Any] = {}
         if transcription_cfg.get("model"):
             transcription_kwargs["model"] = transcription_cfg["model"]
         if transcription_cfg.get("language"):
             transcription_kwargs["language"] = transcription_cfg["language"]
+        for field in ("custom_speech", "phrase_list"):
+            if transcription_cfg.get(field) is not None:
+                transcription_kwargs[field] = transcription_cfg[field]
 
         input_audio_transcription = (
             AudioInputTranscriptionOptions(**transcription_kwargs) if transcription_kwargs else None
@@ -246,6 +287,14 @@ async def apply_voicelive_session(
             output_audio_format=out_fmt,
             turn_detection=vad,
         )
+        model_config = agent.get_model_for_mode("voicelive")
+        if model_config.temperature is not None:
+            if not 0.0 <= model_config.temperature <= 1.0:
+                raise ValueError("VoiceLive temperature must be between 0.0 and 1.0.")
+            kwargs["temperature"] = model_config.temperature
+        max_output_tokens = model_config.max_completion_tokens or model_config.max_tokens
+        if max_output_tokens is not None:
+            kwargs["max_response_output_tokens"] = max_output_tokens
 
         if input_audio_transcription:
             kwargs["input_audio_transcription"] = input_audio_transcription

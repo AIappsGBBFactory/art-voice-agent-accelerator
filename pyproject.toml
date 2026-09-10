@@ -41,7 +41,7 @@ dependencies = [
     "pyjwt>=2.13.0",
     # Azure services
     "azure-cosmos>=4.5.0",
-    "azure-identity>=1.15.0",
+    "azure-identity>=1.20.0",
     "azure-storage-blob>=12.19.0",
     "azure-cognitiveservices-speech>=1.45.0",
     "azure-communication-callautomation>=1.4.0",
@@ -346,5 +346,4 @@ dev = [
     "ipywidgets>=8.1.8",
     "pandas>=2.3.3",
 ]
-
 

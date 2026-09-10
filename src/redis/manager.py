@@ -1,8 +1,11 @@
 import asyncio
+import hashlib
+import json
 import os
 import threading
 import time
-from collections.abc import Callable
+import uuid
+from collections.abc import Callable, Collection, Mapping
 from typing import Any, TypeVar
 
 from opentelemetry import trace
@@ -23,6 +26,157 @@ import redis
 from src.enums.monitoring import PeerService, SpanAttr
 
 T = TypeVar("T")
+
+AUTHORING_FIELDS = frozenset(
+    {
+        "session_agents_all",
+        "active_session_agent",
+        "session_scenarios_all",
+        "session_scenario_config",
+        "active_scenario_name",
+        "scenario_name",
+    }
+)
+ACTIVATION_FIELDS = frozenset(
+    {
+        "active_agent",
+        "pending_handoff",
+        "handoff_context",
+        "visited_agents",
+    }
+)
+AUTHORING_REVISION_KEY = "__authoring_revision"
+_CAS_RECEIPTS_FIELD = "__session_write_receipts"
+_CAS_RETRY_BUDGET_SECONDS = 30
+_CAS_RECEIPT_TTL_SECONDS = 120
+
+
+def merge_session_snapshot(
+    current: Mapping[str, str],
+    submitted: Mapping[str, str],
+    *,
+    authoring_fields: Collection[str] = (),
+    registry_updates: Mapping[str, Mapping[str, Any]] | None = None,
+    runtime_changes: Collection[str] | None = None,
+    revision: str | None = None,
+) -> dict[str, str]:
+    """Merge owned fields without changing the existing JSON session representation.
+
+    Conversation writes cannot change committed authoring fields. Authoring
+    writes only change explicitly named fields/registry entries, not histories
+    or conversation state from the author's possibly stale snapshot.
+    """
+    previous = json.loads(current.get("corememory", "{}"))
+    incoming = json.loads(submitted.get("corememory", "{}"))
+    if not isinstance(previous, dict) or not isinstance(incoming, dict):
+        raise ValueError("Session corememory must contain a JSON object")
+    updates = registry_updates or {}
+    authored = set(authoring_fields) | set(updates)
+    if authored - (AUTHORING_FIELDS | {"active_agent"}):
+        raise ValueError("Unsupported authoring field")
+    if set(updates) - {"session_agents_all", "session_scenarios_all"}:
+        raise ValueError("Unsupported authoring registry")
+
+    if authored:
+        result = {**submitted, **current}
+        merged = dict(previous) if "corememory" in current else dict(incoming)
+        for key in authoring_fields:
+            if key in incoming:
+                merged[key] = incoming[key]
+            else:
+                merged.pop(key, None)
+        for key, changes in updates.items():
+            registry = dict(merged.get(key) or {})
+            for name, value in changes.items():
+                for existing_name in list(registry):
+                    if existing_name.lower() == name.lower():
+                        del registry[existing_name]
+                if value is not None:
+                    registry[name] = value
+            merged[key] = registry
+        if "session_agents_all" in updates and "active_session_agent" not in authored:
+            registry = merged.get("session_agents_all") or {}
+            selected = previous.get("active_session_agent")
+            actual = next(
+                (name for name in registry if name.lower() == (selected or "").lower()), None
+            )
+            if actual is None:
+                selected = incoming.get("active_session_agent")
+                actual = next(
+                    (name for name in registry if name.lower() == (selected or "").lower()), None
+                )
+                if actual is None:
+                    actual = next(iter(sorted(registry)), None)
+            merged["active_session_agent"] = actual
+        deleted_scenarios = {
+            name.lower()
+            for name, value in updates.get("session_scenarios_all", {}).items()
+            if value is None
+        }
+        if (
+            previous.get("active_scenario_name") or previous.get("scenario_name") or ""
+        ).lower() in deleted_scenarios and not {
+            "active_scenario_name",
+            "scenario_name",
+            "session_scenario_config",
+        } & authored:
+            remaining = merged.get("session_scenarios_all") or {}
+            next_name = next(iter(sorted(remaining)), None)
+            next_config = remaining.get(next_name) if next_name else None
+            merged["active_scenario_name"] = next_name
+            merged["scenario_name"] = next_name
+            merged["session_scenario_config"] = next_config
+            if next_config and next_config.get("start_agent"):
+                merged["active_agent"] = next_config["start_agent"]
+        if any(
+            previous.get(key) != merged.get(key)
+            for key in ("active_scenario_name", "scenario_name", "session_scenario_config")
+        ) or (
+            "active_agent" in authoring_fields
+            and previous.get("active_agent") != merged.get("active_agent")
+        ):
+            merged["pending_handoff"] = None
+            merged["handoff_context"] = {}
+            merged["visited_agents"] = []
+        if AUTHORING_REVISION_KEY not in previous or any(
+            previous.get(key) != merged.get(key) for key in authored
+        ):
+            merged[AUTHORING_REVISION_KEY] = revision or uuid.uuid4().hex
+    else:
+        result = {**current, **submitted}
+        merged = dict(incoming)
+        ownership_established = (
+            AUTHORING_REVISION_KEY in previous
+            or AUTHORING_REVISION_KEY in incoming
+            or bool(AUTHORING_FIELDS & previous.keys())
+        )
+        if ownership_established:
+            for key in AUTHORING_FIELDS:
+                if key in previous:
+                    merged[key] = previous[key]
+                else:
+                    merged.pop(key, None)
+        changed_runtime = set(ACTIVATION_FIELDS if runtime_changes is None else runtime_changes)
+        if runtime_changes is None and (
+            incoming.get(AUTHORING_REVISION_KEY) != previous.get(AUTHORING_REVISION_KEY)
+        ):
+            changed_runtime.clear()
+        if "active_agent" not in changed_runtime and (
+            incoming.get("active_agent") != previous.get("active_agent")
+        ):
+            changed_runtime.clear()
+        for key in ACTIVATION_FIELDS - changed_runtime:
+            if key in previous:
+                merged[key] = previous[key]
+            else:
+                merged.pop(key, None)
+        if AUTHORING_REVISION_KEY in previous:
+            merged[AUTHORING_REVISION_KEY] = previous[AUTHORING_REVISION_KEY]
+        else:
+            merged.pop(AUTHORING_REVISION_KEY, None)
+    result.pop(_CAS_RECEIPTS_FIELD, None)
+    result["corememory"] = json.dumps(merged)
+    return result
 
 
 class AzureRedisManager:
@@ -321,7 +475,9 @@ class AzureRedisManager:
                     exc,
                 )
                 raise
-            self.logger.warning("Redis cluster initialization failed (will try standalone): %s", exc)
+            self.logger.warning(
+                "Redis cluster initialization failed (will try standalone): %s", exc
+            )
             self.logger.debug("Falling back to standalone Redis client.")
             standalone_kwargs = {**common_kwargs, "db": self.db, **auth_kwargs}
             self.redis_client = redis.Redis(**standalone_kwargs)
@@ -449,8 +605,39 @@ class AzureRedisManager:
             message,
         )
 
-    def store_session_data(self, session_id: str, data: dict[str, Any]) -> bool:
-        """Store session data using a Redis hash."""
+    def store_session_data(
+        self,
+        session_id: str,
+        data: dict[str, Any],
+        *,
+        authoring_fields: Collection[str] = (),
+        registry_updates: Mapping[str, Mapping[str, Any]] | None = None,
+        runtime_changes: Collection[str] | None = None,
+    ) -> bool:
+        """Store a session with atomic field ownership and optimistic conflict detection.
+
+        On success, ``data`` contains the persisted/acknowledged snapshot so
+        MemoManager can learn current authoring state without replacing live
+        conversation changes made while the write was in flight.
+        """
+        if "corememory" in data:
+            submitted = dict(data)
+            revision = uuid.uuid4().hex
+            for _ in range(4):
+                current = self.get_session_data(session_id)
+                merged = merge_session_snapshot(
+                    current,
+                    submitted,
+                    authoring_fields=authoring_fields,
+                    registry_updates=registry_updates,
+                    runtime_changes=runtime_changes,
+                    revision=revision,
+                )
+                if self._compare_and_store_session_data(session_id, merged, expected_data=current):
+                    data.clear()
+                    data.update(merged)
+                    return True
+            raise RedisError("Session changed repeatedly during persistence; retry the write")
 
         def _hset_operation():
             with self._redis_span("Redis.HSET"):
@@ -469,12 +656,14 @@ class AzureRedisManager:
         def _hgetall_operation():
             with self._redis_span("Redis.HGETALL"):
                 raw = self.redis_client.hgetall(session_id)
-                return dict(raw)
+                return {key: value for key, value in raw.items() if key != _CAS_RECEIPTS_FIELD}
 
         return self._execute_with_retry("HGETALL", _hgetall_operation)
 
     def update_session_field(self, session_id: str, field: str, value: str) -> bool:
         """Update a single field in the session hash."""
+        if field == "corememory":
+            return self.store_session_data(session_id, {field: value})
 
         def _hset_field_operation():
             with self._redis_span("Redis.HSET"):
@@ -500,11 +689,25 @@ class AzureRedisManager:
 
         return self._execute_with_retry("CLIENT_LIST", _client_list_operation)
 
-    async def store_session_data_async(self, session_id: str, data: dict[str, Any]) -> bool:
+    async def store_session_data_async(
+        self,
+        session_id: str,
+        data: dict[str, Any],
+        *,
+        authoring_fields: Collection[str] = (),
+        registry_updates: Mapping[str, Mapping[str, Any]] | None = None,
+        runtime_changes: Collection[str] | None = None,
+    ) -> bool:
         """Async version using thread pool executor."""
         try:
-            loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(None, self.store_session_data, session_id, data)
+            return await asyncio.to_thread(
+                self.store_session_data,
+                session_id,
+                data,
+                authoring_fields=authoring_fields,
+                registry_updates=registry_updates,
+                runtime_changes=runtime_changes,
+            )
         except asyncio.CancelledError:
             self.logger.debug(f"store_session_data_async cancelled for session {session_id}")
             # Don't log as warning - cancellation is normal during shutdown
@@ -512,6 +715,107 @@ class AzureRedisManager:
         except Exception as e:
             self.logger.error(f"Error in store_session_data_async for session {session_id}: {e}")
             return False
+
+    async def compare_and_store_session_data_async(
+        self,
+        session_id: str,
+        data: dict[str, str],
+        *,
+        expected_data: dict[str, str],
+    ) -> bool:
+        """Commit a validated authoring snapshot, with idempotent acknowledgement retries."""
+        if "corememory" in data:
+            prepared = merge_session_snapshot(
+                expected_data,
+                data,
+                authoring_fields=AUTHORING_FIELDS | {"active_agent"},
+            )
+            data.clear()
+            data.update(prepared)
+        return await asyncio.to_thread(
+            self._compare_and_store_session_data, session_id, data, expected_data=expected_data
+        )
+
+    def _compare_and_store_session_data(
+        self,
+        session_id: str,
+        data: dict[str, str],
+        *,
+        expected_data: Mapping[str, str],
+    ) -> bool:
+        """One linearizable write; retries acknowledge the same operation, never reapply it."""
+        operation_id = uuid.uuid4().hex
+        digest = hashlib.sha256(
+            json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        started = time.monotonic()
+        script = """
+local receipts_field = ARGV[1]
+local operation_id = ARGV[2]
+local digest = ARGV[3]
+local now = tonumber(redis.call('TIME')[1])
+local encoded_receipts = redis.call('HGET', KEYS[1], receipts_field)
+local receipts = cjson.decode(encoded_receipts or '{}')
+local receipt = receipts[operation_id]
+if receipt and receipt.expires >= now then
+    if receipt.digest ~= digest then
+        return redis.error_reply('Session operation identifier reused with different data')
+    end
+    return {1, redis.call('HGET', KEYS[1], 'corememory') or '',
+               redis.call('HGET', KEYS[1], 'chat_history') or ''}
+end
+local count = tonumber(ARGV[5])
+local internal_count = encoded_receipts and 1 or 0
+if redis.call('HLEN', KEYS[1]) - internal_count ~= count then return {0} end
+for i = 1, count do
+    local offset = 6 + (i - 1) * 2
+    if redis.call('HGET', KEYS[1], ARGV[offset]) ~= ARGV[offset + 1] then
+        return {0}
+    end
+end
+for id, value in pairs(receipts) do
+    if value.expires < now then receipts[id] = nil end
+end
+receipts[operation_id] = {digest = digest, expires = now + tonumber(ARGV[4])}
+local updates = {}
+for i = 6 + count * 2, #ARGV do
+    updates[#updates + 1] = ARGV[i]
+end
+updates[#updates + 1] = receipts_field
+updates[#updates + 1] = cjson.encode(receipts)
+redis.call('HSET', KEYS[1], unpack(updates))
+return {1, redis.call('HGET', KEYS[1], 'corememory') or '',
+           redis.call('HGET', KEYS[1], 'chat_history') or ''}
+"""
+        expected_data = {
+            key: value for key, value in expected_data.items() if key != _CAS_RECEIPTS_FIELD
+        }
+        args: list[str | int] = [
+            _CAS_RECEIPTS_FIELD,
+            operation_id,
+            digest,
+            _CAS_RECEIPT_TTL_SECONDS,
+            len(expected_data),
+        ]
+        for name, value in expected_data.items():
+            args.extend((name, value))
+        for name, value in data.items():
+            args.extend((name, value))
+
+        def compare_and_store() -> bool:
+            # Never retry beyond the server's receipt retention window.
+            if time.monotonic() - started > _CAS_RETRY_BUDGET_SECONDS:
+                raise TimeoutError("Session commit acknowledgement timed out")
+            with self._redis_span("Redis.CAS"):
+                result = self.redis_client.eval(script, 1, session_id, *args)
+            if not result[0]:
+                return False
+            for field, value in zip(("corememory", "chat_history"), result[1:], strict=True):
+                if value:
+                    data[field] = value
+            return True
+
+        return self._execute_with_retry("SESSION_CAS", compare_and_store)
 
     async def get_session_data_async(
         self, session_id: str, *, raise_on_failure: bool = False

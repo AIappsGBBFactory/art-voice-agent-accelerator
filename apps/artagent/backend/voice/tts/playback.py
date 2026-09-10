@@ -162,9 +162,7 @@ class TTSPlayback:
             stop.set()
             synth.stop_speaking()
         try:
-            await asyncio.wait_for(
-                asyncio.shield(future), timeout=_PRODUCER_STOP_TIMEOUT_SECONDS
-            )
+            await asyncio.wait_for(asyncio.shield(future), timeout=_PRODUCER_STOP_TIMEOUT_SECONDS)
         finally:
             if future.done():
                 self._producers.pop(future, None)
@@ -290,7 +288,7 @@ class TTSPlayback:
         self._context.tts_client = synth
         return synth
 
-    def get_agent_voice(self) -> tuple[str, str | None, str | None]:
+    def get_agent_voice(self) -> tuple[str, str | None, str | None, str | None]:
         """
         Get voice configuration from the active agent in context.
 
@@ -300,11 +298,15 @@ class TTSPlayback:
         3. Start agent from unified agents - fallback
 
         Returns:
-            Tuple of (voice_name, voice_style, voice_rate).
+            Tuple of (voice_name, voice_style, voice_rate, voice_pitch).
             voice_name will always have a value (fallback if needed).
         """
         # First try context.current_agent (already resolved, no circular import)
         current_agent = self._context.current_agent
+        if current_agent and getattr(current_agent, "name", None):
+            current_agent = (
+                get_session_agent(self._context.session_id, current_agent.name) or current_agent
+            )
         if current_agent and hasattr(current_agent, "voice") and current_agent.voice:
             voice = current_agent.voice
             if voice.name:
@@ -315,17 +317,13 @@ class TTSPlayback:
                     agent_name,
                     voice.name,
                 )
-                return (voice.name, voice.style, voice.rate)
+                return (voice.name, voice.style, voice.rate, voice.pitch)
 
-        # Try session agent (Agent Builder override) - has priority over base agents.
-        # Look up by the active/start agent name first, then fall back to the
-        # session's default agent: an Agent Builder / Quick Tune edit is stored
-        # under the agent's *own* name, which may differ from app_state.start_agent
-        # (e.g. when a scenario is active). Without this fallback the override's
-        # voice silently never applies.
-        start_agent_name = getattr(self._app_state, "start_agent", "Concierge")
+        memo = self._context.memo_manager
+        active_agent_name = memo.get_value_from_corememory("active_agent") if memo else None
+        start_agent_name = active_agent_name or getattr(self._app_state, "start_agent", "Concierge")
         session_agent = get_session_agent(self._context.session_id, start_agent_name)
-        if session_agent is None:
+        if session_agent is None and not active_agent_name:
             session_agent = get_session_agent(self._context.session_id)
         if session_agent and hasattr(session_agent, "voice") and session_agent.voice:
             voice = session_agent.voice
@@ -336,7 +334,7 @@ class TTSPlayback:
                     getattr(session_agent, "name", start_agent_name),
                     voice.name,
                 )
-                return (voice.name, voice.style, voice.rate)
+                return (voice.name, voice.style, voice.rate, voice.pitch)
 
         # Fallback to start agent from unified agents (base registry)
         unified_agents = getattr(self._app_state, "unified_agents", {})
@@ -352,14 +350,14 @@ class TTSPlayback:
                     start_agent_name,
                     voice.name,
                 )
-                return (voice.name, voice.style, voice.rate)
+                return (voice.name, voice.style, voice.rate, voice.pitch)
 
         # Emergency fallback - should not happen if agents are configured
         logger.warning(
             "[%s] No agent voice found, using fallback voice",
             self._session_short,
         )
-        return ("en-US-AvaMultilingualNeural", "conversational", None)
+        return ("en-US-AvaMultilingualNeural", "conversational", None, None)
 
     def set_active_agent(self, agent_name: str | None) -> None:
         """
@@ -387,6 +385,14 @@ class TTSPlayback:
                     ),
                 )
                 return
+
+            current_agent = self._context.current_agent
+            if current_agent is not None:
+                _, resolved_agent = find_agent_by_name(
+                    {getattr(current_agent, "name", ""): current_agent}, agent_name
+                )
+                if resolved_agent is not None:
+                    return
 
             # Fallback to unified_agents (base registry)
             unified_agents = getattr(self._app_state, "unified_agents", {})
@@ -431,7 +437,10 @@ class TTSPlayback:
             return False
 
         if not voice_name:
-            voice_name, voice_style, voice_rate = self.get_agent_voice()
+            # warm_connection() only pre-establishes the connection with an
+            # inaudible "." utterance, so pitch (unlike voice/style/rate) has
+            # no observable effect here and is intentionally not forwarded.
+            voice_name, voice_style, voice_rate, _voice_pitch = self.get_agent_voice()
 
         resolved_sample_rate = sample_rate
         if resolved_sample_rate is None:
@@ -484,6 +493,7 @@ class TTSPlayback:
         voice_name: str | None = None,
         voice_style: str | None = None,
         voice_rate: str | None = None,
+        voice_pitch: str | None = None,
         is_greeting: bool = False,
         on_first_audio: Callable[[], None] | None = None,
     ) -> bool:
@@ -500,6 +510,7 @@ class TTSPlayback:
             voice_name: Override voice (uses agent voice if not provided)
             voice_style: Override style
             voice_rate: Override rate
+            voice_pitch: Override pitch (uses agent voice if not provided)
             is_greeting: Whether this is a greeting (for metrics)
             on_first_audio: Callback when first audio chunk is sent
 
@@ -542,6 +553,7 @@ class TTSPlayback:
                     voice_name=voice_name,
                     voice_style=voice_style,
                     voice_rate=voice_rate,
+                    voice_pitch=voice_pitch,
                     on_first_audio=_on_first_audio_wrapper,
                 )
             else:
@@ -551,6 +563,7 @@ class TTSPlayback:
                     voice_name=voice_name,
                     voice_style=voice_style,
                     voice_rate=voice_rate,
+                    voice_pitch=voice_pitch,
                     on_first_audio=_on_first_audio_wrapper,
                 )
 
@@ -567,6 +580,7 @@ class TTSPlayback:
         voice_name: str | None = None,
         voice_style: str | None = None,
         voice_rate: str | None = None,
+        voice_pitch: str | None = None,
         on_first_audio: Callable[[], None] | None = None,
     ) -> bool:
         """
@@ -577,6 +591,7 @@ class TTSPlayback:
             voice_name: Override voice (uses agent voice if not provided)
             voice_style: Override style
             voice_rate: Override rate
+            voice_pitch: Override pitch (uses agent voice if not provided)
             on_first_audio: Callback when first audio chunk is sent
 
         Returns:
@@ -589,17 +604,22 @@ class TTSPlayback:
 
         # Resolve voice from agent if not provided
         if not voice_name:
-            voice_name, voice_style, voice_rate = self.get_agent_voice()
+            voice_name, agent_style, agent_rate, agent_pitch = self.get_agent_voice()
+            voice_style = voice_style if voice_style is not None else agent_style
+            voice_rate = voice_rate if voice_rate is not None else agent_rate
+            voice_pitch = voice_pitch if voice_pitch is not None else agent_pitch
 
         style = voice_style or "conversational"
         rate = voice_rate or "medium"
+        pitch = voice_pitch
 
         logger.debug(
-            "[%s] Browser TTS: voice=%s style=%s rate=%s (run=%s)",
+            "[%s] Browser TTS: voice=%s style=%s rate=%s pitch=%s (run=%s)",
             self._session_short,
             voice_name,
             style,
             rate,
+            pitch,
             run_id,
         )
 
@@ -639,12 +659,12 @@ class TTSPlayback:
                 # transmission are pipelined together.
                 if _STREAMING_ENABLED and hasattr(synth, "synthesize_to_pcm_stream"):
                     return await self._stream_synth_to_browser(
-                        synth, text, voice_name, style, rate, on_first_audio, run_id
+                        synth, text, voice_name, style, rate, on_first_audio, run_id, pitch=pitch
                     )
 
                 # Synthesize audio (under lock)
                 pcm_bytes = await self._synthesize(
-                    synth, text, voice_name, style, rate, SAMPLE_RATE_BROWSER
+                    synth, text, voice_name, style, rate, SAMPLE_RATE_BROWSER, pitch=pitch
                 )
 
             # Lock released — check cancel before streaming (read-only).
@@ -679,6 +699,7 @@ class TTSPlayback:
         voice_name: str | None = None,
         voice_style: str | None = None,
         voice_rate: str | None = None,
+        voice_pitch: str | None = None,
         blocking: bool = False,
         on_first_audio: Callable[[], None] | None = None,
     ) -> bool:
@@ -690,6 +711,7 @@ class TTSPlayback:
             voice_name: Override voice (uses agent voice if not provided)
             voice_style: Override style
             voice_rate: Override rate
+            voice_pitch: Override pitch (uses agent voice if not provided)
             blocking: Whether to pace audio for real-time playback
             on_first_audio: Callback when first audio chunk is sent
 
@@ -704,18 +726,23 @@ class TTSPlayback:
 
         # Resolve voice from agent if not provided
         if not voice_name:
-            voice_name, voice_style, voice_rate = self.get_agent_voice()
+            voice_name, agent_style, agent_rate, agent_pitch = self.get_agent_voice()
+            voice_style = voice_style if voice_style is not None else agent_style
+            voice_rate = voice_rate if voice_rate is not None else agent_rate
+            voice_pitch = voice_pitch if voice_pitch is not None else agent_pitch
 
         style = voice_style or "conversational"
         rate = voice_rate or "medium"
+        pitch = voice_pitch
 
         logger.info(
-            "[%s] ACS TTS START: text='%s...' voice=%s style=%s rate=%s blocking=%s (run=%s)",
+            "[%s] ACS TTS START: text='%s...' voice=%s style=%s rate=%s pitch=%s blocking=%s (run=%s)",
             self._session_short,
             text[:50],
             voice_name,
             style,
             rate,
+            pitch,
             blocking,
             run_id,
         )
@@ -761,7 +788,15 @@ class TTSPlayback:
                 # transmission are pipelined together.
                 if _STREAMING_ENABLED and hasattr(synth, "synthesize_to_pcm_stream"):
                     result = await self._stream_synth_to_acs(
-                        synth, text, voice_name, style, rate, blocking, on_first_audio, run_id
+                        synth,
+                        text,
+                        voice_name,
+                        style,
+                        rate,
+                        blocking,
+                        on_first_audio,
+                        run_id,
+                        pitch=pitch,
                     )
                     logger.info(
                         "[%s] ACS TTS: Stream complete, result=%s", self._session_short, result
@@ -769,7 +804,7 @@ class TTSPlayback:
                     return result
 
                 pcm_bytes = await self._synthesize(
-                    synth, text, voice_name, style, rate, SAMPLE_RATE_ACS
+                    synth, text, voice_name, style, rate, SAMPLE_RATE_ACS, pitch=pitch
                 )
 
             # Lock released — check cancel before streaming (read-only).
@@ -816,14 +851,17 @@ class TTSPlayback:
         style: str,
         rate: str,
         sample_rate: int,
+        *,
+        pitch: str | None = None,
     ) -> bytes | None:
         """Synthesize text to PCM audio bytes."""
         logger.info(
-            "[%s] Synthesizing: text_len=%d voice=%s rate=%s sample_rate=%d",
+            "[%s] Synthesizing: text_len=%d voice=%s rate=%s pitch=%s sample_rate=%d",
             self._session_short,
             len(text),
             voice,
             rate,
+            pitch,
             sample_rate,
         )
 
@@ -834,6 +872,7 @@ class TTSPlayback:
             sample_rate=sample_rate,
             style=style,
             rate=rate,
+            pitch=pitch,
         )
 
         # Add timeout to prevent indefinite blocking on Speech SDK issues
@@ -880,6 +919,8 @@ class TTSPlayback:
         style: str,
         rate: str,
         sample_rate: int,
+        *,
+        pitch: str | None = None,
     ):
         """
         Async-iterate raw PCM chunks from the blocking streaming generator.
@@ -915,6 +956,7 @@ class TTSPlayback:
                     sample_rate=sample_rate,
                     style=style,
                     rate=rate,
+                    pitch=pitch,
                     cancel_event=stop,
                 )
                 with contextlib.closing(chunks):
@@ -960,6 +1002,8 @@ class TTSPlayback:
         rate: str,
         on_first_audio: Callable[[], None] | None,
         run_id: str,
+        *,
+        pitch: str | None = None,
     ) -> bool:
         """Synthesize and stream PCM to the browser WebSocket as it is produced."""
         chunk_size = 4800  # 100ms at 48kHz mono 16-bit
@@ -1003,7 +1047,9 @@ class TTSPlayback:
             await asyncio.sleep(0)
             return True
 
-        chunks = self._iter_synth_chunks(synth, text, voice, style, rate, SAMPLE_RATE_BROWSER)
+        chunks = self._iter_synth_chunks(
+            synth, text, voice, style, rate, SAMPLE_RATE_BROWSER, pitch=pitch
+        )
         try:
             async for pcm in chunks:
                 if self._is_cancelled():
@@ -1063,6 +1109,8 @@ class TTSPlayback:
         blocking: bool,
         on_first_audio: Callable[[], None] | None,
         run_id: str,
+        *,
+        pitch: str | None = None,
     ) -> bool:
         """Synthesize and stream PCM to the ACS WebSocket as it is produced."""
         chunk_size = 1280  # 40ms at 16kHz mono 16-bit
@@ -1126,7 +1174,9 @@ class TTSPlayback:
             await asyncio.sleep(0.04 if blocking else 0)
             return True
 
-        chunks = self._iter_synth_chunks(synth, text, voice, style, rate, SAMPLE_RATE_ACS)
+        chunks = self._iter_synth_chunks(
+            synth, text, voice, style, rate, SAMPLE_RATE_ACS, pitch=pitch
+        )
         try:
             async for pcm in chunks:
                 if self._is_cancelled():

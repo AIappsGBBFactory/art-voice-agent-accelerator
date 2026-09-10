@@ -48,11 +48,16 @@ class CountingRedisManager:
     async def get_session_data_async(self, key: str, *, raise_on_failure=False) -> dict:
         return self.get_session_data(key)
 
-    async def store_session_data_async(self, key: str, data: dict) -> bool:
+    async def store_session_data_async(self, key: str, data: dict, **kwargs) -> bool:
+        from src.redis.manager import merge_session_snapshot
+
         self.write_count += 1
         if self.fail_writes:
             return False
-        self.store[key] = dict(data)
+        merged = merge_session_snapshot(self.store.get(key, {}), data, **kwargs)
+        self.store[key] = merged
+        data.clear()
+        data.update(merged)
         return True
 
 

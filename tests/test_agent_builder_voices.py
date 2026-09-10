@@ -18,19 +18,21 @@ enumeration stubbed, so they exercise the real server-side merge/tag/sort logic.
 from __future__ import annotations
 
 import asyncio
+import time
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
-
 from apps.artagent.backend.api.v1.endpoints import agent_builder
 from apps.artagent.backend.api.v1.endpoints.agent_builder import (
-    AVAILABLE_VOICES,
     _HD_CATALOG,
+    AVAILABLE_VOICES,
     _classify_voice_name,
     _locale_from_short_name,
     list_available_voices,
 )
-
+from apps.artagent.backend.api.v1.schemas.voices import VoiceInfo
+from apps.artagent.backend.src.services import voice_catalog
 
 # =============================================================================
 # HELPERS
@@ -39,7 +41,7 @@ from apps.artagent.backend.api.v1.endpoints.agent_builder import (
 
 def call(**kwargs):
     """Invoke the endpoint coroutine synchronously."""
-    return asyncio.run(list_available_voices(**kwargs))
+    return asyncio.run(list_available_voices(**kwargs)).model_dump()
 
 
 def sdk_voice(short_name: str, locale: str, local_name: str, gender: str = "Female"):
@@ -71,12 +73,14 @@ REGION_SAMPLE = [
 
 @pytest.fixture(autouse=True)
 def _clear_voice_cache():
-    """The region voice list is process-cached; isolate every test."""
-    agent_builder._AVAILABLE_VOICES_CACHE["voices"] = None
-    agent_builder._AVAILABLE_VOICES_CACHE["expires"] = 0.0
+    """The async regional service owns the single resource-scoped cache."""
+    voice_catalog._cache.clear()
+    voice_catalog._failures.clear()
+    voice_catalog._pending.clear()
     yield
-    agent_builder._AVAILABLE_VOICES_CACHE["voices"] = None
-    agent_builder._AVAILABLE_VOICES_CACHE["expires"] = 0.0
+    voice_catalog._cache.clear()
+    voice_catalog._failures.clear()
+    voice_catalog._pending.clear()
 
 
 @pytest.fixture
@@ -85,12 +89,25 @@ def region(monkeypatch):
 
     def _install(sdk_voices):
         converted = [
-            info
-            for info in (agent_builder._sdk_voice_to_info(v) for v in sdk_voices)
-            if info is not None
+            VoiceInfo(
+                name=voice.short_name,
+                display_name=voice.local_name,
+                local_name=voice.local_name,
+                language=voice.locale,
+                gender=voice.gender.name,
+                category=voice_catalog.voice_category(voice.short_name),
+            )
+            for voice in sdk_voices
         ]
         monkeypatch.setattr(
-            agent_builder, "_fetch_region_voices", lambda refresh=False: converted
+            agent_builder,
+            "discover_voice_catalog",
+            AsyncMock(
+                return_value=voice_catalog.VoiceDiscovery(
+                    voice_catalog.speech_voice_scope(),
+                    voice_catalog.VoiceSnapshot(tuple(converted), time.time()),
+                )
+            ),
         )
         return converted
 
@@ -100,7 +117,13 @@ def region(monkeypatch):
 @pytest.fixture
 def offline(monkeypatch):
     """Stub the region enumeration as unreachable (returns None)."""
-    monkeypatch.setattr(agent_builder, "_fetch_region_voices", lambda refresh=False: None)
+    monkeypatch.setattr(
+        agent_builder,
+        "discover_voice_catalog",
+        AsyncMock(
+            return_value=voice_catalog.VoiceDiscovery(voice_catalog.speech_voice_scope(), None)
+        ),
+    )
 
 
 # =============================================================================
@@ -162,7 +185,14 @@ def test_catalog_covers_documented_hd_voices():
         assert expected in names, f"missing documented HD voice {expected}"
 
     # Regional representation: HD is not an en-US-only family.
-    assert {v.language for v in _HD_CATALOG} >= {"en-US", "de-DE", "es-ES", "fr-FR", "ja-JP", "zh-CN"}
+    assert {v.language for v in _HD_CATALOG} >= {
+        "en-US",
+        "de-DE",
+        "es-ES",
+        "fr-FR",
+        "ja-JP",
+        "zh-CN",
+    }
     assert all(v.is_hd and v.category == "hd" for v in _HD_CATALOG)
 
 
@@ -289,7 +319,7 @@ def test_locale_filter_is_case_insensitive(region):
 
 
 def test_fetch_region_voices_reads_sdk_and_caches(monkeypatch):
-    """Exercise the real _fetch_region_voices path with a stubbed synthesizer so
+    """Exercise the real async discovery path with a stubbed synthesizer so
     the SDK → VoiceInfo conversion and the 10-minute cache are covered."""
     speechsdk = pytest.importorskip("azure.cognitiveservices.speech")
 
@@ -309,26 +339,36 @@ def test_fetch_region_voices_reads_sdk_and_caches(monkeypatch):
             )
 
     monkeypatch.setattr(speechsdk, "SpeechSynthesizer", _Synth)
-    monkeypatch.setattr(agent_builder, "_build_voice_query_speech_config", lambda: object())
+    monkeypatch.setattr(speechsdk, "SpeechConfig", lambda **kwargs: object())
+    monkeypatch.setattr(
+        voice_catalog,
+        "speech_voice_scope",
+        lambda: voice_catalog.SpeechVoiceScope("westus2", "", "", "test-key"),
+    )
 
-    voices = agent_builder._fetch_region_voices()
+    snapshot = asyncio.run(voice_catalog.discover_voice_catalog()).snapshot
+    voices = snapshot.voices
     assert voices is not None
     assert len(voices) == len(REGION_SAMPLE)
     assert sum(1 for v in voices if v.is_hd) == 7
     assert all(v.region_verified for v in voices)
 
     # Second call is served from the cache — no extra Azure round-trip.
-    agent_builder._fetch_region_voices()
+    asyncio.run(voice_catalog.discover_voice_catalog())
     assert calls["n"] == 1
 
-    # refresh=True bypasses the cache.
-    agent_builder._fetch_region_voices(refresh=True)
+    # The endpoint's refresh=True maps to use_cache=False on the shared service.
+    asyncio.run(voice_catalog.discover_voice_catalog(use_cache=False))
     assert calls["n"] == 2
 
 
 def test_fetch_region_voices_returns_none_when_speech_unconfigured(monkeypatch):
-    monkeypatch.setattr(agent_builder, "_build_voice_query_speech_config", lambda: None)
-    assert agent_builder._fetch_region_voices() is None
+    monkeypatch.setattr(
+        voice_catalog, "speech_voice_scope", lambda: voice_catalog.SpeechVoiceScope("", "", "", "")
+    )
+    result = asyncio.run(voice_catalog.discover_voice_catalog())
+    assert result.snapshot is None
+    assert "no configured Speech" in result.warning
 
 
 # =============================================================================
@@ -421,9 +461,7 @@ def test_response_shape_is_backward_compatible(region):
 
 
 def test_voices_payload_names_the_speech_resource_and_region(region, monkeypatch):
-    monkeypatch.setenv(
-        "AZURE_SPEECH_ENDPOINT", "https://contoso-aif.cognitiveservices.azure.com/"
-    )
+    monkeypatch.setenv("AZURE_SPEECH_ENDPOINT", "https://contoso-aif.cognitiveservices.azure.com/")
     monkeypatch.setenv("AZURE_SPEECH_REGION", "northcentralus")
     monkeypatch.setenv("CONTAINER_APP_ENV_DNS_SUFFIX", "calmstone.westus2.azurecontainerapps.io")
     region(REGION_SAMPLE)
@@ -446,6 +484,6 @@ def test_voices_payload_leaves_region_unknown_when_unconfigured(region, monkeypa
 
     payload = call()
 
-    assert payload["region"] == ""
+    assert payload["region"] is None
     assert payload["region_source"] == ""
     assert payload["resource_name"] == ""

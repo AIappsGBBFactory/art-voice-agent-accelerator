@@ -43,10 +43,12 @@ Example:
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import time
 import uuid
 from collections import deque
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -57,7 +59,12 @@ from src.agenticmemory.types import ChatHistory, CoreMemory
 from src.agenticmemory.utils import LatencyTracker
 
 # TODO Fix this area
-from src.redis.manager import AzureRedisManager
+from src.redis.manager import (
+    ACTIVATION_FIELDS,
+    AUTHORING_FIELDS,
+    AUTHORING_REVISION_KEY,
+    AzureRedisManager,
+)
 from src.tools.latency_helpers import PersistentLatency, StageSample
 
 if TYPE_CHECKING:
@@ -77,6 +84,9 @@ class _PendingWrite:
     ttl_seconds: int | None
     background: bool
     completion: asyncio.Future[Exception | None]
+    authoring_fields: tuple[str, ...]
+    registry_updates: dict[str, dict[str, Any]] | None
+    runtime_changes: tuple[str, ...]
 
 
 class MemoManager:
@@ -181,6 +191,8 @@ class MemoManager:
         self._persist_writer_error: RuntimeError | None = None
         self._mcp_manager: MCPSessionManager | None = None
         self._turn_sequence: int = 0  # Track turn segments for tool call boundaries
+        self._activation_baseline: dict[str, Any] = {}
+        self._authoring_baseline: dict[str, Any] = {}
         now = time.time()
         self.corememory.set("created_at", now)
         self.corememory.set("last_activity", now)
@@ -276,6 +288,81 @@ class MemoManager:
             self._HISTORY_KEY: self.chatHistory.to_json(),
         }
 
+    def _capture_activation_baseline(self) -> None:
+        self._activation_baseline = {
+            key: copy.deepcopy(self.context[key])
+            for key in ACTIVATION_FIELDS
+            if key in self.context
+        }
+        self._authoring_baseline = {
+            key: copy.deepcopy(self.context[key]) for key in AUTHORING_FIELDS if key in self.context
+        }
+
+    def _changed_activation_fields(self, submitted_core: str) -> tuple[str, ...]:
+        submitted = json.loads(submitted_core)
+        return tuple(
+            sorted(
+                key
+                for key in ACTIVATION_FIELDS
+                if (key in submitted) != (key in self._activation_baseline)
+                or submitted.get(key) != self._activation_baseline.get(key)
+            )
+        )
+
+    def _acknowledge_session_write(
+        self,
+        submitted_core: str,
+        persisted_core: str,
+        *,
+        expected_revision: str | None,
+        authoring_fields: Collection[str] = (),
+        registry_updates: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> None:
+        """Learn server-owned config without disguising stale runtime state as a handoff."""
+        submitted = json.loads(submitted_core)
+        persisted = json.loads(persisted_core)
+        authored = set(authoring_fields) | set(registry_updates or {})
+        resets_activation = any(
+            key in authored
+            and ((key in submitted) != (key in baseline) or submitted.get(key) != baseline.get(key))
+            for key, baseline in (
+                ("active_agent", self._activation_baseline),
+                ("active_scenario_name", self._authoring_baseline),
+                ("scenario_name", self._authoring_baseline),
+                ("session_scenario_config", self._authoring_baseline),
+            )
+        )
+        if self.context.get(AUTHORING_REVISION_KEY) == expected_revision:
+            for key in AUTHORING_FIELDS:
+                if not any(
+                    (key in self.context) == (key in baseline)
+                    and self.context.get(key) == baseline.get(key)
+                    for baseline in (submitted, self._authoring_baseline)
+                ):
+                    continue
+                if key in persisted:
+                    self.corememory.set(key, persisted[key])
+                else:
+                    self.context.pop(key, None)
+            if AUTHORING_REVISION_KEY in persisted:
+                self.corememory.set(AUTHORING_REVISION_KEY, persisted[AUTHORING_REVISION_KEY])
+            else:
+                self.context.pop(AUTHORING_REVISION_KEY, None)
+            self._authoring_baseline = {
+                key: copy.deepcopy(persisted[key]) for key in AUTHORING_FIELDS if key in persisted
+            }
+        # Keep this memo's own activation baseline. Adopting the server's active
+        # agent here would make the next stale orchestrator sync look like a new
+        # handoff. An explicit Redis refresh resets the baseline instead.
+        acknowledged = ACTIVATION_FIELDS if not authored else ACTIVATION_FIELDS & authored
+        if resets_activation:
+            acknowledged |= ACTIVATION_FIELDS - {"active_agent"}
+        for key in acknowledged:
+            if key in submitted:
+                self._activation_baseline[key] = submitted[key]
+            else:
+                self._activation_baseline.pop(key, None)
+
     @classmethod
     def from_redis(cls, session_id: str, redis_mgr: AzureRedisManager) -> "MemoManager":
         """
@@ -313,6 +400,7 @@ class MemoManager:
             mm.corememory.from_json(data[mm._CORE_KEY])
         if mm._HISTORY_KEY in data:
             mm.chatHistory.from_json(data[mm._HISTORY_KEY])
+        mm._capture_activation_baseline()
         return mm
 
     @classmethod
@@ -346,6 +434,7 @@ class MemoManager:
                 mm.corememory.from_json(data[cls._CORE_KEY])
             if cls._HISTORY_KEY in data:
                 mm.chatHistory.from_json(data[cls._HISTORY_KEY])
+        mm._capture_activation_baseline()
         return mm
 
     @classmethod
@@ -364,6 +453,7 @@ class MemoManager:
             mm.corememory.from_json(data[cls._CORE_KEY])
         if cls._HISTORY_KEY in data:
             mm.chatHistory.from_json(data[cls._HISTORY_KEY])
+        mm._capture_activation_baseline()
         return mm
 
     async def persist(self, redis_mgr: AzureRedisManager | None = None) -> None:
@@ -402,7 +492,12 @@ class MemoManager:
         await self.persist_to_redis_async(mgr)
 
     def persist_to_redis(
-        self, redis_mgr: AzureRedisManager, ttl_seconds: int | None = None
+        self,
+        redis_mgr: AzureRedisManager,
+        ttl_seconds: int | None = None,
+        *,
+        authoring_fields: Collection[str] = (),
+        registry_updates: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> None:
         """
         Synchronously persist session state to Redis.
@@ -441,8 +536,25 @@ class MemoManager:
         if self._pending_persist_task and not self._pending_persist_task.done():
             raise RuntimeError("Flush pending persistence before a synchronous write")
         key = self.build_redis_key(self.session_id)
-        if not redis_mgr.store_session_data(key, self.to_redis_dict()):
+        data = self.to_redis_dict()
+        submitted_core = data[self._CORE_KEY]
+        expected_revision = self.context.get(AUTHORING_REVISION_KEY)
+        success = redis_mgr.store_session_data(
+            key,
+            data,
+            authoring_fields=authoring_fields,
+            registry_updates=registry_updates,
+            runtime_changes=self._changed_activation_fields(submitted_core),
+        )
+        if not success:
             raise RuntimeError(f"Redis write returned failure for session {self.session_id}")
+        self._acknowledge_session_write(
+            submitted_core,
+            data[self._CORE_KEY],
+            expected_revision=expected_revision,
+            authoring_fields=authoring_fields,
+            registry_updates=registry_updates,
+        )
         if ttl_seconds:
             if not redis_mgr.redis_client.expire(key, ttl_seconds):
                 raise RuntimeError(f"Redis expiry returned failure for session {self.session_id}")
@@ -459,6 +571,8 @@ class MemoManager:
         ttl_seconds: int | None = None,
         *,
         raise_on_failure: bool = False,
+        authoring_fields: Collection[str] = (),
+        registry_updates: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> bool:
         """
         Persist a whole-state snapshot through this instance's ordered writer.
@@ -469,11 +583,31 @@ class MemoManager:
         the caller stops waiting, not the queued or executor-backed Redis write;
         ``flush_pending_persist`` can subsequently wait for its outcome.
 
-        Ordering requires one MemoManager on one event loop. Independent
-        instances/workers writing the same session are not coordinated.
+        Args:
+            redis_mgr (AzureRedisManager): Redis connection manager for persistence
+            ttl_seconds (Optional[int]): Time-to-live in seconds for session data.
+                If None, data persists indefinitely.
+            raise_on_failure (bool): When True, raise on write failure instead of
+                silently returning False. Use this in code paths where the caller
+                **must** know whether persistence succeeded (e.g. scenario creation).
+            authoring_fields: Explicit configuration fields owned by this write.
+                Ordinary conversation persistence must leave this empty.
+            registry_updates: Per-name replacements/deletions in authoring registries;
+                None values delete entries. Other records and conversation history
+                are preserved atomically.
+
+        Ordering is per instance on its owning event loop. Redis atomically
+        preserves authoring-owned fields across independent conversation
+        writers; independent conversation histories remain whole snapshots.
         """
         try:
-            request = self._enqueue_persist(redis_mgr, ttl_seconds, background=False)
+            request = self._enqueue_persist(
+                redis_mgr,
+                ttl_seconds,
+                background=False,
+                authoring_fields=authoring_fields,
+                registry_updates=registry_updates,
+            )
             error = await asyncio.shield(request.completion)
         except Exception as e:
             logger.error("Error submitting persistence for session %s: %s", self.session_id, e)
@@ -492,6 +626,8 @@ class MemoManager:
         ttl_seconds: int | None,
         *,
         background: bool,
+        authoring_fields: Collection[str] = (),
+        registry_updates: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> _PendingWrite:
         loop = asyncio.get_running_loop()
         if (
@@ -506,6 +642,7 @@ class MemoManager:
             raise self._persist_writer_error
         # Serialize both fields before yielding, never from the executor.
         snapshot = self.to_redis_dict()
+        runtime_changes = self._changed_activation_fields(snapshot[self._CORE_KEY])
         if background and self._persist_queue:
             pending = self._persist_queue[-1]
             if (
@@ -514,6 +651,7 @@ class MemoManager:
                 and pending.ttl_seconds == ttl_seconds
             ):
                 pending.snapshot = snapshot
+                pending.runtime_changes = runtime_changes
                 return pending
 
         self._persist_sequence += 1
@@ -524,6 +662,11 @@ class MemoManager:
             ttl_seconds=ttl_seconds,
             background=background,
             completion=loop.create_future(),
+            authoring_fields=tuple(authoring_fields),
+            registry_updates=(
+                copy.deepcopy(registry_updates) if registry_updates is not None else None
+            ),
+            runtime_changes=runtime_changes,
         )
         self._persist_queue.append(request)
         if self._pending_persist_task is None or self._pending_persist_task.done():
@@ -557,8 +700,27 @@ class MemoManager:
 
     async def _write_snapshot(self, request: _PendingWrite) -> None:
         key = self.build_redis_key(self.session_id)
-        if not await request.redis_mgr.store_session_data_async(key, request.snapshot):
+        submitted_core = request.snapshot[self._CORE_KEY]
+        expected_revision = self.context.get(AUTHORING_REVISION_KEY)
+        if not await request.redis_mgr.store_session_data_async(
+            key,
+            request.snapshot,
+            authoring_fields=request.authoring_fields,
+            registry_updates=request.registry_updates,
+            # A pending author's activation must not turn an already-queued
+            # stale snapshot into a handoff. Nor may repeated queued snapshots
+            # replay a handoff that an earlier request already acknowledged.
+            runtime_changes=set(request.runtime_changes)
+            & set(self._changed_activation_fields(submitted_core)),
+        ):
             raise RuntimeError(f"Redis write returned failure for session {self.session_id}")
+        self._acknowledge_session_write(
+            submitted_core,
+            request.snapshot[self._CORE_KEY],
+            expected_revision=expected_revision,
+            authoring_fields=request.authoring_fields,
+            registry_updates=request.registry_updates,
+        )
         if request.ttl_seconds:
             expired = await asyncio.get_running_loop().run_in_executor(
                 None, request.redis_mgr.redis_client.expire, key, request.ttl_seconds
@@ -1664,6 +1826,7 @@ class MemoManager:
             if "corememory" in data:
                 new_context = json.loads(data["corememory"])
                 self.context = new_context
+                self._capture_activation_baseline()
             logger.info(f"Successfully refreshed live data for session {self.session_id}")
             return True
         except Exception as e:
@@ -1686,6 +1849,7 @@ class MemoManager:
             if "corememory" in data:
                 new_context = json.loads(data["corememory"])
                 self.context = new_context
+                self._capture_activation_baseline()
             logger.info(f"Successfully refreshed live data for session {self.session_id}")
             return True
         except Exception as e:
@@ -1777,6 +1941,7 @@ class MemoManager:
                 if not refresh_queue:
                     new_context.pop("message_queue", None)
                 self.context.update(new_context)
+                self._capture_activation_baseline()
                 updated["corememory"] = True
                 logger.debug(f"Updated context for session {self.session_id}")
             if refresh_histories and "chat_history" in data:

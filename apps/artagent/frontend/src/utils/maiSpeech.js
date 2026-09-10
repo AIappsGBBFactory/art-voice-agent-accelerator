@@ -1,0 +1,74 @@
+import { MANAGED_VOICELIVE_MODELS, classifyModelArch } from './foundryModels.js';
+
+export const MAI_TRANSCRIPTION_MODEL = 'mai-transcribe';
+const MAI_ALIASES = new Set(['mai-transcribe', 'mai-transcribe-1.5', 'mai-transcribe-2']);
+const CHAT_PROFILES = new Set(['byom-azure-openai-chat-completion', 'byom-foundry-anthropic-messages']);
+
+export const MAI_VOICE_PRESETS = [
+  ['en-US-Harper:MAI-Voice-2-Flash', 'Harper', 'Female'],
+  ['en-US-Ethan:MAI-Voice-2-Flash', 'Ethan', 'Male'],
+  ['en-US-Harper:MAI-Voice-2', 'Harper', 'Female'],
+  ['en-US-Ethan:MAI-Voice-2', 'Ethan', 'Male'],
+].map(([name, display_name, gender]) => ({
+  name, display_name, gender, language: 'en-US', category: 'mai', status: 'Preview',
+  unavailablePreset: true,
+}));
+
+export function normalizeTranscriptionModel(model) {
+  return MAI_ALIASES.has(String(model || '').trim().toLowerCase()) ? MAI_TRANSCRIPTION_MODEL : model || '';
+}
+
+export function maiVoiceRank(name) {
+  const value = String(name || '').toLowerCase();
+  if (value.includes(':mai-voice-2-flash')) return 0;
+  return value.includes(':mai-voice') ? 1 : 2;
+}
+
+export function voiceDisplayLabel(voice) {
+  const label = voice.display_name || voice.name;
+  if (maiVoiceRank(voice.name) > 1 || /mai/i.test(label)) return label;
+  return `${label} (${voice.name.split(':').at(-1)})`;
+}
+
+export function voiceLivePipeline(config) {
+  const profile = config.byom?.mode;
+  if (CHAT_PROFILES.has(profile)) return 'byom-chat';
+  if (profile === 'byom-azure-openai-realtime') return 'native';
+  if (profile) return 'unknown';
+  const model = config.voicelive_model?.deployment_id || config.model?.deployment_id;
+  const managed = MANAGED_VOICELIVE_MODELS.find((item) => item.id === model);
+  return managed ? classifyModelArch(model) === 'native' ? 'native' : 'managed-chat' : 'unknown';
+}
+
+export function maiConfigurationError(config, mode, voiceMetadata) {
+  if (!config) return '';
+  const model = normalizeTranscriptionModel(mode === 'voicelive'
+    ? config.session?.input_audio_transcription_settings?.model : config.speech?.transcription_model);
+  if (model !== MAI_TRANSCRIPTION_MODEL) return '';
+  if (voiceMetadata !== undefined
+    && !voiceMetadata?.runtime_transcription_models?.[mode]?.includes(MAI_TRANSCRIPTION_MODEL)) {
+    return 'The connected backend does not yet advertise MAI input support for this mode. Update the API and refresh the catalog before applying.';
+  }
+  if (mode === 'voicelive') {
+    if (!['managed-chat', 'byom-chat'].includes(voiceLivePipeline(config))) {
+      return 'MAI Transcribe requires a text-based VoiceLive model or a BYOM chat/Messages profile, not native realtime audio.';
+    }
+    const settings = config.session?.input_audio_transcription_settings || {};
+    if (settings.custom_speech != null || settings.phrase_list != null) {
+      return 'MAI Transcribe cannot use Azure-only custom speech models or phrase lists. Remove those options or use Azure Speech.';
+    }
+  } else if (config.speech?.enable_diarization) {
+    return 'MAI live input does not support the Azure SDK diarization option. Disable diarization to use this input provider.';
+  }
+  return '';
+}
+
+export function useManagedMaiPipeline(config) {
+  return {
+    ...config,
+    byom: null,
+    voicelive_model: {
+      ...config.voicelive_model, deployment_id: 'gpt-4.1', name: 'gpt-4.1', model_family: null,
+    },
+  };
+}

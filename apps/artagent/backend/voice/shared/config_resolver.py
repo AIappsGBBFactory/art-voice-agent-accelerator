@@ -164,7 +164,9 @@ def _get_scenario_agents(scenario_name: str) -> dict[str, Any]:
         return _load_base_agents()
 
 
-def _build_agents_from_session_scenario(scenario: ScenarioConfig) -> dict[str, Any]:
+def _build_agents_from_session_scenario(
+    scenario: ScenarioConfig, *, session_id: str | None = None
+) -> dict[str, Any]:
     """
     Build agent registry from a session-scoped scenario.
     
@@ -175,7 +177,15 @@ def _build_agents_from_session_scenario(scenario: ScenarioConfig) -> dict[str, A
     orchestrator adapters that expect UnifiedAgent instances.
     """
     # Start with base agents (dict of UnifiedAgent objects)
-    base_agents = _load_base_agents()
+    base_agents = dict(_load_base_agents())
+    if session_id:
+        from apps.artagent.backend.src.orchestration.session_agents import get_session_agents
+
+        for name, agent in get_session_agents(session_id).items():
+            original_key, _ = find_agent_by_name(base_agents, name)
+            if original_key is not None:
+                del base_agents[original_key]
+            base_agents[name] = agent
     
     # If scenario specifies agent list, filter to only those agents
     if scenario.agents:
@@ -194,7 +204,6 @@ def _build_agents_from_session_scenario(scenario: ScenarioConfig) -> dict[str, A
                     agent_name,
                 )
         base_agents = filtered_agents
-        base_agents = filtered_agents
     
     logger.debug(
         "Built agents from session scenario | included=%s start_agent=%s",
@@ -202,7 +211,9 @@ def _build_agents_from_session_scenario(scenario: ScenarioConfig) -> dict[str, A
         scenario.start_agent,
     )
     
-    return base_agents
+    from apps.artagent.backend.registries.scenariostore.loader import apply_scenario_overrides
+
+    return apply_scenario_overrides(scenario, base_agents)
 
 
 def resolve_orchestrator_config(
@@ -292,7 +303,9 @@ def resolve_orchestrator_config(
         
         # Build agents from session scenario
         if agents is None:
-            result.agents = _build_agents_from_session_scenario(session_scenario)
+            result.agents = _build_agents_from_session_scenario(
+                session_scenario, session_id=session_id
+            )
         
         # Build handoff map: merge scenario-defined with agent-derived (scenario takes precedence)
         if handoff_map is None:

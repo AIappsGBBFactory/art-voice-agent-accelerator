@@ -75,8 +75,13 @@ class FakeRedisManager:
     async def get_session_data_async(self, key: str, *, raise_on_failure=False) -> dict:
         return self.get_session_data(key)
 
-    async def store_session_data_async(self, key: str, data: dict) -> bool:
-        self.store[key] = dict(data)
+    async def store_session_data_async(self, key: str, data: dict, **kwargs) -> bool:
+        from src.redis.manager import merge_session_snapshot
+
+        merged = merge_session_snapshot(self.store.get(key, {}), data, **kwargs)
+        self.store[key] = merged
+        data.clear()
+        data.update(merged)
         self.write_count += 1
         return True
 
@@ -217,6 +222,9 @@ def _isolate_session_state(session_id):
         sa._session_agents.pop(session_id, None)
         sa._active_session_agents.pop(session_id, None)
         sa._session_load_times.pop(session_id, None)
+        sa._persisted_agent_data.pop(session_id, None)
+        sa._pending_agent_edits.pop(session_id, None)
+        sa._pending_agent_activations.pop(session_id, None)
 
     _clear()
     yield
@@ -270,6 +278,25 @@ class TestAgentSerializationRoundTrip:
         assert restored.cascade_model is None
         assert restored.voicelive_model is None
         assert restored.session == {}
+
+
+@pytest.mark.asyncio
+async def test_strict_persistence_reports_false_redis_write(session_id, fake_redis, monkeypatch):
+    async def failed_write(*args, **kwargs):
+        return False
+
+    sa._session_agents[session_id] = {"BankBot": make_rich_agent()}
+    monkeypatch.setattr(fake_redis, "store_session_data_async", failed_write)
+    with pytest.raises(RuntimeError, match="Redis write returned failure"):
+        await persist_session_agents_to_redis(session_id, raise_on_failure=True)
+    assert session_id not in sa._session_load_times
+    # Existing best-effort callers retain their previous semantics.
+    await persist_session_agents_to_redis(session_id)
+
+
+@pytest.mark.asyncio
+async def test_strict_persistence_preserves_legacy_memory_only_mode(session_id):
+    await persist_session_agents_to_redis(session_id, raise_on_failure=True)
 
 
 # =============================================================================

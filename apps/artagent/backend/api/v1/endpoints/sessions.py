@@ -11,6 +11,7 @@ Endpoints:
 - DELETE /api/v1/sessions/{session_id} - Delete a specific session
 """
 
+import asyncio
 import json
 import time
 from datetime import datetime, timezone
@@ -831,17 +832,15 @@ async def delete_session(
         # Construct session key
         session_key = f"session:{session_id}"
 
-        # Check if session exists
-        exists = redis_manager.redis_client.exists(session_key)
-
-        if not exists:
+        deleted_count = await asyncio.wait_for(
+            asyncio.to_thread(redis_manager.delete_session, session_key),
+            timeout=15,
+        )
+        if not deleted_count:
             raise HTTPException(
                 status_code=404,
                 detail=f"Session {session_id} not found"
             )
-
-        # Delete the session
-        deleted_count = redis_manager.delete_session(session_key)
 
         logger.info(f"Deleted session {session_id} (deleted {deleted_count} keys)")
 

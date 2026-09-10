@@ -104,27 +104,52 @@ promise durability by that deadline.
 ## Storage compatibility and limits
 
 Storage remains the `session:{session_id}` Redis hash with JSON strings in
-`corememory` and `chat_history`. Redis `HSET` updates both fields in one command
-and preserves other hash fields. Its return value of zero for existing fields is
-successful. No revision field, key migration, or new dependency is introduced.
+`corememory` and `chat_history`. Writes containing core memory merge owned fields
+against the current hash and use an atomic compare-and-store operation. Other
+hash fields are preserved. Non-memory hash writes retain the existing `HSET`
+behavior, including successful updates that return zero new fields. No session
+key migration or new storage dependency is introduced.
 
 Truthy `ttl_seconds` still applies `EXPIRE` after the write; `None` and zero skip
 expiry. Skipping expiry does not remove a pre-existing Redis TTL. Expiry is part
 of the same ordered operation and must succeed before it reports success.
-`HSET` and `EXPIRE` are separate commands, not an atomic transaction: expiry
+The snapshot write and `EXPIRE` are separate commands, not an atomic transaction: expiry
 failure can leave updated data with the previous TTL. Normal Redis socket/retry
 limits apply; a successful barrier means Redis acknowledged the operation, not
 a stronger disk-replication or failover guarantee.
 
-Ordering is **per MemoManager instance on its owning event loop**, not even a
-process-wide ordering guarantee. Two independently hydrated MemoManagers, another
-process/worker, a direct Redis writer, or a concurrent external configuration
-writer can still overwrite each other's whole-state snapshots. This change does
-not solve distributed read-modify-write races or merge stale snapshots. Active
-call mutations should use the same current instance. Configuration-only writers
-must not manufacture an empty MemoManager and persist it over live state.
-Coordinating independent writers requires a separately designed ownership/CAS/
-atomic-update contract; a process-global singleton is not a substitute.
+Ordering is **per MemoManager instance on its owning event loop**, not a
+process-wide ordering guarantee. Active call mutations still use the same
+current instance: arbitrary conversation/history changes from independent
+writers are not semantically merged. Authoring writes have the narrower
+cross-worker ownership contract below. Configuration-only writers must not
+manufacture an empty MemoManager and persist it over live state.
+
+## Authoring ownership and atomic drafts
+
+The ordered writer captures `authoring_fields`, `registry_updates`, and
+submission-time runtime changes alongside each immutable snapshot. Registry
+edits update only explicitly named agent/scenario entries; they do not replace
+conversation history from an author's older snapshot. Ordinary conversation
+writes preserve committed authoring-owned fields and cannot replay a stale
+scenario selection or resurrect deleted definitions.
+
+An internal `__authoring_revision` identifies published authoring state. Scenario
+activation clears superseded pending handoff/context state, while deliberate
+runtime handoffs remain possible through tracked runtime changes. This does not
+make unrelated conversation writers safe to run concurrently.
+
+`src/orchestration/session_drafts.py` reads a strict, session-scoped snapshot and
+atomically publishes the complete draft's agents, scenario, and activation before
+notifying runtime caches. Redis CAS receipts distinguish lost acknowledgements
+from uncommitted operations; receipt retention is 120 seconds against a 30-second
+retry budget. Retrying a previously committed operation does not reactivate it
+over a newer authoring operation. Registry read-through, canonical casing, and
+explicit deletion remain supported.
+
+Use the existing async registry/publication helpers for authoring. Normal turn
+and close persistence must not claim authoring ownership or bypass the current
+MemoManager's ordered write/flush lifecycle.
 
 ## Consumer integration
 
@@ -151,7 +176,8 @@ justify a final snapshot or lease reuse.
 Async definition mutation/removal entry points prime existing definition views
 before editing. Sync compatibility APIs remain, but in-event-loop sync reads use
 the primed view rather than synchronous Redis hydration. These views and the
-existing application registry do not supply distributed conflict resolution.
+existing application registry are not distributed locks; cross-worker
+authoring consistency comes from the scoped ownership/CAS contract above.
 See [the extension guide](voice-extension-guide.md) for ownership and limits.
 
 The existing registry and unified-orchestrator background callers pass Redis
@@ -176,6 +202,7 @@ from a foreign thread while the MemoManager is in active use on another loop.
 python -m pytest tests/test_memo_optimization.py tests/test_memo_persistence.py \
     tests/test_redis_manager.py tests/test_session_agent_redis_roundtrip.py \
     tests/test_session_agent_contract.py tests/test_voice_close_contract.py \
+    tests/test_authoring_persistence_ownership.py tests/test_scenario_draft_authoring.py \
     tests/test_voice_endpoint_close.py \
     tests/test_acs_events_handlers.py \
     tests/test_dtmf_validation.py tests/test_dtmf_validation_failure_cancellation.py \
@@ -190,4 +217,5 @@ full-state preservation, restoration parity, and the separate-instance limit.
 Real DTMF and latency callback paths also run behind an outstanding executor
 write, including immediate flush, cancellation/failure handling, and off-loop
 synchronous latency compatibility.
-No live Redis or Azure service is used.
+The ownership suite also starts an isolated local Redis instance for CAS and
+lost-acknowledgement races. No Azure service is used by these unit tests.

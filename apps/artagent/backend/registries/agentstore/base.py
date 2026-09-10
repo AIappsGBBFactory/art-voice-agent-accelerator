@@ -29,6 +29,7 @@ Usage:
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -36,7 +37,8 @@ from pathlib import Path
 from typing import Any
 
 from apps.artagent.backend.registries.definitions import decode_definition, definition_payload
-from jinja2 import Template
+from jinja2 import TemplateError
+from jinja2.sandbox import ImmutableSandboxedEnvironment
 from utils.ml_logging import get_logger
 
 logger = get_logger("agents.base")
@@ -188,6 +190,71 @@ VOICELIVE_BYOM_MODES = (
     "byom-foundry-anthropic-messages",
 )
 
+MAI_TRANSCRIPTION_MODEL = "mai-transcribe"
+MAI_VOICELIVE_API_VERSION = "2026-04-10"
+
+
+def normalize_transcription_model(model: str) -> str:
+    """Resolve old MAI family labels to the service-managed alias, not a version."""
+    if not isinstance(model, str):
+        raise ValueError("transcription_model must be a string")
+    if model.strip().lower() in {"mai-transcribe", "mai-transcribe-1.5", "mai-transcribe-2"}:
+        return MAI_TRANSCRIPTION_MODEL
+    return model
+
+
+def validate_mai_customization(model: str, settings: dict[str, Any]) -> None:
+    """Reject retained Azure Speech customization rather than ignoring it for MAI."""
+    if normalize_transcription_model(model) != MAI_TRANSCRIPTION_MODEL:
+        return
+    incompatible = [
+        key for key in ("custom_speech", "phrase_list") if settings.get(key) is not None
+    ]
+    if incompatible:
+        raise ValueError(
+            f"mai-transcribe does not support {', '.join(incompatible)}. "
+            "Remove these Azure Speech options or select azure-speech."
+        )
+
+
+def validate_voicelive_transcription(
+    settings: dict[str, Any] | None,
+    *,
+    model_name: str,
+    byom_profile: str | None = None,
+) -> dict[str, Any]:
+    """Return normalized input settings, rejecting MAI incompatibilities at runtime.
+
+    Validate against the connection's model/profile during handoffs, not the
+    target agent's unused model choice. Do not use this cross-mode check when
+    saving an agent: its VoiceLive configuration may be unused in Cascade.
+    """
+    if byom_profile and byom_profile not in VOICELIVE_BYOM_MODES:
+        raise ValueError(
+            f"Unsupported VoiceLive BYOM profile '{byom_profile}'. "
+            f"Use one of: {', '.join(VOICELIVE_BYOM_MODES)}."
+        )
+    result = dict(settings or {})
+    if isinstance(result.get("model"), str):
+        result["model"] = normalize_transcription_model(result["model"])
+    if result.get("model") != MAI_TRANSCRIPTION_MODEL:
+        return result
+
+    validate_mai_customization(MAI_TRANSCRIPTION_MODEL, result)
+    if byom_profile == "byom-azure-openai-realtime":
+        raise ValueError(
+            "mai-transcribe cannot use the byom-azure-openai-realtime profile. "
+            "Select a managed text model or an explicit BYOM chat/Anthropic profile."
+        )
+    if not byom_profile and model_name.strip().lower() not in _VOICELIVE_MANAGED_TEXT_MODELS:
+        raise ValueError(
+            f"mai-transcribe requires a non-multimodal managed text model (for example gpt-4.1), "
+            f"not '{model_name}'. Native realtime/audio models are incompatible. "
+            "For your own text deployment, explicitly select byom-azure-openai-chat-completion "
+            "or byom-foundry-anthropic-messages; model names alone do not select BYOM."
+        )
+    return result
+
 
 @dataclass
 class VoiceLiveBYOMConfig:
@@ -235,6 +302,11 @@ class VoiceLiveBYOMConfig:
         """
         if not self.mode:
             return None
+        if self.mode not in VOICELIVE_BYOM_MODES:
+            raise ValueError(
+                f"Unsupported VoiceLive BYOM profile '{self.mode}'. "
+                f"Use one of: {', '.join(VOICELIVE_BYOM_MODES)}."
+            )
         return {"profile": self.mode}
 
 
@@ -255,6 +327,7 @@ MANAGED_VOICELIVE_MODELS = frozenset(
         "phi4-mm-realtime",
         "azure-realtime",
         # Cascaded (Azure STT -> text LLM -> Azure TTS).
+        "gpt-5.6-terra",
         "gpt-5.4",
         "gpt-5.3-chat",
         "gpt-5.2",
@@ -274,6 +347,9 @@ MANAGED_VOICELIVE_MODELS = frozenset(
 )
 
 _MANAGED_VOICELIVE_MODELS_LOWER = frozenset(m.lower() for m in MANAGED_VOICELIVE_MODELS)
+_VOICELIVE_MANAGED_TEXT_MODELS = frozenset(
+    model for model in _MANAGED_VOICELIVE_MODELS_LOWER if "realtime" not in model
+)
 
 
 def is_managed_voicelive_model(deployment_id: str | None) -> bool:
@@ -327,6 +403,14 @@ def byom_profile_model_conflict(mode: str | None, deployment_id: str | None) -> 
 
     realtime = is_realtime_voicelive_model(deployment_id)
     if mode == BYOM_CHAT_COMPLETION_MODE and realtime:
+        deployment = re.sub(r"-\d{4}-\d{2}-\d{2}$", "", deployment_id.strip().lower())
+        if deployment not in _MANAGED_VOICELIVE_MODELS_LOWER and deployment not in {
+            "gpt-4o-realtime-preview",
+            "gpt-4o-mini-realtime-preview",
+        }:
+            # Custom deployment names do not establish their protocol. An
+            # explicitly selected text profile must not be silently discarded.
+            return None
         return (
             f"BYOM profile '{mode}' drives the deployment over the chat completions "
             f"API, but '{deployment_id}' is a realtime (speech-to-speech) deployment "
@@ -366,18 +450,22 @@ class SpeechConfig:
     # Advanced features
     enable_diarization: bool = False  # Speaker diarization for multi-speaker scenarios
     speaker_count_hint: int = 2  # Hint for number of speakers in diarization
+    transcription_model: str = field(default="azure-speech", metadata={"omit_default": True})
+
+    def __post_init__(self) -> None:
+        self.transcription_model = normalize_transcription_model(self.transcription_model)
+        if self.transcription_model not in {"azure-speech", MAI_TRANSCRIPTION_MODEL}:
+            raise ValueError("transcription_model must be azure-speech or mai-transcribe")
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SpeechConfig:
         """Create SpeechConfig from dict."""
-        from apps.artagent.backend.registries.definitions import decode_definition
-
-        return decode_definition(cls, data or {})
+        data = dict(data or {})
+        validate_mai_customization(data.get("transcription_model", "azure-speech"), data)
+        return decode_definition(cls, data)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict for serialization."""
-        from apps.artagent.backend.registries.definitions import definition_payload
-
         return definition_payload(self)
 
 
@@ -578,16 +666,8 @@ class UnifiedAgent:
     # PROMPT RENDERING
     # ═══════════════════════════════════════════════════════════════════
 
-    def render_prompt(self, context: dict[str, Any]) -> str:
-        """
-        Render prompt template with runtime context.
-
-        Args:
-            context: Runtime context (caller_name, customer_intelligence, etc.)
-
-        Returns:
-            Rendered prompt string
-        """
+    def get_prompt_context(self, context: dict[str, Any]) -> dict[str, Any]:
+        """Resolve defaults and runtime bindings without rendering or executing tools."""
         import os
 
         # Provide sensible defaults for common template variables
@@ -605,14 +685,20 @@ class UnifiedAgent:
                     filtered_context[k] = v
 
         # Merge: defaults < template_vars < filtered runtime context
-        full_context = {**defaults, **self.template_vars, **filtered_context}
+        return {**defaults, **self.template_vars, **filtered_context}
+
+    def render_prompt(self, context: dict[str, Any]) -> str:
+        """Render a sandboxed runtime prompt, surfacing invalid templates to the caller."""
+        full_context = self.get_prompt_context(context)
 
         try:
-            template = Template(self.prompt_template)
+            template = ImmutableSandboxedEnvironment(autoescape=False).from_string(
+                self.prompt_template
+            )
             return template.render(**full_context)
-        except Exception as e:
+        except TemplateError as e:
             logger.error("Failed to render prompt for %s: %s", self.name, e)
-            return self.prompt_template
+            raise
 
     # ═══════════════════════════════════════════════════════════════════
     # GREETING RENDERING
@@ -674,12 +760,12 @@ class UnifiedAgent:
             return None
 
         try:
-            template = Template(self.greeting)
+            template = ImmutableSandboxedEnvironment(autoescape=False).from_string(self.greeting)
             rendered = template.render(**self._get_greeting_context(context))
             return rendered.strip() or None
-        except Exception as e:
+        except TemplateError as e:
             logger.error("Failed to render greeting for %s: %s", self.name, e)
-            return self.greeting.strip() or None
+            raise
 
     def render_return_greeting(self, context: dict[str, Any] | None = None) -> str | None:
         """
@@ -695,12 +781,14 @@ class UnifiedAgent:
             return None
 
         try:
-            template = Template(self.return_greeting)
+            template = ImmutableSandboxedEnvironment(autoescape=False).from_string(
+                self.return_greeting
+            )
             rendered = template.render(**self._get_greeting_context(context))
             return rendered.strip() or None
-        except Exception as e:
+        except TemplateError as e:
             logger.error("Failed to render return_greeting for %s: %s", self.name, e)
-            return self.return_greeting.strip() or None
+            raise
 
     # ═══════════════════════════════════════════════════════════════════
     # HANDOFF HELPERS
@@ -774,13 +862,6 @@ class UnifiedAgent:
     def handoff_trigger(self) -> str:
         """Alias for handoff.trigger for backward compatibility."""
         return self.handoff.trigger
-
-    # ═══════════════════════════════════════════════════════════════════
-    # VOICELIVE SDK METHODS
-    # ═══════════════════════════════════════════════════════════════════
-    # These methods support the VoiceLive orchestrator directly without
-    # needing a separate adapter layer. They are no-ops if the SDK is
-    # not available.
 
     def __repr__(self) -> str:
         return (

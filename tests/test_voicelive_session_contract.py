@@ -21,7 +21,10 @@ instead of silent.
 
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
 from apps.artagent.backend.registries.agentstore.base import (
@@ -31,6 +34,11 @@ from apps.artagent.backend.registries.agentstore.base import (
     VoiceConfig,
     VoiceLiveBYOMConfig,
 )
+from apps.artagent.backend.registries.scenariostore.loader import (
+    HandoffConfig as ScenarioHandoff,
+)
+from apps.artagent.backend.registries.scenariostore.loader import ScenarioConfig
+from apps.artagent.backend.voice.shared.config_resolver import OrchestratorConfigResult
 from apps.artagent.backend.voice.voicelive import session as voicelive_session
 from apps.artagent.backend.voice.voicelive.orchestrator import (
     LiveOrchestrator,
@@ -169,6 +177,149 @@ async def test_session_update_omits_voice_when_agent_has_none():
     assert getattr(conn.last_update, "voice", None) is None
 
 
+@pytest.mark.asyncio
+async def test_full_session_preserves_transcription_and_model_controls():
+    agent = _make_agent(
+        voicelive_model=ModelConfig(
+            deployment_id="gpt-4.1", temperature=0.0, max_tokens=1000, max_completion_tokens=640
+        )
+    )
+    agent.session["input_audio_transcription_settings"] = {
+        "model": "azure-speech",
+        "language": "es-ES",
+        "custom_speech": {"endpoint_id": "custom-speech"},
+        "phrase_list": ["Contoso"],
+    }
+    conn = _FakeConnection()
+
+    await voicelive_session.apply_voicelive_session(agent, conn)
+
+    payload = conn.last_update.as_dict()
+    assert (
+        payload["input_audio_transcription"] == agent.session["input_audio_transcription_settings"]
+    )
+    assert payload["temperature"] == 0.0
+    assert payload["max_response_output_tokens"] == 640
+    assert "model" not in payload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("temperature", [-0.1, 1.1])
+async def test_full_session_rejects_invalid_temperature_before_sending(temperature):
+    agent = _make_agent(
+        voicelive_model=ModelConfig(deployment_id="gpt-4.1", temperature=temperature)
+    )
+    conn = _FakeConnection()
+
+    with pytest.raises(ValueError, match="between 0.0 and 1.0"):
+        await voicelive_session.apply_voicelive_session(agent, conn)
+
+    assert conn.session.updates == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "connection_model,profile,allowed",
+    [
+        ("gpt-4.1", None, True),
+        ("my-text-deployment", "byom-azure-openai-chat-completion", True),
+        ("my-anthropic-deployment", "byom-foundry-anthropic-messages", True),
+        ("gpt-realtime", None, False),
+        ("my-realtime-deployment", "byom-azure-openai-realtime", False),
+    ],
+)
+async def test_handoff_transcription_uses_bound_connection_not_target_configuration(
+    connection_model, profile, allowed
+):
+    agent = _make_agent(voicelive_model=ModelConfig(deployment_id="gpt-4.1"))
+    agent.session["input_audio_transcription_settings"] = {"model": "mai-transcribe-2"}
+    conn = _FakeConnection()
+    kwargs = {"connection_model": connection_model, "connection_byom_profile": profile}
+
+    if allowed:
+        await voicelive_session.apply_voicelive_session(agent, conn, **kwargs)
+        assert conn.last_update.input_audio_transcription.model == "mai-transcribe"
+        assert agent.session["input_audio_transcription_settings"]["model"] == "mai-transcribe-2"
+    else:
+        with pytest.raises(ValueError, match="mai-transcribe"):
+            await voicelive_session.apply_voicelive_session(agent, conn, **kwargs)
+        assert conn.session.updates == []
+
+
+@pytest.mark.asyncio
+async def test_named_scenario_instructions_apply_at_bootstrap_and_scenario_switch(monkeypatch):
+    agent = _make_agent()
+    specialist = UnifiedAgent(name="Specialist")
+    agents = {agent.name: agent, specialist.name: specialist}
+    scenario = ScenarioConfig(
+        name="Named scenario",
+        start_agent=agent.name,
+        agents=list(agents),
+        handoffs=[
+            ScenarioHandoff(
+                from_agent=agent.name,
+                to_agent=specialist.name,
+                handoff_condition="When investigating an order.",
+            )
+        ],
+    )
+    config = OrchestratorConfigResult(
+        start_agent=agent.name, agents=agents, scenario=scenario, scenario_name=scenario.name
+    )
+    conn = _FakeConnection()
+    orch = LiveOrchestrator(
+        conn,
+        agents,
+        start_agent=agent.name,
+        model_name="gpt-realtime",
+        orchestrator_config=config,
+    )
+    from apps.artagent.backend.voice.shared import config_resolver
+
+    def unexpected_resolution(**kwargs):
+        raise AssertionError("The connection's named scenario must not be re-resolved.")
+
+    monkeypatch.setattr(config_resolver, "resolve_orchestrator_config", unexpected_resolution)
+    try:
+        await orch.start()
+        assert "When investigating an order." in conn.last_update.instructions
+        assert "Specialist" in conn.last_update.instructions
+        await orch._update_session_context()
+        initial_updates = len(conn.session.updates)
+        for text in ("My order is missing", "Please check again"):
+            orch._user_message_history.append(text)
+            orch._last_assistant_message = "I am checking."
+            await orch._update_session_context()
+        assert len(conn.session.updates) == initial_updates
+
+        replacement = ScenarioConfig(
+            name="Replacement scenario",
+            start_agent=agent.name,
+            agents=list(agents),
+            handoffs=[
+                ScenarioHandoff(
+                    from_agent=agent.name,
+                    to_agent=specialist.name,
+                    handoff_condition="When handling a warranty claim.",
+                )
+            ],
+        )
+        orch.update_scenario(
+            agents,
+            {},
+            start_agent=agent.name,
+            scenario_name=replacement.name,
+            scenario=replacement,
+        )
+        await asyncio.gather(*orch._owned_tasks)
+        assert len(conn.session.updates) == initial_updates + 1
+        assert "When handling a warranty claim." in conn.last_update.instructions
+        assert "When investigating an order." not in conn.last_update.instructions
+    finally:
+        await orch.cancel_and_join_tasks()
+        orch.cleanup()
+
+
 # =============================================================================
 # Quick Tune instant push — apply_live_session_settings
 # =============================================================================
@@ -237,6 +388,88 @@ async def test_live_push_noop_without_changes():
 
     assert await orch.apply_live_session_settings() is False
     assert conn.session.updates == []
+
+
+@pytest.mark.asyncio
+async def test_concurrent_live_tweaks_preserve_both_changes_without_mutating_catalog():
+    agent = _make_agent()
+    agent.session["turn_detection"] = {"type": "server_vad", "threshold": 0.5}
+    conn = _FakeConnection()
+    orch = _make_orchestrator(agent, conn)
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def update(session=None):
+        conn.session.updates.append(session)
+        if len(conn.session.updates) == 1:
+            entered.set()
+            await release.wait()
+
+    conn.session.update = update
+    first = asyncio.create_task(orch.apply_live_session_settings(voice={"rate": "-6%"}))
+    await asyncio.wait_for(entered.wait(), timeout=1)
+    second = asyncio.create_task(
+        orch.apply_live_session_settings(turn_detection={"threshold": 0.7})
+    )
+    release.set()
+    assert await asyncio.gather(first, second) == [True, True]
+
+    assert orch.agents[agent.name].voice.rate == "-6%"
+    assert orch.agents[agent.name].session["turn_detection"]["threshold"] == 0.7
+    assert agent.voice.rate != "-6%"
+    assert agent.session["turn_detection"]["threshold"] == 0.5
+    assert len(conn.session.updates) == 2
+
+
+@pytest.mark.asyncio
+async def test_live_tuning_ack_from_replaced_connection_cannot_publish(monkeypatch):
+    from apps.artagent.backend.src.orchestration import session_agents
+
+    agent = _make_agent()
+    conn = _FakeConnection()
+    replacement = _FakeConnection()
+    orch = _make_orchestrator(agent, conn)
+    orch._memo_manager = SimpleNamespace(session_id="connection-race")
+    publish = Mock()
+    monkeypatch.setattr(session_agents, "get_session_agent", lambda *args: None)
+    monkeypatch.setattr(session_agents, "set_session_agent", publish)
+
+    async def update(session=None):
+        conn.session.updates.append(session)
+        orch.conn = replacement
+
+    conn.session.update = update
+    assert await orch.apply_live_session_settings(voice={"rate": "-6%"}) is False
+    assert orch.agents[agent.name] is agent
+    assert conn.last_update.voice.rate == "-6%"
+    assert replacement.session.updates == []
+    publish.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_live_tuning_preserves_existing_session_provenance_when_cache_is_empty(monkeypatch):
+    from apps.artagent.backend.src.orchestration import session_agents
+
+    agent = _make_agent()
+    agent.metadata = {
+        "source": "dynamic",
+        "session_id": "owned-session",
+        "created_at": 123.0,
+        "cloned_from": "OriginalTemplate",
+        "custom": {"nested": ["keep"]},
+    }
+    conn = _FakeConnection()
+    orch = _make_orchestrator(agent, conn)
+    orch._memo_manager = SimpleNamespace(session_id="owned-session")
+    publish = Mock()
+    monkeypatch.setattr(session_agents, "get_session_agent", lambda *args: None)
+    monkeypatch.setattr(session_agents, "set_session_agent", publish)
+
+    assert await orch.apply_live_session_settings(voice={"rate": "-6%"}) is True
+    updated = orch.agents[agent.name]
+    assert updated.metadata == agent.metadata
+    assert updated.metadata["custom"] is not agent.metadata["custom"]
+    publish.assert_called_once_with("owned-session", updated, set_active=False, persist=False)
 
 
 # =============================================================================

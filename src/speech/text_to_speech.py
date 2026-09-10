@@ -1926,6 +1926,7 @@ class SpeechSynthesizer:
         style: str = None,
         rate: str = None,
         *,
+        pitch: str | None = None,
         cancel_event: threading.Event | None = None,
     ) -> bytes:
         """
@@ -1937,6 +1938,9 @@ class SpeechSynthesizer:
             sample_rate: Sample rate (16000, 24000, or 48000)
             style: Voice style
             rate: Speech rate
+            pitch: Voice pitch (e.g. "-15%", "+10%"). Omitted (None) leaves the
+                voice's natural pitch untouched — matches the pre-existing
+                default behavior for callers that don't pass it.
         """
         voice = voice or self.voice
 
@@ -1954,6 +1958,18 @@ class SpeechSynthesizer:
             if not rate_to_apply:
                 rate_to_apply = None
 
+        if pitch is None:
+            pitch_to_apply = None
+        else:
+            pitch_to_apply = pitch.strip()
+            # "+0%" is VoiceConfig's own "unset" default (the same sentinel
+            # build_voicelive_voice() uses for this field, base.py:966), so
+            # treat it as "no override" here too. This keeps SSML byte-for-byte
+            # unchanged for the vast majority of agents that never touch
+            # pitch, instead of emitting a no-op ``pitch="+0%"`` on every call.
+            if not pitch_to_apply or pitch_to_apply == "+0%":
+                pitch_to_apply = None
+
         # Token freshness handled inside _create_speech_config via cached token manager.
         # 401 errors are retried below via refresh_authentication().
         speech_config = self._create_speech_config()
@@ -1970,9 +1986,17 @@ class SpeechSynthesizer:
         sanitized_text = self._sanitize(text)
         inner_content = sanitized_text
 
-        # Apply prosody rate if specified
+        # Apply prosody rate/pitch as a single element if either is specified.
+        # Both are free-text config values (Quick Tune has no format
+        # validation on them), so escape them the same way _sanitize()
+        # escapes the text body before embedding in an XML attribute.
+        prosody_attrs = ""
         if rate_to_apply:
-            inner_content = f'<prosody rate="{rate_to_apply}">{inner_content}</prosody>'
+            prosody_attrs += f' rate="{html.escape(rate_to_apply, quote=True)}"'
+        if pitch_to_apply:
+            prosody_attrs += f' pitch="{html.escape(pitch_to_apply, quote=True)}"'
+        if prosody_attrs:
+            inner_content = f"<prosody{prosody_attrs}>{inner_content}</prosody>"
 
         # Apply style if specified
         if style_to_apply:
@@ -2081,6 +2105,7 @@ class SpeechSynthesizer:
         rate: str = None,
         read_chunk_bytes: int = 3200,
         *,
+        pitch: str | None = None,
         cancel_event: threading.Event | None = None,
     ):
         """
@@ -2100,6 +2125,8 @@ class SpeechSynthesizer:
             sample_rate: 16000, 24000, or 48000.
             style: Voice style (defaults to "chat" to match ``synthesize_to_pcm``).
             rate: Speech rate (defaults to "+3%" to match ``synthesize_to_pcm``).
+            pitch: Voice pitch (e.g. "-15%", "+10%"). Omitted (None) leaves the
+                voice's natural pitch untouched, matching ``synthesize_to_pcm``.
             read_chunk_bytes: Size of the SDK read buffer per ``read_data`` call.
 
         Yields:
@@ -2120,12 +2147,26 @@ class SpeechSynthesizer:
         else:
             rate_to_apply = rate.strip() or None
 
+        if pitch is None:
+            pitch_to_apply = None
+        else:
+            pitch_to_apply = pitch.strip() or None
+            # See synthesize_to_pcm: "+0%" is VoiceConfig's own "unset"
+            # default, so it is treated as "no override" here too.
+            if pitch_to_apply == "+0%":
+                pitch_to_apply = None
+
         # Build SSML identically to synthesize_to_pcm so streamed audio matches
         # the blocking path byte-for-byte (same prosody/style envelope).
         sanitized_text = self._sanitize(text)
         inner_content = sanitized_text
+        prosody_attrs = ""
         if rate_to_apply:
-            inner_content = f'<prosody rate="{rate_to_apply}">{inner_content}</prosody>'
+            prosody_attrs += f' rate="{html.escape(rate_to_apply, quote=True)}"'
+        if pitch_to_apply:
+            prosody_attrs += f' pitch="{html.escape(pitch_to_apply, quote=True)}"'
+        if prosody_attrs:
+            inner_content = f"<prosody{prosody_attrs}>{inner_content}</prosody>"
         if style_to_apply:
             inner_content = (
                 f'<mstts:express-as style="{style_to_apply}">{inner_content}</mstts:express-as>'

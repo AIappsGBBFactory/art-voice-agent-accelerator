@@ -971,6 +971,7 @@ export const OrchestrationDiagramModal = React.memo(function OrchestrationDiagra
   open,
   onClose,
   initialMode = 'voicelive',
+  zIndex = 2000,
 }) {
   // Pause background rAF animations, lock body scroll, and wire Escape while
   // the overlay covers the app.
@@ -999,7 +1000,7 @@ export const OrchestrationDiagramModal = React.memo(function OrchestrationDiagra
     <div
       onClick={onClose}
       role="presentation"
-      style={OVERLAY_STYLE}
+      style={{ ...OVERLAY_STYLE, zIndex }}
     >
       <div
         onClick={stopPropagation}

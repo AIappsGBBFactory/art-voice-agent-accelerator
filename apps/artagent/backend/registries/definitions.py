@@ -27,7 +27,11 @@ def definition_payload(value: Any) -> Any:
         return {
             field.name: definition_payload(getattr(value, field.name))
             for field in fields(value)
-            if field.init and not field.name.startswith("_")
+            if field.init
+            and not field.name.startswith("_")
+            and not (
+                field.metadata.get("omit_default") and getattr(value, field.name) == field.default
+            )
         }
     if isinstance(value, dict):
         return {key: definition_payload(item) for key, item in value.items()}
@@ -69,7 +73,11 @@ def definition_fields(cls: type) -> dict[str, tuple[Any, Any]]:
 
 def agent_from_payload(data: dict[str, Any]) -> UnifiedAgent:
     """Decode canonical, YAML-projected or API-aliased agent definitions."""
-    from apps.artagent.backend.registries.agentstore.base import ModelConfig, UnifiedAgent
+    from apps.artagent.backend.registries.agentstore.base import (
+        ModelConfig,
+        SpeechConfig,
+        UnifiedAgent,
+    )
 
     data = dict(data)
     for external, canonical in (("prompt", "prompt_template"), ("tools", "tool_names")):
@@ -77,7 +85,10 @@ def agent_from_payload(data: dict[str, Any]) -> UnifiedAgent:
             data[canonical] = data[external]
     for name in ("model", "cascade_model", "voicelive_model"):
         if data.get(name) is not None:
-            data[name] = ModelConfig.from_dict(data[name])
+            if isinstance(data[name], dict):
+                data[name] = ModelConfig.from_dict(data[name])
+    if isinstance(data.get("speech"), dict):
+        data["speech"] = SpeechConfig.from_dict(data["speech"])
     return decode_definition(UnifiedAgent, data)
 
 

@@ -21,6 +21,7 @@ Storage Structure:
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -30,9 +31,12 @@ from apps.artagent.backend.src.orchestration.naming import (
     SCENARIO_KEY_ACTIVE,
     SCENARIO_KEY_ALL,
     SCENARIO_KEY_CONFIG,
+    SCENARIO_KEY_LEGACY,
     find_scenario_by_name,
     scenario_key,
 )
+from apps.artagent.backend.src.orchestration.session_memory import session_memo
+from src.redis.manager import AUTHORING_REVISION_KEY
 from utils.ml_logging import get_logger
 
 if TYPE_CHECKING:
@@ -56,6 +60,11 @@ _redis_manager: Any = None
 # successive reads hit _ensure_session_loaded (e.g., frontend polling).
 _session_load_times: dict[str, float] = {}
 _REDIS_LOAD_COOLDOWN_S: float = 2.0
+_SCENARIO_WRITE_FIELDS = (
+    SCENARIO_KEY_ACTIVE,
+    SCENARIO_KEY_CONFIG,
+    SCENARIO_KEY_LEGACY,
+)
 
 
 def set_redis_manager(redis_mgr: Any) -> None:
@@ -105,7 +114,21 @@ def _load_scenarios_from_redis(session_id: str, *, memo=None) -> dict[str, Scena
         # Try new multi-scenario format first
         all_scenarios_data = memo.get_value_from_corememory(SCENARIO_KEY_ALL)
         active_name = memo.get_value_from_corememory(SCENARIO_KEY_ACTIVE)
-
+        if AUTHORING_REVISION_KEY in memo.context and (
+            SCENARIO_KEY_ALL in memo.context
+            or not memo.get_value_from_corememory(SCENARIO_KEY_CONFIG)
+        ):
+            loaded = {
+                scenario_key(name): _parse_scenario_data(data)
+                for name, data in (all_scenarios_data or {}).items()
+            }
+            _session_scenarios[session_id] = loaded
+            active_key = scenario_key(active_name)
+            if active_key in loaded:
+                _active_scenario[session_id] = active_key
+            else:
+                _active_scenario.pop(session_id, None)
+            return loaded
         if all_scenarios_data and isinstance(all_scenarios_data, dict):
             # New format: dict of {scenario_name: scenario_data}
             loaded_scenarios: dict[str, ScenarioConfig] = {}
@@ -177,8 +200,8 @@ def _ensure_session_loaded(session_id: str, *, force: bool = False) -> None:
     This prevents hammering Redis during rapid successive reads (e.g.,
     frontend polling or repeated GET /scenarios calls).
 
-    Merge strategy: Redis data is the base, in-memory data overrides
-    (in-memory is considered more recent).
+    Committed authoring registries replace stale views, including deletions.
+    Legacy records merge with Redis winning over cached definitions.
     """
     import asyncio
 
@@ -268,70 +291,31 @@ def get_active_scenario_name(session_id: str) -> str | None:
 
     # Otherwise refresh (cooldown-cached) from Redis and return the reconciled key.
     _ensure_session_loaded(session_id)
-    return _active_scenario.get(session_id) or active_name
+    return _active_scenario.get(session_id)
 
 
 def _persist_scenario_to_redis(session_id: str, scenario: ScenarioConfig) -> None:
-    """
-    Persist ALL scenarios for a session to Redis via MemoManager.
-
-    Stores all scenarios in 'session_scenarios_all' dict, indexed by name.
-    Uses asyncio to schedule persistence but logs if it fails.
-    """
+    """Schedule the same checked async scenario write used by API callers."""
     if not _redis_manager:
         logger.debug("No Redis manager available, skipping persistence")
         return
 
     try:
-        from src.stateful.state_managment import MemoManager
-
-        memo = MemoManager.from_redis(session_id, _redis_manager)
-
-        # _ensure_session_loaded already merges Redis → in-memory, so we
-        # just serialize whatever is in _session_scenarios right now.
-        all_scenarios_data = {
-            name: _serialize_scenario(sc)
-            for name, sc in _session_scenarios.get(session_id, {}).items()
-        }
-
-        memo.set_corememory(SCENARIO_KEY_ALL, all_scenarios_data)
-        memo.set_corememory(SCENARIO_KEY_ACTIVE, scenario_key(scenario.name))
-        memo.set_corememory(SCENARIO_KEY_CONFIG, _serialize_scenario(scenario))
-
-        if scenario.start_agent:
-            memo.set_corememory("active_agent", scenario.start_agent)
-
-        # Schedule async persistence with proper error handling
-        import asyncio
-
         try:
             loop = asyncio.get_running_loop()
-            task = loop.create_task(_persist_async(memo, session_id, scenario.name))
+            task = loop.create_task(_persist_scenario_to_redis_async(session_id, scenario))
             task.add_done_callback(_log_persistence_result)
-            _session_load_times[session_id] = time.monotonic()
         except RuntimeError:
             logger.debug("No event loop, skipping async Redis persistence")
 
         logger.debug(
             "All scenarios queued for Redis persistence | session=%s count=%d active=%s",
             session_id,
-            len(all_scenarios_data),
+            len(_session_scenarios.get(session_id, {})),
             scenario.name,
         )
     except Exception as e:
         logger.warning("Failed to persist scenarios to Redis: %s", e)
-
-
-async def _persist_async(memo, session_id: str, scenario_name: str) -> None:
-    """Async helper to persist MemoManager to Redis."""
-    try:
-        await memo.persist_to_redis_async(_redis_manager)
-        logger.debug(
-            "Scenario persisted to Redis | session=%s scenario=%s", session_id, scenario_name
-        )
-    except Exception as e:
-        logger.error("Failed to persist scenario to Redis | session=%s error=%s", session_id, e)
-        raise
 
 
 def _log_persistence_result(task) -> None:
@@ -348,19 +332,12 @@ def _clear_scenario_from_redis(session_id: str) -> None:
         return
 
     try:
-        from src.stateful.state_managment import MemoManager
-
-        memo = MemoManager.from_redis(session_id, _redis_manager)
-        # Clear all scenario-related keys using standardized constants
-        memo.set_corememory(SCENARIO_KEY_ALL, None)
-        memo.set_corememory(SCENARIO_KEY_CONFIG, None)
-        memo.set_corememory(SCENARIO_KEY_ACTIVE, None)
-
-        import asyncio
-
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(memo.persist_to_redis_async(_redis_manager))
+            task = loop.create_task(
+                clear_session_scenarios_from_redis(session_id, raise_on_failure=True)
+            )
+            task.add_done_callback(_log_persistence_result)
         except RuntimeError:
             logger.debug("No event loop, skipping async Redis clear")
 
@@ -377,13 +354,17 @@ async def clear_session_scenarios_from_redis(
         return
 
     try:
-        from apps.artagent.backend.src.orchestration.session_memory import session_memo
-
         memo = await session_memo(session_id, _redis_manager)
         memo.set_corememory(SCENARIO_KEY_ALL, None)
         memo.set_corememory(SCENARIO_KEY_CONFIG, None)
         memo.set_corememory(SCENARIO_KEY_ACTIVE, None)
-        await memo.persist_to_redis_async(_redis_manager, raise_on_failure=raise_on_failure)
+        memo.set_corememory(SCENARIO_KEY_LEGACY, None)
+        if not await memo.persist_to_redis_async(
+            _redis_manager,
+            raise_on_failure=raise_on_failure,
+            authoring_fields=(SCENARIO_KEY_ALL,) + _SCENARIO_WRITE_FIELDS,
+        ):
+            return
         _session_load_times.pop(session_id, None)
     except Exception as e:
         logger.warning("Failed to clear scenarios from Redis (async): %s", e)
@@ -432,25 +413,7 @@ def set_active_scenario(session_id: str, scenario_name: str) -> bool:
 
     actual_key, scenario = result
 
-    # Fire-and-forget async persist
-    if _redis_manager:
-        try:
-            from src.stateful.state_managment import MemoManager
-
-            memo = MemoManager.from_redis(session_id, _redis_manager)
-            memo.set_corememory(SCENARIO_KEY_ACTIVE, actual_key)
-            if scenario.start_agent:
-                memo.set_corememory("active_agent", scenario.start_agent)
-            import asyncio
-
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(memo.persist_to_redis_async(_redis_manager))
-                _session_load_times[session_id] = time.monotonic()
-            except RuntimeError:
-                pass
-        except Exception as e:
-            logger.warning("Failed to persist active scenario to Redis: %s", e)
+    _persist_scenario_to_redis(session_id, scenario)
 
     logger.info(
         "Active scenario set | session=%s scenario=%s start_agent=%s",
@@ -481,13 +444,18 @@ async def set_active_scenario_async(session_id: str, scenario_name: str) -> bool
 
     if _redis_manager:
         try:
-            from apps.artagent.backend.src.orchestration.session_memory import session_memo
-
             memo = await session_memo(session_id, _redis_manager)
             memo.set_corememory(SCENARIO_KEY_ACTIVE, actual_key)
+            memo.set_corememory(SCENARIO_KEY_LEGACY, actual_key)
+            memo.set_corememory(SCENARIO_KEY_CONFIG, _serialize_scenario(scenario))
             if scenario.start_agent:
                 memo.set_corememory("active_agent", scenario.start_agent)
-            await memo.persist_to_redis_async(_redis_manager, raise_on_failure=True)
+            await memo.persist_to_redis_async(
+                _redis_manager,
+                raise_on_failure=True,
+                authoring_fields=_SCENARIO_WRITE_FIELDS
+                + (("active_agent",) if scenario.start_agent else ()),
+            )
             # Mark session as fresh — the in-memory state IS Redis state now,
             # so subsequent reads within the cooldown window can skip HGETALL.
             _session_load_times[session_id] = time.monotonic()
@@ -574,16 +542,14 @@ async def _persist_scenario_to_redis_async(session_id: str, scenario: ScenarioCo
     """
     Async version of scenario persistence to Redis.
 
-    Persists ALL scenarios for the session to ensure no data loss.
-    Awaits the persistence to ensure data is written before returning.
+    Updates only this named definition and activation, preserving other
+    workers' scenarios and the current conversation atomically.
     """
     if not _redis_manager:
         logger.debug("No Redis manager available, skipping persistence")
         return
 
     try:
-        from apps.artagent.backend.src.orchestration.session_memory import session_memo
-
         memo = await session_memo(session_id, _redis_manager)
 
         # _ensure_session_loaded already merges Redis → in-memory, so we
@@ -595,6 +561,7 @@ async def _persist_scenario_to_redis_async(session_id: str, scenario: ScenarioCo
 
         memo.set_corememory(SCENARIO_KEY_ALL, all_scenarios_data)
         memo.set_corememory(SCENARIO_KEY_ACTIVE, scenario_key(scenario.name))
+        memo.set_corememory(SCENARIO_KEY_LEGACY, scenario_key(scenario.name))
         memo.set_corememory(SCENARIO_KEY_CONFIG, _serialize_scenario(scenario))
 
         if scenario.start_agent:
@@ -605,7 +572,15 @@ async def _persist_scenario_to_redis_async(session_id: str, scenario: ScenarioCo
         # False (write failed) yet the caller would never know, leading to
         # /create returning 200 while the data never reaches Redis — and a
         # subsequent /active on another worker would 404.
-        await memo.persist_to_redis_async(_redis_manager, raise_on_failure=True)
+        await memo.persist_to_redis_async(
+            _redis_manager,
+            raise_on_failure=True,
+            authoring_fields=_SCENARIO_WRITE_FIELDS
+            + (("active_agent",) if scenario.start_agent else ()),
+            registry_updates={
+                SCENARIO_KEY_ALL: {scenario_key(scenario.name): _serialize_scenario(scenario)}
+            },
+        )
         # Mark session as fresh so reads within the cooldown skip HGETALL.
         _session_load_times[session_id] = time.monotonic()
 
@@ -618,6 +593,54 @@ async def _persist_scenario_to_redis_async(session_id: str, scenario: ScenarioCo
     except Exception as e:
         logger.error("Failed to persist scenario to Redis: %s", e)
         raise
+
+
+def _delete_scenario_from_redis(session_id: str, deleted_name: str) -> None:
+    if not _redis_manager:
+        return
+
+    try:
+        task = asyncio.get_running_loop().create_task(
+            _delete_scenario_from_redis_async(session_id, deleted_name, raise_on_failure=True)
+        )
+        task.add_done_callback(_log_persistence_result)
+    except RuntimeError:
+        logger.debug("No event loop, skipping async scenario deletion")
+
+
+async def _delete_scenario_from_redis_async(
+    session_id: str, deleted_name: str, *, raise_on_failure: bool = False
+) -> None:
+    """Delete one definition; Redis reconciles activation against the committed registry."""
+    if not _redis_manager:
+        return
+    try:
+        memo = await session_memo(session_id, _redis_manager)
+        remaining = dict(memo.get_value_from_corememory(SCENARIO_KEY_ALL) or {})
+        actual_key, _ = find_scenario_by_name(remaining, deleted_name)
+        if actual_key is not None:
+            remaining.pop(actual_key)
+        memo.set_corememory(SCENARIO_KEY_ALL, remaining)
+        if not await memo.persist_to_redis_async(
+            _redis_manager,
+            raise_on_failure=raise_on_failure,
+            registry_updates={SCENARIO_KEY_ALL: {scenario_key(deleted_name): None}},
+        ):
+            return
+        _session_scenarios[session_id] = {
+            scenario_key(name): _parse_scenario_data(data)
+            for name, data in (memo.get_value_from_corememory(SCENARIO_KEY_ALL) or {}).items()
+        }
+        active = memo.get_value_from_corememory(SCENARIO_KEY_ACTIVE)
+        if active:
+            _active_scenario[session_id] = scenario_key(active)
+        else:
+            _active_scenario.pop(session_id, None)
+        _session_load_times[session_id] = time.monotonic()
+    except Exception as exc:
+        logger.warning("Failed to delete session scenario: %s", exc)
+        if raise_on_failure:
+            raise
 
 
 def remove_session_scenario(
@@ -652,21 +675,12 @@ def remove_session_scenario(
                     _active_scenario[session_id] = sorted(remaining.keys())[0]
                 else:
                     _active_scenario.pop(session_id, None)
-                    # Clear from Redis when no scenarios remain
-                    if persist:
-                        _clear_scenario_from_redis(session_id)
 
             # Clean up empty session
             if not _session_scenarios[session_id]:
                 del _session_scenarios[session_id]
-            elif persist:
-                active_key = (
-                    _active_scenario.get(session_id)
-                    or sorted(_session_scenarios[session_id].keys())[0]
-                )
-                _active_scenario[session_id] = active_key
-                active_scenario = _session_scenarios[session_id][active_key]
-                _persist_scenario_to_redis(session_id, active_scenario)
+            if persist:
+                _delete_scenario_from_redis(session_id, actual_key)
             return True
         return False
     else:
@@ -694,15 +708,10 @@ async def remove_session_scenario_async(
     removed = remove_session_scenario(session_id, scenario_name, persist=False)
     if not removed:
         return False
-    if scenario_name and session_id in _session_scenarios:
-        active_key = (
-            _active_scenario.get(session_id) or sorted(_session_scenarios[session_id].keys())[0]
+    if scenario_name:
+        await _delete_scenario_from_redis_async(
+            session_id, scenario_name, raise_on_failure=raise_on_failure
         )
-        _active_scenario[session_id] = active_key
-        if active_key and active_key in _session_scenarios[session_id]:
-            await _persist_scenario_to_redis_async(
-                session_id, _session_scenarios[session_id][active_key]
-            )
     else:
         await clear_session_scenarios_from_redis(session_id, raise_on_failure=raise_on_failure)
     return True

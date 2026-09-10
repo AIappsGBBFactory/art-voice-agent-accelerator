@@ -16,7 +16,6 @@ Covers:
 from __future__ import annotations
 
 import pytest
-
 from apps.artagent.backend.registries.agentstore.base import (
     VOICELIVE_BYOM_MODES,
     HandoffConfig,
@@ -24,7 +23,6 @@ from apps.artagent.backend.registries.agentstore.base import (
     UnifiedAgent,
     VoiceLiveBYOMConfig,
 )
-
 
 # =============================================================================
 # VoiceLiveBYOMConfig.from_dict — disabled cases
@@ -167,7 +165,6 @@ def test_build_session_agent_flags_non_managed_model_without_byom(caplog):
 
     from apps.artagent.backend.api.v1.endpoints.agent_builder import (
         DynamicAgentConfig,
-        ModelConfigSchema,
         build_session_agent,
     )
     from apps.artagent.backend.registries.agentstore.base import (
@@ -177,7 +174,7 @@ def test_build_session_agent_flags_non_managed_model_without_byom(caplog):
     cfg = DynamicAgentConfig(
         name="BankingConcierge",
         prompt="You are a helpful banking concierge agent.",
-        voicelive_model=ModelConfigSchema(deployment_id="o3-mini"),
+        voicelive_model={"deployment_id": "o3-mini"},
         byom=None,  # <-- the misconfig: BYOM-only model, BYOM left off
     )
 
@@ -189,10 +186,7 @@ def test_build_session_agent_flags_non_managed_model_without_byom(caplog):
     assert agent.byom is None
     assert not is_managed_voicelive_model("o3-mini")
     # ...and the save path now flags it (was silent before this guard existed).
-    assert any(
-        "non_managed_voicelive_without_byom" in rec.getMessage()
-        for rec in caplog.records
-    )
+    assert any("non_managed_voicelive_without_byom" in rec.getMessage() for rec in caplog.records)
 
 
 def test_build_session_agent_non_managed_with_byom_is_clean(caplog):
@@ -202,14 +196,13 @@ def test_build_session_agent_non_managed_with_byom_is_clean(caplog):
     from apps.artagent.backend.api.v1.endpoints.agent_builder import (
         ByomConfigSchema,
         DynamicAgentConfig,
-        ModelConfigSchema,
         build_session_agent,
     )
 
     cfg = DynamicAgentConfig(
         name="BankingConcierge",
         prompt="You are a helpful banking concierge agent.",
-        voicelive_model=ModelConfigSchema(deployment_id="o3-mini"),
+        voicelive_model={"deployment_id": "o3-mini"},
         byom=ByomConfigSchema(mode="byom-azure-openai-chat-completion"),
     )
 
@@ -219,8 +212,7 @@ def test_build_session_agent_non_managed_with_byom_is_clean(caplog):
     assert agent.byom is not None
     assert agent.byom.mode == "byom-azure-openai-chat-completion"
     assert not any(
-        "non_managed_voicelive_without_byom" in rec.getMessage()
-        for rec in caplog.records
+        "non_managed_voicelive_without_byom" in rec.getMessage() for rec in caplog.records
     )
 
 
@@ -230,14 +222,13 @@ def test_build_session_agent_managed_model_without_byom_is_clean(caplog):
 
     from apps.artagent.backend.api.v1.endpoints.agent_builder import (
         DynamicAgentConfig,
-        ModelConfigSchema,
         build_session_agent,
     )
 
     cfg = DynamicAgentConfig(
         name="BankingConcierge",
         prompt="You are a helpful banking concierge agent.",
-        voicelive_model=ModelConfigSchema(deployment_id="gpt-realtime"),
+        voicelive_model={"deployment_id": "gpt-realtime"},
         byom=None,
     )
 
@@ -246,8 +237,7 @@ def test_build_session_agent_managed_model_without_byom_is_clean(caplog):
 
     assert agent.byom is None
     assert not any(
-        "non_managed_voicelive_without_byom" in rec.getMessage()
-        for rec in caplog.records
+        "non_managed_voicelive_without_byom" in rec.getMessage() for rec in caplog.records
     )
 
 
@@ -291,9 +281,7 @@ def test_chat_completion_profile_with_realtime_model_conflicts():
         byom_profile_model_conflict,
     )
 
-    reason = byom_profile_model_conflict(
-        "byom-azure-openai-chat-completion", "gpt-realtime"
-    )
+    reason = byom_profile_model_conflict("byom-azure-openai-chat-completion", "gpt-realtime")
     assert reason is not None
     assert "chat completions" in reason
     assert "gpt-realtime" in reason
@@ -340,23 +328,20 @@ def test_build_session_agent_flags_byom_profile_model_conflict(caplog):
     from apps.artagent.backend.api.v1.endpoints.agent_builder import (
         ByomConfigSchema,
         DynamicAgentConfig,
-        ModelConfigSchema,
         build_session_agent,
     )
 
     cfg = DynamicAgentConfig(
         name="BankingConcierge",
         prompt="You are a helpful banking concierge agent.",
-        voicelive_model=ModelConfigSchema(deployment_id="gpt-realtime"),
+        voicelive_model={"deployment_id": "gpt-realtime"},
         byom=ByomConfigSchema(mode="byom-azure-openai-chat-completion"),
     )
 
     with caplog.at_level(logging.WARNING, logger="v1.agent_builder"):
         build_session_agent(cfg, "sess-byom-conflict", created_at=0.0)
 
-    assert any(
-        "byom_profile_model_conflict" in rec.getMessage() for rec in caplog.records
-    )
+    assert any("byom_profile_model_conflict" in rec.getMessage() for rec in caplog.records)
 
 
 def test_build_session_agent_compatible_byom_pair_is_clean(caplog):
@@ -366,14 +351,13 @@ def test_build_session_agent_compatible_byom_pair_is_clean(caplog):
     from apps.artagent.backend.api.v1.endpoints.agent_builder import (
         ByomConfigSchema,
         DynamicAgentConfig,
-        ModelConfigSchema,
         build_session_agent,
     )
 
     cfg = DynamicAgentConfig(
         name="BankingConcierge",
         prompt="You are a helpful banking concierge agent.",
-        voicelive_model=ModelConfigSchema(deployment_id="gpt-realtime"),
+        voicelive_model={"deployment_id": "gpt-realtime"},
         byom=ByomConfigSchema(mode="byom-azure-openai-realtime"),
     )
 
@@ -381,6 +365,4 @@ def test_build_session_agent_compatible_byom_pair_is_clean(caplog):
         agent = build_session_agent(cfg, "sess-byom-ok", created_at=0.0)
 
     assert agent.byom.mode == "byom-azure-openai-realtime"
-    assert not any(
-        "byom_profile_model_conflict" in rec.getMessage() for rec in caplog.records
-    )
+    assert not any("byom_profile_model_conflict" in rec.getMessage() for rec in caplog.records)

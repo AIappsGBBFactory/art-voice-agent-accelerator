@@ -37,6 +37,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import time
@@ -48,6 +49,10 @@ from typing import TYPE_CHECKING, Any, Literal
 from apps.artagent.backend.registries.toolstore import (
     execute_tool,
     initialize_tools,
+)
+from apps.artagent.backend.src.orchestration.prompt_context import (
+    refresh_voicelive_prompt_context,
+    voicelive_prompt_context,
 )
 from apps.artagent.backend.src.services.session_loader import load_user_profile_by_client_id
 from apps.artagent.backend.voice.handoffs import sanitize_handoff_context
@@ -86,7 +91,7 @@ if TYPE_CHECKING:
     from src.stateful.state_managment import MemoManager
 
 from apps.artagent.backend.registries.agentstore.base import UnifiedAgent
-from apps.artagent.backend.src.orchestration.naming import agent_key, find_agent_by_name
+from apps.artagent.backend.src.orchestration.naming import find_agent_by_name
 from apps.artagent.backend.src.utils.tracing import (
     create_service_dependency_attrs,
     create_service_handler_attrs,
@@ -320,11 +325,11 @@ def verify_voicelive_session_contract(
 # Module-level registry for VoiceLive orchestrators (per session)
 # This enables scenario updates to reach active VoiceLive sessions
 # Uses standard dict but includes cleanup of stale entries
-_voicelive_orchestrators: dict[str, "LiveOrchestrator"] = {}
+_voicelive_orchestrators: dict[str, LiveOrchestrator] = {}
 _registry_lock = asyncio.Lock()
 
 
-def register_voicelive_orchestrator(session_id: str, orchestrator: "LiveOrchestrator") -> None:
+def register_voicelive_orchestrator(session_id: str, orchestrator: LiveOrchestrator) -> None:
     """Register a VoiceLive orchestrator for scenario updates."""
     # Clean up stale entries first (orchestrators that may have been orphaned)
     _cleanup_stale_orchestrators()
@@ -351,7 +356,7 @@ def unregister_voicelive_orchestrator(
         )
 
 
-def get_voicelive_orchestrator(session_id: str) -> "LiveOrchestrator | None":
+def get_voicelive_orchestrator(session_id: str) -> LiveOrchestrator | None:
     """Get the VoiceLive orchestrator for a session."""
     return _voicelive_orchestrators.get(session_id)
 
@@ -463,6 +468,7 @@ class LiveOrchestrator:
         *,
         transport: str = "acs",
         model_name: str | None = None,
+        byom_profile: str | None = None,
         memo_manager: MemoManager | None = None,
         orchestrator_config: Any | None = None,
     ):
@@ -473,6 +479,7 @@ class LiveOrchestrator:
         self.audio = audio_processor
         self.messenger = messenger
         self._model_name = model_name or "gpt-4o-realtime"
+        self._connection_byom_profile = byom_profile
         self.visited_agents: set = set()
         self._pending_greeting: str | None = None
         self._pending_greeting_agent: str | None = None
@@ -1124,6 +1131,9 @@ class LiveOrchestrator:
                         say=None,  # Don't trigger a greeting on scenario switch
                         session_id=session_id,
                         call_connection_id=self.call_connection_id,
+                        connection_model=self._model_name,
+                        connection_byom_profile=self._connection_byom_profile,
+                        orchestrator_config=self._orchestrator_config,
                     )
 
                 # Update messenger's active agent
@@ -1218,29 +1228,7 @@ class LiveOrchestrator:
             return
 
         try:
-            # Refresh session profile if updated externally
-            session_profile = self._memo_manager.get_value_from_corememory("session_profile")
-            if session_profile and isinstance(session_profile, dict):
-                # Update system_vars with fresh profile data
-                self._system_vars["session_profile"] = session_profile
-                self._system_vars["client_id"] = session_profile.get("client_id")
-                self._system_vars["caller_name"] = session_profile.get("full_name")
-                self._system_vars["customer_intelligence"] = session_profile.get(
-                    "customer_intelligence", {}
-                )
-                if session_profile.get("institution_name"):
-                    self._system_vars["institution_name"] = session_profile["institution_name"]
-
-            # Refresh slots (collected information from previous turns)
-            slots = self._memo_manager.get_context("slots", {})
-            if slots:
-                self._system_vars["slots"] = slots
-                self._system_vars["collected_information"] = slots
-
-            # Refresh tool outputs for context continuity
-            tool_outputs = self._memo_manager.get_context("tool_outputs", {})
-            if tool_outputs:
-                self._system_vars["tool_outputs"] = tool_outputs
+            refresh_voicelive_prompt_context(self._system_vars, self._memo_manager)
 
             logger.debug("[LiveOrchestrator] Refreshed session context from MemoManager")
         except Exception:
@@ -1274,18 +1262,12 @@ class LiveOrchestrator:
 
         try:
             # Build context for prompt rendering
-            context_vars = dict(self._system_vars)
-            context_vars["active_agent"] = self.active
-
-            # Add conversation context from message history
-            if self._user_message_history:
-                context_vars["recent_user_messages"] = list(self._user_message_history)
-                if len(self._user_message_history) > 1:
-                    context_vars["conversation_summary"] = " → ".join(self._user_message_history)
-
-            # Add last assistant response for context continuity
-            if self._last_assistant_message:
-                context_vars["last_assistant_response"] = self._last_assistant_message
+            context_vars = voicelive_prompt_context(
+                self._system_vars,
+                active_agent=self.active,
+                user_messages=self._user_message_history,
+                last_assistant_response=self._last_assistant_message,
+            )
 
             # ``self.agents`` holds UnifiedAgent instances directly (see
             # update_scenario: "no adapter needed"). Older adapter-wrapped agents
@@ -1418,33 +1400,15 @@ class LiveOrchestrator:
         The active per-session agent's stored config is also mutated so the change
         survives subsequent full session updates (e.g. on the next agent switch).
 
-        Returns True if an update was pushed, False if nothing live to update.
+        Returns True if the current connection accepted the update. Superseded
+        connections never publish a late update into the live/session registry.
         """
         if not self.conn or not self.active:
             return False
-        from apps.artagent.backend.src.orchestration.session_agents import session_agent_for_edit
-
-        ua = session_agent_for_edit(self._session_id, self.agents, self.active)
-        if ua is None:
-            return False
-
-        # Mutate the per-session agent so the tweak persists across turns.
-        if turn_detection:
-            sess = dict(ua.session or {})
-            td = dict(sess.get("turn_detection") or {})
-            for key in ("type", "threshold", "silence_duration_ms", "prefix_padding_ms"):
-                if turn_detection.get(key) is not None:
-                    td[key] = turn_detection[key]
-            sess["turn_detection"] = td
-            ua.session = sess
-        if voice and ua.voice is not None:
-            # Apply every field the caller actually set. Ignoring style/pitch here
-            # made those Quick Tune controls silent no-ops: the UI reported
-            # success while the live session kept the previous voice settings.
-            for field in ("name", "rate", "style", "pitch"):
-                value = voice.get(field)
-                if value:
-                    setattr(ua.voice, field, value)
+        from apps.artagent.backend.src.orchestration.session_agents import (
+            get_session_agent,
+            set_session_agent,
+        )
 
         try:
             from azure.ai.voicelive.models import RequestSession
@@ -1452,23 +1416,73 @@ class LiveOrchestrator:
             logger.warning("VoiceLive SDK unavailable; cannot push live settings")
             return False
 
-        kwargs: dict[str, Any] = {}
-        if turn_detection:
-            vad = voicelive_session.build_voicelive_vad(ua)
-            if vad is not None:
-                kwargs["turn_detection"] = vad
-        if voice:
-            voice_payload = voicelive_session.build_voicelive_voice(ua)
-            if voice_payload is not None:
-                kwargs["voice"] = voice_payload
+        async with self._session_context_lock:
+            agent = self.agents.get(self.active)
+            if agent is None or not self.conn:
+                return False
+            connection = self.conn
+            active_name = self.active
+            session_id = self._session_id
+            stored = get_session_agent(session_id, active_name) if session_id else None
+            ua = copy.deepcopy(stored or getattr(agent, "_agent", agent))
+            if stored is None and not (
+                ua.metadata.get("source") == "dynamic"
+                and ua.metadata.get("session_id") == session_id
+            ):
+                ua.metadata = {
+                    **ua.metadata,
+                    "source": "dynamic",
+                    "session_id": session_id,
+                    "created_at": time.time(),
+                    "cloned_from": ua.name,
+                }
 
-        if not kwargs:
-            return False
+            if turn_detection:
+                td = dict(ua.session.get("turn_detection") or {})
+                for key in ("type", "threshold", "silence_duration_ms", "prefix_padding_ms"):
+                    if turn_detection.get(key) is not None:
+                        td[key] = turn_detection[key]
+                ua.session["turn_detection"] = td
+            if voice and ua.voice is not None:
+                for field in ("name", "rate", "style", "pitch"):
+                    value = voice.get(field)
+                    if value:
+                        setattr(ua.voice, field, value)
 
-        await self.conn.session.update(session=RequestSession(**kwargs))
+            kwargs: dict[str, Any] = {}
+            if turn_detection:
+                vad = voicelive_session.build_voicelive_vad(ua)
+                if vad is not None:
+                    kwargs["turn_detection"] = vad
+            if voice:
+                voice_payload = voicelive_session.build_voicelive_voice(ua)
+                if voice_payload is not None:
+                    kwargs["voice"] = voice_payload
+            if not kwargs:
+                return False
+
+            await connection.session.update(session=RequestSession(**kwargs))
+            if (
+                self.conn is not connection
+                or self._session_id != session_id
+                or self.active != active_name
+                or self.agents.get(active_name) is not agent
+            ):
+                return False
+            # Publish only after the provider accepts the update. A failed push
+            # must not mutate borrowed definitions or the current live agent.
+            if session_id:
+                set_session_agent(session_id, ua, set_active=False, persist=False)
+            if hasattr(agent, "_agent"):
+                updated_agent = copy.copy(agent)
+                updated_agent._agent = ua
+            else:
+                updated_agent = ua
+            self.agents[active_name] = updated_agent
+            self._handoff_service = None
         logger.info(
             "[LiveOrchestrator] Pushed live session settings | agent=%s keys=%s voice=%s",
-            self.active,
+            active_name,
             list(kwargs.keys()),
             _voice_identity(kwargs.get("voice")),
         )
@@ -2692,6 +2706,9 @@ class LiveOrchestrator:
                             say=None,
                             session_id=session_id,
                             call_connection_id=self.call_connection_id,
+                            connection_model=self._model_name,
+                            connection_byom_profile=self._connection_byom_profile,
+                            orchestrator_config=self._orchestrator_config,
                         )
                     if switch_epoch != self._response_epoch:
                         return None

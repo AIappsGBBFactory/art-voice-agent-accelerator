@@ -66,6 +66,12 @@ jobs:
       - name: 📦 Install dependencies
         run: uv pip install --system -e ".[dev]"
 
+      - name: Install Redis for persistence regressions
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends redis-server
+          redis-server --version
+
       - name: 🧪 Run unit tests
         env:
           PYTHONPATH: .
@@ -116,6 +122,22 @@ jobs:
 
       - name: 🏗️ Build
         run: npm run build
+
+      - name: Install browser for authoring regressions
+        run: npx playwright install --with-deps firefox
+
+      - name: Run authoring browser regressions
+        env:
+          PLAYWRIGHT_BROWSER: firefox
+        run: npm run test:e2e -- --reporter=line --workers=2
+
+      - name: Upload browser failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: authoring-browser-results
+          path: apps/artagent/frontend/test-results/
+          retention-days: 7
 
   quarantined:
     name: Quarantined tests (non-blocking)

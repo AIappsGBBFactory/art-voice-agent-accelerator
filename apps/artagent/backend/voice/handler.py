@@ -41,6 +41,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from apps.artagent.backend.registries.agentstore.base import (
+    MAI_TRANSCRIPTION_MODEL,
+    SpeechConfig,
+    normalize_transcription_model,
+)
 from apps.artagent.backend.src.orchestration.naming import find_agent_by_name
 
 # Orchestration imports - session_agents OK, route_turn imported lazily to avoid circular
@@ -58,7 +63,10 @@ from apps.artagent.backend.voice.messaging import (
 # Core dependencies - use direct module imports to avoid circular imports
 from apps.artagent.backend.voice.shared import TransportType, VoiceSessionContext
 from apps.artagent.backend.voice.shared.close import finish_persistence
-from apps.artagent.backend.voice.shared.config_resolver import resolve_orchestrator_config
+from apps.artagent.backend.voice.shared.config_resolver import (
+    OrchestratorConfigResult,
+    resolve_orchestrator_config,
+)
 from apps.artagent.backend.voice.speech_cascade.handler import (
     BargeInController,
     RouteTurnThread,
@@ -86,6 +94,7 @@ from src.stateful.state_managment import MemoManager
 from utils.ml_logging import get_logger
 
 if TYPE_CHECKING:
+    from apps.artagent.backend.voice.speech_cascade.mai_transcriber import MAITranscriber
     from apps.artagent.backend.voice.speech_cascade.orchestrator import CascadeOrchestratorAdapter
 
 logger = get_logger("voice.handler")
@@ -157,6 +166,7 @@ class VoiceHandlerConfig:
     stream_mode: StreamMode = field(default_factory=lambda: ACS_STREAMING_MODE)
     user_email: str | None = None
     scenario: str | None = None  # Industry scenario (banking, default, etc.)
+    input_sample_rate: int | None = None  # MAI PCM input: browser 24kHz / ACS 16kHz by default
 
 
 # ============================================================================
@@ -220,6 +230,8 @@ class VoiceHandler:
         self._speech_queue: asyncio.Queue = asyncio.Queue(maxsize=50)
         self._thread_bridge = ThreadBridge()
         self._stt_thread: SpeechSDKThread | None = None
+        self._mai_transcriber: MAITranscriber | None = None
+        self._resolved_scenario: OrchestratorConfigResult | None = None
         self._route_turn_thread: RouteTurnThread | None = None
         self._barge_in_controller: BargeInController | None = None
         self._text_input_lock = asyncio.Lock()
@@ -293,68 +305,6 @@ class VoiceHandler:
         if config.scenario:
             memory_manager.set_corememory("scenario_name", config.scenario)
 
-        # Acquire TTS/STT pools
-        try:
-            tts_client, tts_tier = await app_state.tts_pool.acquire_for_session(session_key)
-        except TimeoutError as exc:
-            logger.error("[%s] TTS pool timeout", session_key[-8:])
-            await cls._close_websocket_static(config.websocket, 1013, "TTS capacity unavailable")
-            raise WebSocketDisconnect(code=1013) from exc
-
-        try:
-            stt_client, stt_tier = await app_state.stt_pool.acquire_for_session(session_key)
-        except BaseException as exc:
-            await app_state.tts_pool.release_for_session(session_key, tts_client)
-            if isinstance(exc, TimeoutError):
-                logger.error("[%s] STT pool timeout", session_key[-8:])
-                await cls._close_websocket_static(
-                    config.websocket, 1013, "STT capacity unavailable"
-                )
-                raise WebSocketDisconnect(code=1013) from exc
-            raise
-
-        # Transfer leases to the handler only after construction succeeds.
-        async with contextlib.AsyncExitStack() as cleanup:
-            cleanup.push_async_callback(
-                app_state.stt_pool.release_for_session, session_key, stt_client
-            )
-            cleanup.push_async_callback(
-                app_state.tts_pool.release_for_session, session_key, tts_client
-            )
-            return await cls._create_acquired(
-                config,
-                app_state,
-                memory_manager,
-                tts_client=tts_client,
-                tts_tier=tts_tier,
-                stt_client=stt_client,
-                stt_tier=stt_tier,
-                cleanup=cleanup,
-            )
-
-    @classmethod
-    async def _create_acquired(
-        cls,
-        config: VoiceHandlerConfig,
-        app_state: Any,
-        memory_manager: MemoManager,
-        *,
-        tts_client: Any,
-        tts_tier: Any,
-        stt_client: Any,
-        stt_tier: Any,
-        cleanup: contextlib.AsyncExitStack,
-    ) -> VoiceHandler:
-        session_key = config.call_connection_id or config.session_id
-
-        logger.info(
-            "[%s] Acquired STT=%s TTS=%s transport=%s",
-            session_key[-8:],
-            getattr(stt_tier, "value", "?"),
-            getattr(tts_tier, "value", "?"),
-            config.transport.value,
-        )
-
         event_loop = asyncio.get_running_loop()
 
         # Build VoiceSessionContext
@@ -366,10 +316,6 @@ class VoiceHandler:
             call_connection_id=config.call_connection_id or config.session_id,
             transport=config.transport,
             conn_id=config.conn_id,
-            tts_client=tts_client,
-            stt_client=stt_client,
-            tts_tier=tts_tier,
-            stt_tier=stt_tier,
             memo_manager=memory_manager,
             session_context=SessionContext(
                 session_id=config.session_id,
@@ -388,9 +334,59 @@ class VoiceHandler:
         # Create handler
         handler = cls(context, app_state, config=config)
         handler._orchestration_tasks = orchestration_tasks
-        cleanup.pop_all()
 
         try:
+            # Resolve the actual agent before leasing a provider. A MAI session
+            # never acquires or mutates an Azure Speech recognizer.
+            await handler._initialize_active_agent()
+            _, active_agent, _ = handler._resolve_active_agent()
+            context.current_agent = active_agent
+            speech = active_agent.speech if active_agent and active_agent.speech else SpeechConfig()
+            transcription_model = normalize_transcription_model(speech.transcription_model)
+            if transcription_model not in ("azure-speech", MAI_TRANSCRIPTION_MODEL):
+                raise ValueError(
+                    f"Unsupported Cascade transcription model '{transcription_model}'."
+                )
+            handler._barge_in_controller = BargeInController(
+                session_key, on_barge_in=handler._on_barge_in
+            )
+            if transcription_model == MAI_TRANSCRIPTION_MODEL:
+                from apps.artagent.backend.voice.speech_cascade.mai_transcriber import (
+                    MAITranscriber,
+                )
+
+                handler._mai_transcriber = MAITranscriber(
+                    context,
+                    speech=speech,
+                    speech_queue=handler._speech_queue,
+                    thread_bridge=handler._thread_bridge,
+                    barge_in_handler=handler._barge_in_controller.handle_barge_in,
+                    on_error=handler._on_transcription_error,
+                    on_partial=handler._on_partial_transcript,
+                    sample_rate=config.input_sample_rate,
+                )
+
+            # The constructed handler owns each lease as soon as it is acquired.
+            # Its retained strict close also rolls back partial construction.
+            try:
+                context.tts_client, context.tts_tier = await app_state.tts_pool.acquire_for_session(
+                    session_key
+                )
+            except TimeoutError as exc:
+                await cls._close_websocket_static(
+                    config.websocket, 1013, "TTS capacity unavailable"
+                )
+                raise WebSocketDisconnect(code=1013) from exc
+            if handler._mai_transcriber is None:
+                try:
+                    context.stt_client, context.stt_tier = (
+                        await app_state.stt_pool.acquire_for_session(session_key)
+                    )
+                except TimeoutError as exc:
+                    await cls._close_websocket_static(
+                        config.websocket, 1013, "STT capacity unavailable"
+                    )
+                    raise WebSocketDisconnect(code=1013) from exc
             await handler._configure()
         except BaseException:
             await handler.stop()
@@ -415,9 +411,6 @@ class VoiceHandler:
         if session_manager is not None:
             await session_manager.add_session(config.session_id, memory_manager, config.websocket)
 
-        # Initialize active agent
-        await handler._initialize_active_agent()
-
         # Derive greeting
         handler._greeting_text = await handler._derive_greeting()
 
@@ -432,12 +425,6 @@ class VoiceHandler:
 
         handler._start_greeting_warmup()
 
-        # Create SDK/turn coordination components
-        handler._barge_in_controller = BargeInController(
-            session_key,
-            on_barge_in=handler._on_barge_in,
-        )
-
         handler._route_turn_thread = RouteTurnThread(
             connection_id=session_key,
             speech_queue=handler._speech_queue,
@@ -450,7 +437,6 @@ class VoiceHandler:
             thread_bridge=handler._thread_bridge,
             on_error=handler._on_stt_error,
         )
-
         handler._thread_bridge.set_main_loop(event_loop, session_key)
         handler._thread_bridge.set_route_turn_thread(handler._route_turn_thread)
 
@@ -466,24 +452,19 @@ class VoiceHandler:
                 handler._on_partial_transcript, text, language, speaker, turn_id, sequence
             )
 
-        # Create STT thread
-        handler._stt_thread = SpeechSDKThread(
-            connection_id=session_key,
-            recognizer=stt_client,
-            speech_queue=handler._speech_queue,
-            thread_bridge=handler._thread_bridge,
-            barge_in_handler=handler._barge_in_controller.handle_barge_in,
-            on_partial_transcript=schedule_partial_transcript,
-        )
+        if handler._mai_transcriber is None:
+            handler._stt_thread = SpeechSDKThread(
+                connection_id=session_key,
+                recognizer=stt_client,
+                speech_queue=handler._speech_queue,
+                thread_bridge=handler._thread_bridge,
+                barge_in_handler=handler._barge_in_controller.handle_barge_in,
+                on_partial_transcript=schedule_partial_transcript,
+            )
 
-        # Store reference in context for external access
-        context.speech_cascade = handler  # Handler IS the speech cascade now
-
-        # Backward compatibility - expose on websocket.state for orchestrator
+        context.speech_cascade = handler
         config.websocket.state.speech_cascade = handler
         config.websocket.state.tts_playback = handler._tts
-
-        # Persist memory
         await memory_manager.persist_to_redis_async(redis_mgr)
 
         logger.info(
@@ -514,10 +495,10 @@ class VoiceHandler:
 
         memo = self._context.memo_manager
         active_agent_name = memo.get_value_from_corememory("active_agent") if memo else None
-        session_agent = None
-        if active_agent_name:
+        session_agent = getattr(self._context, "current_agent", None)
+        if session_agent is None and active_agent_name:
             session_agent = get_session_agent(self._session_id, active_agent_name)
-        if not session_agent:
+        if not session_agent and not active_agent_name:
             session_agent = get_session_agent(self._session_id)
 
         speech = getattr(session_agent, "speech", None) if session_agent else None
@@ -567,6 +548,13 @@ class VoiceHandler:
             raise
 
     async def _start(self) -> None:
+        if self._mai_transcriber:
+            try:
+                await self._mai_transcriber.start()
+            except (RuntimeError, ValueError, OSError) as exc:
+                await self._report_transcription_error(str(exc))
+                raise
+
         self._running = True
         self._start_idle_monitor()
 
@@ -636,14 +624,24 @@ class VoiceHandler:
         session_agent = None
         if self._session_id:
             session_agent = get_session_agent(self._session_id, active_agent_name)
-            if not session_agent:
+            if not session_agent and (
+                memo is None or not memo.get_value_from_corememory("active_agent")
+            ):
                 session_agent = get_session_agent(self._session_id)
         if session_agent is not None:
             return getattr(session_agent, "name", active_agent_name), session_agent, "session"
 
+        if self._resolved_scenario and self._resolved_scenario.has_scenario:
+            _, agent_obj = find_agent_by_name(self._resolved_scenario.agents, active_agent_name)
+            if agent_obj is None:
+                raise ValueError(f"Scenario starting agent '{active_agent_name}' was not found.")
+            return active_agent_name, agent_obj, "scenario"
+
         # Fall back to the app-wide unified agent registry.
         unified_agents = getattr(self._app_state, "unified_agents", {}) or {}
         _, agent_obj = find_agent_by_name(unified_agents, active_agent_name)
+        if agent_obj is None and self._resolved_scenario:
+            _, agent_obj = find_agent_by_name(self._resolved_scenario.agents, active_agent_name)
         source = "scenario" if self._config.scenario else "default"
         return active_agent_name, agent_obj, source
 
@@ -694,6 +692,7 @@ class VoiceHandler:
             if speech is not None:
                 langs = getattr(speech, "candidate_languages", None) or []
                 vad_line = (
+                    f"provider={getattr(speech, 'transcription_model', 'azure-speech')}, "
                     f"silence_ms={getattr(speech, 'vad_silence_timeout_ms', '?')}, "
                     f"semantic={getattr(speech, 'use_semantic_segmentation', '?')}, "
                     f"langs={','.join(langs) if langs else 'auto'}"
@@ -814,6 +813,9 @@ class VoiceHandler:
                 event_data={
                     "message": "Custom cascade orchestration connected",
                     "streaming_type": "speech_cascade",
+                    "transcription_model": (
+                        MAI_TRANSCRIPTION_MODEL if self._mai_transcriber else "azure-speech"
+                    ),
                 },
                 sender="System",
                 topic="session",
@@ -952,13 +954,21 @@ class VoiceHandler:
             # not recycle either lease: both remain retained on this handler.
             if quiesced:
                 session_key = self._context.call_connection_id
+                releases = []
+                if self._context.tts_client is not None:
+                    releases.append(
+                        self._app_state.tts_pool.release_for_session(
+                            session_key, self._context.tts_client
+                        )
+                    )
+                if self._context.stt_client is not None:
+                    releases.append(
+                        self._app_state.stt_pool.release_for_session(
+                            session_key, self._context.stt_client
+                        )
+                    )
                 results = await asyncio.gather(
-                    self._app_state.tts_pool.release_for_session(
-                        session_key, self._context.tts_client
-                    ),
-                    self._app_state.stt_pool.release_for_session(
-                        session_key, self._context.stt_client
-                    ),
+                    *releases,
                     return_exceptions=True,
                 )
                 errors.extend(result for result in results if isinstance(result, Exception))
@@ -999,6 +1009,12 @@ class VoiceHandler:
         for task in list(self._orchestration_tasks):
             if not task.done() and not task.cancelling():
                 task.cancel()
+
+        if self._mai_transcriber:
+            try:
+                await self._mai_transcriber.stop()
+            except Exception as exc:
+                cleanup_errors.append(exc)
 
         # Stop SDK and turn processing; a failed stop must not return a live lease.
         if self._route_turn_thread:
@@ -1051,8 +1067,19 @@ class VoiceHandler:
         if self._stopped:
             logger.debug("[%s] Dropping audio after stop", self._session_short)
             return
+        if self._mai_transcriber:
+            raise RuntimeError("MAI input is async; use await write_audio_async(audio_bytes).")
         if self._stt_thread:
             self._stt_thread.write_audio(audio_bytes)
+
+    async def write_audio_async(self, audio_bytes: bytes) -> None:
+        """Feed the selected input provider without dropping queued MAI audio."""
+        if self._stopped:
+            return
+        if self._mai_transcriber:
+            await self._mai_transcriber.send_audio(audio_bytes)
+        else:
+            self.write_audio(audio_bytes)
 
     async def _handle_browser_audio(self, audio_bytes: bytes) -> None:
         """Process raw PCM audio from browser WebSocket.
@@ -1067,7 +1094,7 @@ class VoiceHandler:
             self._touch_activity()
 
         # Feed to STT (barge-in is scheduled from on_partial in the STT thread)
-        self.write_audio(audio_bytes)
+        await self.write_audio_async(audio_bytes)
 
     async def _handle_browser_message(self, text: str) -> None:
         """Process text message from browser.
@@ -1143,6 +1170,18 @@ class VoiceHandler:
         kind = message.get("kind")
 
         if kind == ACSMessageKind.AUDIO_METADATA:
+            if self._mai_transcriber:
+                metadata = message.get("audioMetadata") or {}
+                sample_rate = metadata.get("sampleRate", self._mai_transcriber.sample_rate)
+                channels = metadata.get("channels", 1)
+                if sample_rate != self._mai_transcriber.sample_rate or channels != 1:
+                    error = (
+                        "ACS MAI input requires mono PCM16 matching the configured "
+                        f"{self._mai_transcriber.sample_rate} Hz sampling rate; "
+                        f"received {sample_rate} Hz / {channels} channels."
+                    )
+                    await self._on_transcription_error(error)
+                    raise ValueError(error)
             self._metadata_received = True
             logger.info("[%s] ACS metadata received", self._session_short)
 
@@ -1153,7 +1192,7 @@ class VoiceHandler:
                 if not audio_section.get("silent", False):
                     self._touch_activity()
                 audio_bytes = base64.b64decode(audio_b64)
-                self.write_audio(audio_bytes)
+                await self.write_audio_async(audio_bytes)
 
         elif kind == ACSMessageKind.STOP_AUDIO:
             logger.info("[%s] ACS StopAudio received", self._session_short)
@@ -1536,6 +1575,7 @@ class VoiceHandler:
                     voice_name=event.voice_name,
                     voice_style=event.voice_style,
                     voice_rate=event.voice_rate,
+                    voice_pitch=event.voice_pitch,
                     on_first_audio=record_first_audio,
                 )
             finally:
@@ -1546,7 +1586,13 @@ class VoiceHandler:
         """Play announcement via TTS."""
         if self._tts and event.text:
             await self._emit_to_ui(event.text, is_greeting=False)
-            await self._tts.speak(event.text)
+            await self._tts.speak(
+                event.text,
+                voice_name=event.voice_name,
+                voice_style=event.voice_style,
+                voice_rate=event.voice_rate,
+                voice_pitch=event.voice_pitch,
+            )
 
     async def _on_user_transcript(
         self,
@@ -1598,6 +1644,61 @@ class VoiceHandler:
                 sequence=sequence,
             )
 
+    async def _on_transcription_error(self, message: str) -> None:
+        """Surface a terminal MAI failure and release this session's resources."""
+        if self._stopped:
+            return
+        try:
+            await self._report_transcription_error(message)
+        finally:
+            await self.stop()
+
+    async def _report_transcription_error(self, message: str) -> None:
+        """Use the shared error envelope before closing the MAI input transport."""
+        from apps.artagent.backend.voice.shared.errors import (
+            WS_CLOSE_CODE_VOICE_ERROR,
+            VoiceErrorInfo,
+            emit_voice_error,
+        )
+
+        logger.error("[%s] %s", self._session_short, message)
+        ws = self._context.websocket
+        try:
+            if ws:
+                info = VoiceErrorInfo(
+                    code="MAITranscriptionUnavailable",
+                    message="MAI transcription is unavailable; Azure Speech was not substituted.",
+                    details=message[:400],
+                    remediation=(
+                        "Check the Azure VoiceLive endpoint, authentication and regional MAI "
+                        "availability, or explicitly select azure-speech before starting a new call."
+                    ),
+                    source="stt",
+                    fatal=True,
+                    metadata={"transcription_model": MAI_TRANSCRIPTION_MODEL},
+                )
+                await asyncio.wait_for(
+                    emit_voice_error(
+                        ws,
+                        info,
+                        session_id=self._session_id,
+                        call_id=self._context.call_connection_id,
+                        conn_id=self._context.conn_id,
+                        broadcast_only=self._transport == TransportType.ACS,
+                    ),
+                    timeout=5.0,
+                )
+        except (WebSocketDisconnect, RuntimeError, OSError) as exc:
+            logger.warning("[%s] Unable to deliver MAI error event: %s", self._session_short, exc)
+        finally:
+            if ws:
+                await asyncio.wait_for(
+                    self._close_websocket_static(
+                        ws, WS_CLOSE_CODE_VOICE_ERROR, "MAI transcription unavailable"
+                    ),
+                    timeout=5.0,
+                )
+
     async def _on_tts_request(
         self,
         text: str,
@@ -1606,6 +1707,7 @@ class VoiceHandler:
         voice_name: str | None = None,
         voice_style: str | None = None,
         voice_rate: str | None = None,
+        voice_pitch: str | None = None,
     ) -> None:
         """Handle TTS request from orchestrator."""
         if self._tts and text:
@@ -1614,6 +1716,7 @@ class VoiceHandler:
                 voice_name=voice_name,
                 voice_style=voice_style,
                 voice_rate=voice_rate,
+                voice_pitch=voice_pitch,
             )
 
     async def play_tts_immediate(
@@ -1623,6 +1726,7 @@ class VoiceHandler:
         voice_name: str | None = None,
         voice_style: str | None = None,
         voice_rate: str | None = None,
+        voice_pitch: str | None = None,
     ) -> None:
         """
         Play TTS immediately without queueing.
@@ -1635,6 +1739,7 @@ class VoiceHandler:
             voice_name: Optional Azure TTS voice name override.
             voice_style: Optional voice style (e.g., "cheerful").
             voice_rate: Optional speech rate (e.g., "1.1").
+            voice_pitch: Optional voice pitch (e.g., "-15%", "+10%").
         """
         if not text or not text.strip():
             return
@@ -1648,6 +1753,7 @@ class VoiceHandler:
             voice_name=voice_name,
             voice_style=voice_style,
             voice_rate=voice_rate,
+            voice_pitch=voice_pitch,
         )
 
     async def _emit_to_ui(self, text: str, *, is_greeting: bool = False) -> None:
@@ -1768,27 +1874,26 @@ class VoiceHandler:
         ws.state.event_loop = ctx.event_loop
 
     async def _initialize_active_agent(self) -> None:
-        """Initialize active agent from scenario config or session agent."""
+        """Resolve a scenario start or persisted active agent before the session default."""
+        from apps.artagent.backend.src.orchestration.naming import get_scenario_from_corememory
+
         memory_manager = self._context.memo_manager
         config = self._config
         session_short = self._session_short
 
-        # Priority: 1. Scenario start_agent (explicit user selection), 2. Session agent, 3. Default
-        scenario_start_agent = None
-        if config.scenario:
-            try:
-                scenario_cfg = resolve_orchestrator_config(
-                    session_id=config.session_id,
-                    scenario_name=config.scenario,
-                )
-                scenario_start_agent = scenario_cfg.start_agent or scenario_start_agent
-            except Exception as exc:
-                logger.warning(
-                    "[%s] Failed to resolve scenario start_agent for '%s': %s",
-                    session_short,
-                    config.scenario,
-                    exc,
-                )
+        scenario_name = config.scenario or (
+            get_scenario_from_corememory(memory_manager) if memory_manager else None
+        )
+        self._resolved_scenario = resolve_orchestrator_config(
+            session_id=config.session_id,
+            scenario_name=scenario_name,
+        )
+        scenario_start_agent = (
+            self._resolved_scenario.start_agent if self._resolved_scenario.has_scenario else None
+        )
+        active_agent_name = (
+            memory_manager.get_value_from_corememory("active_agent") if memory_manager else None
+        )
 
         session_agent = get_session_agent(config.session_id)
 
@@ -1797,6 +1902,13 @@ class VoiceHandler:
             start_agent_name = scenario_start_agent
             logger.info(
                 "[%s] Session initialized with scenario agent: %s",
+                session_short,
+                start_agent_name,
+            )
+        elif active_agent_name:
+            start_agent_name = active_agent_name
+            logger.info(
+                "[%s] Session initialized with active agent: %s",
                 session_short,
                 start_agent_name,
             )
@@ -1820,6 +1932,8 @@ class VoiceHandler:
 
     async def _derive_greeting(self) -> str:
         """Generate contextual greeting."""
+        from apps.artagent.backend.src.orchestration.session_scenarios import get_session_scenario
+
         memory_manager = self._context.memo_manager
         app_state = self._app_state
         session_id = self._session_id
@@ -1831,12 +1945,30 @@ class VoiceHandler:
         if memory_manager:
             active_agent_name = memory_manager.get_value_from_corememory("active_agent")
 
+        if session_id and get_session_scenario(session_id) is not None:
+            resolved = resolve_orchestrator_config(session_id=session_id)
+            _, scenario_agent = find_agent_by_name(
+                resolved.agents, active_agent_name or resolved.start_agent
+            )
+            if scenario_agent is not None:
+                context = {
+                    **resolved.template_vars,
+                    "agent_name": scenario_agent.name,
+                }
+                if institution_name is not None:
+                    context["institution_name"] = institution_name
+                if memory_manager:
+                    context["caller_name"] = memory_manager.get_value_from_corememory("caller_name")
+                greeting = scenario_agent.render_greeting(context)
+                if greeting:
+                    return self._render_greeting_template(greeting, scenario_agent, context)
+
         # Check for session agent greeting (prefer active agent name when available)
         session_agent = None
         if session_id:
             if active_agent_name:
                 session_agent = get_session_agent(session_id, active_agent_name)
-            if not session_agent:
+            if not session_agent and not active_agent_name:
                 session_agent = get_session_agent(session_id)
         if session_agent:
             # Use agent's greeting if available

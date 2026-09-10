@@ -267,3 +267,101 @@ async def test_consume_voicelive_warmup_timeout_returns_none(
     release_event.set()
     await asyncio.gather(*cleanup_tasks)
     cm.__aexit__.assert_awaited_once_with(None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_named_scenario_start_matches_warmup_and_ignores_unrelated_session_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from apps.artagent.backend.registries.agentstore.base import (
+        ModelConfig,
+        UnifiedAgent,
+        VoiceLiveBYOMConfig,
+    )
+    from apps.artagent.backend.registries.scenariostore.loader import ScenarioConfig
+    from apps.artagent.backend.src.orchestration import session_memory
+    from apps.artagent.backend.voice.shared.config_resolver import OrchestratorConfigResult
+    from apps.artagent.backend.voice.voicelive import handler as voicelive_handler
+
+    entry = UnifiedAgent(
+        name="ScenarioEntry",
+        voicelive_model=ModelConfig(deployment_id="my-text-deployment"),
+        byom=VoiceLiveBYOMConfig(mode="byom-azure-openai-chat-completion"),
+    )
+    outside = UnifiedAgent(name="UnrelatedEditedAgent")
+    registry = {entry.name: entry, outside.name: outside}
+    config = OrchestratorConfigResult(
+        start_agent="scenarioentry",
+        agents={entry.name: entry},
+        scenario=ScenarioConfig(name="Named scenario", start_agent=entry.name, agents=[entry.name]),
+        scenario_name="Named scenario",
+    )
+    monkeypatch.setattr(session_memory, "prime_session_definitions", AsyncMock())
+    monkeypatch.setattr(voicelive_handler, "resolve_orchestrator_config", lambda **kwargs: config)
+    monkeypatch.setattr(voicelive_handler, "get_session_agent", lambda *args: outside)
+    settings = SimpleNamespace(azure_voicelive_model="gpt-realtime", start_agent=outside.name)
+
+    warm_agents, warm_start, model, query, _ = (
+        await voicelive_handler._resolve_voicelive_warmup_config(
+            app_state=SimpleNamespace(unified_agents=registry),
+            session_id="named-start",
+            scenario_name="Named scenario",
+            settings=settings,
+            user_email=None,
+        )
+    )
+    cold_agents, session_agent, cold_start = voicelive_handler._select_voicelive_agents(
+        registry,
+        config,
+        session_id="named-start",
+        configured_start_agent=settings.start_agent,
+    )
+
+    assert cold_start == warm_start == entry.name
+    assert model == entry.voicelive_model.deployment_id
+    assert query == {"profile": "byom-azure-openai-chat-completion"}
+    assert cold_agents == warm_agents == {entry.name: entry}
+    assert session_agent is None
+    assert registry[outside.name] is outside
+
+
+@pytest.mark.asyncio
+async def test_warmup_uses_the_same_byom_conflict_recovery_as_startup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from apps.artagent.backend.registries.agentstore.base import (
+        ModelConfig,
+        UnifiedAgent,
+        VoiceLiveBYOMConfig,
+    )
+    from apps.artagent.backend.src.orchestration import session_memory
+    from apps.artagent.backend.voice.shared.config_resolver import OrchestratorConfigResult
+    from apps.artagent.backend.voice.voicelive import handler as voicelive_handler
+
+    agent = UnifiedAgent(
+        name="Start",
+        voicelive_model=ModelConfig(deployment_id="gpt-realtime"),
+        byom=VoiceLiveBYOMConfig(mode="byom-azure-openai-chat-completion"),
+    )
+    monkeypatch.setattr(session_memory, "prime_session_definitions", AsyncMock())
+    monkeypatch.setattr(
+        voicelive_handler,
+        "resolve_orchestrator_config",
+        lambda **kwargs: OrchestratorConfigResult(start_agent=agent.name),
+    )
+    monkeypatch.setattr(voicelive_handler, "get_session_agent", lambda *args: None)
+    _, _, model, query, _ = await voicelive_handler._resolve_voicelive_warmup_config(
+        app_state=SimpleNamespace(unified_agents={agent.name: agent}),
+        session_id="profile-recovery",
+        scenario_name=None,
+        settings=SimpleNamespace(azure_voicelive_model="gpt-4.1", start_agent=agent.name),
+        user_email=None,
+    )
+
+    assert model == "gpt-realtime"
+    assert query is None
+    assert (
+        voicelive_handler._resolve_voicelive_byom_query(agent, model, session_id="profile-recovery")
+        is None
+    )
+    assert agent.byom.mode == "byom-azure-openai-chat-completion"

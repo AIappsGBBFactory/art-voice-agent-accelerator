@@ -28,13 +28,16 @@ import json
 import time
 import uuid
 from collections import deque
-from typing import TYPE_CHECKING, Dict, Optional, Tuple
+from typing import TYPE_CHECKING
 
 from apps.artagent.backend.src.orchestration.naming import (
+    find_agent_by_name,
     get_scenario_from_corememory,
 )
+from apps.artagent.backend.src.orchestration.prompt_context import cascade_prompt_context
 from apps.artagent.backend.src.orchestration.session_agents import (
     get_session_agent,
+    get_session_agents,
     register_adapter_update_callback,
 )
 from apps.artagent.backend.src.orchestration.session_scenarios import (
@@ -154,9 +157,16 @@ def _get_or_create_adapter(
         from apps.artagent.backend.voice.shared.config_resolver import resolve_from_app_state
 
         config = resolve_from_app_state(app_state)
+    runtime_agents = dict(config.agents)
+    for name, session_override in get_session_agents(session_id).items():
+        existing_key, _ = find_agent_by_name(runtime_agents, name)
+        if existing_key is not None:
+            runtime_agents[existing_key] = session_override
+        elif not config.has_scenario:
+            runtime_agents[name] = session_override
     adapter = CascadeOrchestratorAdapter.create(
         start_agent=config.start_agent,
-        agents=config.agents,
+        agents=runtime_agents,
         handoff_map=config.handoff_map,
         call_connection_id=call_connection_id,
         session_id=session_id,
@@ -166,11 +176,26 @@ def _get_or_create_adapter(
 
     _adapters[session_id] = adapter
 
-    # Check for pre-existing session agent (created via Agent Builder before call started)
-    session_agent = get_session_agent(session_id)
+    # Use the named agent of record, never an unrelated last-created override.
+    # Explicit activation is persisted by the authoring owner before this path.
+    active_agent_name = (
+        memo_manager.get_value_from_corememory("active_agent") if memo_manager else None
+    )
+    if active_agent_name:
+        session_agent = get_session_agent(session_id, active_agent_name)
+    else:
+        session_agent = get_session_agent(session_id) if not config.has_scenario else None
+    if (
+        session_agent is not None
+        and config.has_scenario
+        and find_agent_by_name(adapter.agents, session_agent.name)[0] is None
+    ):
+        session_agent = None
     if session_agent:
-        adapter.agents[session_agent.name] = session_agent
-        adapter._active_agent = session_agent.name
+        agent_key, _ = find_agent_by_name(adapter.agents, session_agent.name)
+        agent_key = agent_key or session_agent.name
+        adapter.agents[agent_key] = session_agent
+        adapter._active_agent = agent_key
         # Persist it as the session's active agent of record, not just on the
         # adapter. route_turn() calls adapter.sync_from_memo_manager(cm) on the
         # very next line, and that read is authoritative — so without this write
@@ -186,7 +211,7 @@ def _get_or_create_adapter(
         # stomp a handoff made later in the call, which continues to propagate
         # through MemoManager exactly as before.
         if memo_manager is not None:
-            sync_state_to_memo(memo_manager, active_agent=session_agent.name)
+            sync_state_to_memo(memo_manager, active_agent=agent_key)
         logger.info(
             "🎨 Injected pre-existing session agent | session=%s agent=%s voice=%s",
             session_id,
@@ -246,14 +271,14 @@ def update_session_agent(session_id: str, agent: UnifiedAgent, set_active: bool 
 
     adapter = _adapters[session_id]
 
-    # Inject/update the agent in the adapter's agents dict
-    # Use a special key for the session agent so it doesn't conflict with base agents
-    adapter.agents[agent.name] = agent
+    agent_key, _ = find_agent_by_name(adapter.agents, agent.name)
+    agent_key = agent_key or agent.name
+    adapter.agents[agent_key] = agent
 
     # Only update the active agent if explicitly requested
     # This prevents creating a new agent from accidentally becoming the active agent
     if set_active:
-        adapter._active_agent = agent.name
+        adapter._active_agent = agent_key
 
     logger.info(
         "🔄 Session agent updated in adapter | session=%s agent=%s set_active=%s voice=%s model=%s",
@@ -304,9 +329,14 @@ def update_session_scenario(session_id: str, scenario) -> bool:
     memo = live_memo(session_id)
     if memo is not None:
         for agent_name in scenario.agents:
-            agent = config.agents.get(agent_name)
+            _, agent = find_agent_by_name(config.agents, agent_name)
             if agent is not None:
-                prompt = agent.render_prompt({})
+                prompt = agent.render_prompt(
+                    {
+                        **config.template_vars,
+                        **cascade_prompt_context(memo, agent_name=agent_name),
+                    }
+                )
                 instructions = scenario.build_handoff_instructions(agent_name)
                 memo.ensure_system_prompt(
                     agent_name, "\n\n".join(part for part in (prompt, instructions) if part)
@@ -325,6 +355,7 @@ def update_session_scenario(session_id: str, scenario) -> bool:
             handoff_map=config.handoff_map,
             start_agent=scenario.start_agent,
             scenario_name=scenario.name,
+            scenario=config.scenario or scenario,
         )
 
         logger.info(
@@ -465,25 +496,13 @@ async def route_turn(
 
         try:
             # Build session context from MemoManager for prompt rendering
-            active_agent = cm.get_value_from_corememory("active_agent") or adapter.current_agent
             session_context = {
                 "is_acs": is_acs,
                 # CascadeSessionScope uses this value to correlate every event
                 # emitted for the utterance. Keep telemetry's run_id separate.
                 "run_id": canonical_turn_id,
                 "memo_manager": cm,
-                # Session profile and context for Jinja templates
-                "session_profile": cm.get_value_from_corememory("session_profile"),
-                "caller_name": cm.get_value_from_corememory("caller_name"),
-                "client_id": cm.get_value_from_corememory("client_id"),
-                "customer_intelligence": cm.get_value_from_corememory("customer_intelligence"),
-                "institution_name": cm.get_value_from_corememory("institution_name"),
-                "active_agent": active_agent,
-                "previous_agent": cm.get_value_from_corememory("previous_agent"),
-                "visited_agents": cm.get_value_from_corememory("visited_agents"),
-                "handoff_context": cm.get_value_from_corememory("handoff_context"),
-                # Add agent_name for prompt templates - use current adapter agent
-                "agent_name": adapter.current_agent,
+                **cascade_prompt_context(cm, agent_name=adapter.current_agent),
             }
 
             # Build context for the orchestrator
@@ -512,7 +531,7 @@ async def route_turn(
 
                 # Update TTSPlayback active agent for correct voice resolution on greetings
                 if hasattr(ws.state, "tts_playback") and ws.state.tts_playback:
-                    ws.state.tts_playback.set_active_agent(new_agent)
+                    ws.state.tts_playback.context.current_agent = adapter.current_agent_config
 
                 # Get new agent's voice configuration for TTS updates
                 # Adapter.agents contains session agent overrides from Agent Builder
@@ -611,11 +630,13 @@ async def route_turn(
                 voice_name = None
                 voice_style = None
                 voice_rate = None
+                voice_pitch = None
                 agent_config = adapter.agents.get(agent_name)
                 if agent_config and agent_config.voice:
                     voice_name = agent_config.voice.name
                     voice_style = agent_config.voice.style
                     voice_rate = agent_config.voice.rate
+                    voice_pitch = agent_config.voice.pitch
 
                 # Play TTS immediately (bypass queue which is blocked during orchestration)
                 if hasattr(ws.state, "speech_cascade") and ws.state.speech_cascade:
@@ -624,6 +645,7 @@ async def route_turn(
                         voice_name=voice_name,
                         voice_style=voice_style,
                         voice_rate=voice_rate,
+                        voice_pitch=voice_pitch,
                     )
 
                 envelope = make_assistant_streaming_envelope(

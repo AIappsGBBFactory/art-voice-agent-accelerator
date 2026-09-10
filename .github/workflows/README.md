@@ -95,6 +95,20 @@ detection, and deferred VoiceLive memory sync. Four legacy ACS authentication
 expectations remain in `.github/quarantined-tests.txt`: implementing a different
 credential priority or SMS managed identity needs an explicit behavior decision,
 not a test-only assertion change.
+The backend job installs `redis-server` so the isolated authoring-persistence
+regressions run rather than being skipped on runners without the executable.
+
+The frontend gate also runs the Quick Tune Playwright suite with Firefox after
+the unit tests and production build. These tests cover draft/Apply boundaries,
+prompt context insertion, tool and voice catalogs, per-mode Foundry resources,
+scenario graph editing, and responsive layouts against mocked APIs. Failure
+screenshots and first-failure traces are uploaded as `authoring-browser-results`;
+automatic retries remain disabled. Real HTTP/Redis
+registration tests are opt-in and are not enabled in this browser CI job.
+Prompt-opening regressions include a deliberate pointer press on desktop and
+mobile. Quick Tune's main configuration sections expand without height animation
+so scrolling and autosizing instructions cannot move the launcher between
+pointer-down and pointer-up and lose the click.
 
 ## 🚀 Quick Start
 

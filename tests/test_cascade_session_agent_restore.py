@@ -30,6 +30,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import patch
 
+import pytest
 from apps.artagent.backend.registries.agentstore.base import (
     HandoffConfig,
     ModelConfig,
@@ -50,8 +51,8 @@ class _FakeMemo:
         self.session_id = "sess-cascade-1"
         self.corememory: dict[str, Any] = dict(corememory)
 
-    def get_value_from_corememory(self, key: str) -> Any:
-        return self.corememory.get(key)
+    def get_value_from_corememory(self, key: str, default: Any = None) -> Any:
+        return self.corememory.get(key, default)
 
     def get_context(self, key: str) -> Any:
         return None
@@ -205,3 +206,82 @@ def test_cached_adapter_is_not_repinned_to_the_tuned_agent():
     assert again is adapter
     assert again._active_agent == "FraudAgent"
     assert memo.corememory["active_agent"] == "FraudAgent"
+
+
+@pytest.mark.parametrize("active_agent", ["First", "Unrelated"])
+def test_named_overrides_restore_without_activating_an_unrelated_agent(monkeypatch, active_agent):
+    from apps.artagent.backend.registries.scenariostore.loader import ScenarioConfig
+    from apps.artagent.backend.src.orchestration import unified
+    from apps.artagent.backend.voice.shared.config_resolver import OrchestratorConfigResult
+
+    first = _agent("First", voice=EMMA)
+    second = _agent("Second", voice=ALLOY)
+    edited = _agent("Second", voice=EMMA)
+    unrelated = _agent("Unrelated", voice=ALLOY)
+    config = OrchestratorConfigResult(
+        start_agent="First",
+        agents={"First": first, "Second": second},
+        scenario=ScenarioConfig(name="Scoped", start_agent="First", agents=["First", "Second"]),
+    )
+    monkeypatch.setattr(unified, "_adapters", {})
+    monkeypatch.setattr(unified, "resolve_orchestrator_config", lambda **kwargs: config)
+    monkeypatch.setattr(
+        unified, "get_session_agents", lambda sid: {"Second": edited, "Unrelated": unrelated}
+    )
+    monkeypatch.setattr(
+        unified,
+        "get_session_agent",
+        lambda sid, name=None: (
+            {"Second": edited, "Unrelated": unrelated}.get(name) if name else unrelated
+        ),
+    )
+    memo = _FakeMemo(active_agent=active_agent)
+    adapter = unified._get_or_create_adapter(memo.session_id, "call", None, memo)
+    adapter.sync_from_memo_manager(memo)
+    assert adapter.current_agent == "First"
+    assert adapter.agents["Second"] is edited
+    assert "Unrelated" not in adapter.agents
+    assert config.agents["Second"] is second
+
+
+def test_explicit_scenario_switch_discards_stale_handoff_and_visit_state():
+    from apps.artagent.backend.registries.scenariostore.loader import ScenarioConfig
+    from apps.artagent.backend.voice.shared.config_resolver import OrchestratorConfigResult
+    from apps.artagent.backend.voice.speech_cascade.orchestrator import CascadeConfig
+
+    agents = {name: _agent(name, voice=EMMA) for name in ("First", "Second")}
+    adapter = CascadeOrchestratorAdapter(config=CascadeConfig(start_agent="Second"), agents=agents)
+    old = ScenarioConfig(name="Old", start_agent="Second", agents=list(agents))
+    new = ScenarioConfig(name="New", start_agent="First", agents=list(agents))
+    adapter._cached_orchestrator_config = OrchestratorConfigResult(
+        agents=agents, scenario=old, scenario_name=old.name
+    )
+    previous_service = adapter.handoff_service
+    adapter._visited_agents.add("Second")
+    memo = _FakeMemo(
+        active_agent="Second",
+        visited_agents=["Second"],
+        pending_handoff={"target_agent": "Second"},
+    )
+    adapter.update_scenario(agents, {}, start_agent="First", scenario_name=new.name, scenario=new)
+    adapter.sync_from_memo_manager(memo)
+    assert adapter.current_agent == "First"
+    assert adapter._visited_agents == set()
+    assert memo.corememory["active_agent"] == "First"
+    assert memo.corememory["visited_agents"] == []
+    assert memo.corememory["pending_handoff"] is None
+    assert adapter._orchestrator_config.scenario is new
+    assert adapter.handoff_service is not previous_service
+    assert adapter.handoff_service._get_scenario() is new
+
+
+def test_pending_handoff_is_not_undone_by_the_same_memo_snapshot():
+    from apps.artagent.backend.voice.speech_cascade.orchestrator import CascadeConfig
+
+    agents = {name: _agent(name, voice=EMMA) for name in ("First", "Second")}
+    adapter = CascadeOrchestratorAdapter(config=CascadeConfig(start_agent="First"), agents=agents)
+    memo = _FakeMemo(active_agent="First", pending_handoff={"target_agent": "Second"})
+    adapter.sync_from_memo_manager(memo)
+    assert adapter.current_agent == "Second"
+    assert memo.corememory["active_agent"] == "Second"
+    assert memo.corememory["pending_handoff"] is None

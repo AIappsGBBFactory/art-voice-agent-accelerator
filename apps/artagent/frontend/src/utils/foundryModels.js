@@ -55,6 +55,7 @@ export const MANAGED_VOICELIVE_MODELS = [
   { id: 'phi4-mm-realtime', tier: 'lite' },
   { id: 'azure-realtime', tier: 'lite' },
   // Cascaded (Azure STT → text LLM → Azure TTS).
+  { id: 'gpt-5.6-terra', tier: 'pro' },
   { id: 'gpt-5.4', tier: 'pro' },
   { id: 'gpt-5.3-chat', tier: 'pro' },
   { id: 'gpt-5.2', tier: 'pro' },
@@ -93,6 +94,25 @@ export const isManagedVoiceLiveModel = (deploymentId) => {
   return MANAGED_VOICELIVE_MODELS.some((m) => m.id.toLowerCase() === id);
 };
 
+export function voiceLiveModelError(config, deployments) {
+  const id = config?.voicelive_model?.deployment_id || config?.model?.deployment_id || '';
+  const profile = config?.byom?.mode;
+  if (!id) return '';
+  if (!profile && !isManagedVoiceLiveModel(id)) {
+    return `${id} is not a managed VoiceLive model. Choose its BYOM profile or select a managed model.`;
+  }
+  // A deployment's metadata is authoritative; an arbitrary deployment name is not.
+  const deployed = deployments?.find((model) => model.id.toLowerCase() === id.toLowerCase());
+  const arch = deployed?.arch || (isManagedVoiceLiveModel(id) ? classifyModelArch(id) : null);
+  if (profile === 'byom-azure-openai-realtime' && arch === 'cascaded') {
+    return 'This text model requires a BYOM chat/Messages profile, not the realtime profile.';
+  }
+  if (profile && profile !== 'byom-azure-openai-realtime' && arch === 'native') {
+    return 'This native realtime model requires the BYOM realtime profile, not a chat/Messages profile.';
+  }
+  return '';
+}
+
 /**
  * Fetch the live model deployments for an orchestration mode.
  *
@@ -108,10 +128,13 @@ export const isManagedVoiceLiveModel = (deploymentId) => {
  * Returns { models, source, byCategory, ...resourceAttribution } or null on
  * failure/empty. See `foundryRegions.js` for the attribution fields.
  */
-export async function fetchFoundryModels(mode) {
+export async function fetchFoundryModels(mode, { signal } = {}) {
   try {
     const qs = mode ? `?mode=${encodeURIComponent(mode)}` : '';
-    const res = await fetch(`${API_BASE_URL}/api/v1/agent-builder/models${qs}`);
+    const timeout = AbortSignal.timeout(20000);
+    const res = await fetch(`${API_BASE_URL}/api/v1/agent-builder/models${qs}`, {
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    });
     if (!res.ok) return null;
     const data = await res.json();
     const models = Array.isArray(data.models) ? data.models : [];
@@ -132,8 +155,8 @@ export async function fetchFoundryModels(mode) {
  * ready-to-render VoiceLive dropdown options, or null when unavailable.
  * Returns { options, ...resourceAttribution }.
  */
-export async function fetchVoiceLiveModels() {
-  const live = await fetchFoundryModels('voicelive');
+export async function fetchVoiceLiveModels({ signal } = {}) {
+  const live = await fetchFoundryModels('voicelive', { signal });
   if (!live) return null;
   const { voicelive } = deriveModelOptions(live.models);
   if (!voicelive.length) return null;

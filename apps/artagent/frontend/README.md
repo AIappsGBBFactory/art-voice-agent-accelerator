@@ -78,3 +78,289 @@ The `entrypoint.sh` script:
 - Message bubbles with timestamps
 - Backend health status
 - Help system modal
+
+## Quick Tune: agents and scenarios
+
+**Quick Tune** is the single authoring entry point on the main page. Open its
+sidebar control to edit agents and scenarios. To start from a prompt, choose
+**Create scenario** inside the same workspace; there is no separate create button.
+The panel overlays the conversation as a floating, fixed-position drawer on
+desktop and becomes a modal panel on smaller screens - opening or expanding it
+never resizes or shifts the conversation window. **Advanced Builder** retains
+the full agent and graph editors, connection setup, and less-common
+configuration options.
+
+| View | What to edit |
+|------|--------------|
+| **Tune agent** | Select an agent, then open **Behavior**, **Tools**, or **Voice & model**. **Open prompt editor** provides a larger Markdown/Jinja workspace. Technical audio settings are under **Fine controls**. |
+| **Edit scenario** | Choose any existing template or session scenario, including single-agent scenarios. Update its purpose, icon, context, defaults, agents, and handoffs, or open the graphical editor. |
+| **Create scenario** | Describe an outcome, optionally restrict the tool catalog, and generate an editable draft. |
+
+**Tune agent** and **Edit scenario** include a clickable graph preview of the
+scenario selected for editing (initially the active scenario). It shows up to
+three real agents, their configured tool counts when available, and actual
+handoffs; larger scenarios show how many agents are included in the excerpt.
+**Open graphical editor** opens that same scenario draft to drag nodes, connect
+agents, and edit handoff conditions. Previewing or opening the graph does not
+save, activate, or change the running conversation. Unsaved scenario edits are
+reflected in the preview and labeled **Draft**. The full canvas keeps the user's
+node positions; the compact preview uses its own readable, automatic layout.
+If the complete scenario cannot load, **Retry preview** reloads it without
+blocking agent tuning or replacing a session override with an unrelated template.
+
+Tuning targets the named agent, not the last-created session agent. Unedited
+prompts, tool assignments, model options, and context are retained when saving.
+Use **Duplicate agent** to create an independent copy; existing names cannot be
+overwritten through that action.
+Copies keep the complete shipped prompt, including its existing Jinja logic, and
+allow prose edits without truncation. Legacy handoff tools are not copied into the
+new agent; the scenario supplies its routing.
+
+The model list is scoped to the service that will use it: Custom Speech lists
+deployments on the primary Foundry resource; VoiceLive BYOM lists deployments on
+the VoiceLive resource. Resource/region attribution and cross-region advisories
+remain visible in Quick Tune. Non-managed VoiceLive models require an explicit
+BYOM profile, and known realtime/text profile mismatches cannot be applied.
+
+### Choose a regional Speech voice
+
+**Voice & model** uses the full voice catalog returned by the connected Speech
+resource, rather than intersecting it with starter presets. Search **Voice** by
+display name, service identifier, locale/language (for example, `French` or
+`ja-JP`), gender, or an advertised style. Options include locale and voice metadata,
+and the selector identifies the catalog's region and voice count.
+
+**Refresh regional voice catalog** requests fresh discovery instead of using the
+ten-minute cache. Discovery does not block the rest of the agent editor. The
+current voice and other settings are preserved if refresh fails or the voice is
+not returned by the resource.
+
+Catalog provenance matters: a registration-only backend may return just voices
+referenced by repository agents. An unavailable Speech resource uses explicitly
+labelled, limited starter presets; a stale regional cache is also labelled. Use a
+Speech-connected backend for the full regional list. Regional Speech availability
+does not by itself validate every VoiceLive model/voice combination; custom,
+personal, and native-model voices can require separate configuration.
+
+### MAI voice and transcription options
+
+MAI voices appear first, with **MAI-Voice-2-Flash** ahead of **MAI-Voice-2**.
+Supported regional entries remain selectable; clearly marked setup presets stay
+disabled when the configured resource has not returned those voices. Prioritizing
+MAI does not change the selected voice or claim availability in an unsupported
+region. Choosing a discovered MAI voice uses the `azure-standard` voice type.
+
+**Input transcription** is a primary control in both **Custom Speech** and
+**VoiceLive**, with **MAI Transcribe (preview)** listed first. It uses the documented
+managed service alias `mai-transcribe`; this isn't a version-pinned
+`MAI-Transcribe-1.5` or `MAI-Transcribe-2` fast-transcription request.
+
+For **VoiceLive**, **Model source** makes the pipeline explicit. MAI input requires
+a managed text model or a BYOM chat/Messages profile; native realtime audio and
+BYOM realtime profiles are not interchangeable with that pipeline. The
+**Use managed gpt-4.1** action is explicit: it changes the VoiceLive model and
+clears BYOM only when selected. A BYOM deployment remains the user's choice.
+There is no invented `custom-cascade` query profile: managed text models already
+use a speech/chat/speech pipeline.
+
+Azure-only phrase lists and custom speech models are not silently discarded when
+selecting MAI. Incompatible configuration blocks the affected mode's Save/Apply
+until the user removes those options or chooses Azure Speech. New MAI input
+selection is disabled on older backends that do not advertise the required
+runtime support.
+
+For **Custom Speech**, MAI input uses a separate speech-only VoiceLive connection
+with automatic model responses disabled. The selected Cascade LLM and pooled
+Speech TTS are unchanged. **Semantic turn detection** controls the MAI connection's
+VAD; Azure SDK diarization is not supported. A single candidate language is a hint;
+multiple candidate languages use automatic detection rather than an enforced
+allowlist. Configured global Azure Speech phrase biases must be removed before
+starting MAI input. Provider/region/auth failures are reported instead of silently
+switching back to Azure Speech. Input-provider changes require a new connection.
+
+References: [MAI voices](https://learn.microsoft.com/azure/ai-services/speech-service/mai-voices),
+[VoiceLive MAI transcription](https://learn.microsoft.com/azure/ai-services/speech-service/voice-live-how-to#mai-transcribe-preview),
+and [BYOM profiles](https://learn.microsoft.com/azure/ai-services/speech-service/how-to-bring-your-own-model).
+
+### Edit an existing scenario
+
+Choose **Edit scenario**, then select **Scenario to edit**. Each scenario retains
+its own unsaved configuration and node layout as you switch between scenarios or
+close Quick Tune. The scenario name is its stable identity; editing a built-in
+scenario creates or updates a session override rather than rewriting its YAML
+template.
+
+**Scenario context** and **Agent defaults** accept typed JSON objects, preserving
+nested data, booleans, and numbers. Invalid JSON and unsupported default keys
+block saving; they are not silently discarded. Unedited tools and defaults remain
+part of the configuration. Legacy scenarios that allow all registered agents keep
+that behavior until you explicitly restrict their membership.
+
+Use **Save scenario** for the current scenario. When editing a different scenario,
+**Save & activate** explicitly selects it for the next conversation. Merely
+choosing or editing it does not change the running scenario. End an active
+conversation before saving scenario changes.
+
+### Edit prompts with session context
+
+Under **Behavior**, choose **Open prompt editor**. The pop-out has a full-height
+Markdown/Jinja source area, formatting controls, undo/redo, and a searchable
+context browser. On smaller screens, **Source**, **Context**, and **Preview** tabs
+keep each view usable without shrinking the conversation window.
+
+Context entries show their path, source, type, and a safe snapshot value. Inserting
+an entry replaces the current text selection with its Jinja expression, not the
+literal session value. Unavailable values use an explicit `default("")` expression;
+sensitive entries cannot be inserted through the browser.
+
+**Preview prompt** renders a read-only snapshot without calling models, executing
+tools, or registering configurations. **Rendered text** displays the literal
+prompt text, not executable HTML. Syntax errors include line numbers, and an old
+preview is marked stale when the source or authoring context changes. Refresh to
+render the latest draft. Previewing unsaved scenario context is explicitly labeled:
+save that scenario separately before relying on those values at runtime.
+
+If context loading reports that the preview endpoint is unavailable, the connected
+backend is older than the editor. Start or restart the updated API, then use
+**Retry** or **Refresh session context** in the existing editor. A browser reload
+is not required and would discard unsaved workspace drafts.
+
+Closing the editor keeps prompt changes in the Quick Tune draft. Existing agents
+can use the same **Save changes** / **Apply & reconnect** action inside the pop-out.
+For a newly generated scenario agent, **Done editing** returns to graph review;
+only **Apply scenario** registers it. Keyboard shortcuts include Ctrl/Cmd+B,
+Ctrl/Cmd+I, Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z, and Ctrl/Cmd+Enter for preview. Tab retains
+normal keyboard navigation.
+
+### Choose tools
+
+**Tools** opens a catalog rather than a multi-select dropdown and brings its list
+into view. Search by purpose, tool name, or an agent's name; open **Filters** to
+narrow the list by **Category** or **Assigned to**.
+The **Selected** view reviews only the current selection. Filters and pagination
+never remove selections that are out of view.
+
+Each entry shows its description, identifier, category, built-in or MCP source,
+and agent assignments. **View tool details** expands the complete description,
+required and optional inputs, schema, and the full agent list. Assignment labels
+distinguish templates, saved session configurations, and unsaved workspace drafts.
+These are configuration references, not evidence that an agent executed a tool.
+MCP registration does not imply a working connection.
+
+Selections stay in the agent draft until **Save changes** or the applicable Apply
+action. **Clear selection** only clears editable capabilities; scenario-managed
+handoff tools are preserved. Missing registered tools remain visible in the
+selection and are never silently removed. The same catalog is available in a
+generated agent's graph inspector and under **Tool scope** when creating a scenario.
+Changing generation scope does not assign tools to the currently running agent;
+**Use all registered tools** restores unrestricted catalog scope.
+
+### Generate a scenario
+
+1. Describe what the conversation should accomplish and select **Generate draft**.
+2. The result automatically opens in the **graphical scenario editor** for
+   review: drag agent nodes (including new, not-yet-connected specialists),
+   inspect or edit an agent, edit a handoff's routing condition, and add or
+   remove routes. Nothing is saved, registered, or activated by generating,
+   dragging, or editing here - only **Apply scenario** persists anything.
+   Existing agents are reused unchanged; new specialists are drafted only when
+   needed. Choose **Customize a copy** to change a reused agent without
+   overwriting it. A simple list-based review remains available in the same
+   workspace for the same draft.
+3. Edit the draft directly or provide a refinement and select **Refine draft**.
+   Resolve missing capabilities and fill in required scenario context. Closing
+   the graphical editor keeps the draft and any node positions - reopen it with
+   **Graphical editor** to continue exactly where you left off.
+4. Select **Apply scenario**, then start a conversation to try it.
+
+The graph keeps its canvas usable in narrower windows: **Agents** and **Routes**
+open dismissible panels instead of squeezing the canvas between fixed sidebars.
+On smaller screens, inspecting an agent uses the full editor area; **Close
+inspector** returns to the graph without losing edits or node positions. The
+dialog's close and Apply actions remain outside the scrolling editor. Long names
+and descriptions wrap in panels and menus; compact node summaries offer the full
+name on hover and the full configuration through **View agent details**.
+
+Generation uses the backend's configured Azure OpenAI integration and registered
+tool catalog. A configured chat-model deployment is required for generation;
+applying generated scenarios and saving new copies require Redis so the complete
+configuration can be persisted atomically. It does not execute tools or change
+the active scenario during generation. The backend
+checks references and current tool availability again on Apply, and reports
+generation or persistence failures in the workspace rather than silently
+substituting a sample scenario. MCP tools still require working connections;
+registration alone does not guarantee availability.
+
+Drafts remain in the workspace when closing it, switching views, or selecting
+another agent. They are **not saved** until Apply/Save and do not survive a page
+reload or switching sessions. Applied configurations are session-scoped; editing
+does not rewrite the repository's YAML templates.
+
+### Applying changes during a conversation
+
+- **Apply live** is available for supported VoiceLive voice-name, speaking-rate,
+  and turn-detection changes to the running agent.
+- **Apply & reconnect** saves structural changes and reconnects an active browser
+  conversation. Instructions, tools, models, transcription, voice style, and pitch
+  are not silently dropped from the live-update payload.
+- Phone calls are not automatically hung up. Changes requiring a new connection
+  are saved for the next call.
+- End an active conversation before applying a different scenario or changing
+  handoffs. Drafting and reviewing remain available during the call.
+
+The mode selector edits settings for **Custom Speech** or **VoiceLive**; it does
+not switch a running conversation's orchestration mode.
+
+### Frontend development checks
+
+```bash
+npm run test:unit
+npm run build
+npm run test:e2e -- quick-tune.spec.js existing-scenarios.spec.js prompt-editor.spec.js scenario-graph-review.spec.js authoring-layout.spec.js tool-catalog.spec.js regional-voices.spec.js mai-speech.spec.js scenario-switching.spec.js
+```
+
+Browser tests mock the backend APIs. When another worktree is using the default
+development port, set `PLAYWRIGHT_PORT=5183` (or another free port). On a fresh
+Playwright installation, run `npx playwright install chromium` before browser
+tests. The authoring layout suite covers desktop, tablet, and phone-sized windows
+with long agent names, model IDs, and tool names, including dropdowns, handoff
+editing, and the graph inspector.
+
+The blocking unit-test workflow runs the frontend unit suite, production build,
+and mocked Firefox authoring suite. Live HTTP/Redis registration checks remain
+explicit opt-in; browser tests never synthesize speech or execute business tools.
+
+For registration checks against a running local backend (real HTTP and Redis,
+without route mocks), use a dedicated local instance:
+
+```bash
+LOCAL_CONFIG_API=http://127.0.0.1:8011/api/v1 PLAYWRIGHT_PORT=5183 \
+  npm run test:e2e -- quick-tune-live-registration.spec.js
+```
+
+These checks create uniquely named test sessions and remove them afterward.
+They verify configuration registration and browser-to-API updates, not acceptance
+by Azure Speech or VoiceLive. Live Azure checks require access to the configured
+tenant and resources. If Chromium cannot launch on the host, set
+`PLAYWRIGHT_BROWSER=firefox` after installing the existing runner's Firefox browser
+with `npx playwright install firefox`.
+
+### Configuration-to-service bindings
+
+| Configuration | Runtime binding |
+|---------------|-----------------|
+| Voice name, rate, style, pitch | Cascade SSML and VoiceLive voice objects; pitch is request-local, not shared between pooled clients. |
+| VoiceLive temperature / output limit | `RequestSession.temperature` (0–1) and `max_response_output_tokens`. |
+| VoiceLive transcription | Model, language, custom Speech options, and phrase hints are preserved in `AudioInputTranscriptionOptions`. |
+| Cascade model options | Chat Completions by default, or explicit Responses streaming; supported options, structured tool history, and usage events use the selected API's shape. |
+| Scenario routes | Named and generic handoff tools resolve the session scenario's target, announced/discrete behavior, and context-sharing settings. |
+
+VoiceLive does not use the Cascade endpoint selector, Top P, verbosity, or
+reasoning controls. Its supported generation controls are shown separately.
+Min P and Typical P are unsupported by the OpenAI endpoints and are disabled;
+previously stored values can be cleared in Advanced Builder. An available
+reasoning summary can be requested through the Responses endpoint.
+
+Registration/serialization tests are distinct from live service acceptance.
+Model-specific capability, regional availability, credentials, and successful
+Speech/VoiceLive calls still require an authorized Azure environment.

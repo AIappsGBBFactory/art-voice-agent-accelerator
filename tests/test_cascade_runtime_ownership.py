@@ -147,6 +147,25 @@ async def test_configuration_failure_after_both_acquisitions_releases_both():
     app = app_state()
     with (
         patch.object(VoiceHandler, "_load_memory_manager", return_value=MockMemoManager()),
+        patch.object(VoiceHandler, "_initialize_active_agent", new=AsyncMock()),
+        patch.object(
+            VoiceHandler,
+            "_derive_greeting",
+            new=AsyncMock(side_effect=ValueError("bad prompt")),
+        ),
+        pytest.raises(ValueError, match="bad prompt"),
+    ):
+        await VoiceHandler.create(
+            VoiceHandlerConfig(websocket=MockWebSocket(), session_id="owned-session"), app
+        )
+    assert app.tts_pool.released == app.stt_pool.released == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_resolution_failure_does_not_acquire_either_provider():
+    app = app_state()
+    with (
+        patch.object(VoiceHandler, "_load_memory_manager", return_value=MockMemoManager()),
         patch.object(
             VoiceHandler,
             "_initialize_active_agent",
@@ -157,7 +176,8 @@ async def test_configuration_failure_after_both_acquisitions_releases_both():
         await VoiceHandler.create(
             VoiceHandlerConfig(websocket=MockWebSocket(), session_id="owned-session"), app
         )
-    assert app.tts_pool.released == app.stt_pool.released == 1
+    assert not app.tts_pool.leased and not app.stt_pool.leased
+    assert app.tts_pool.released == app.stt_pool.released == 0
 
 
 @pytest.mark.asyncio
