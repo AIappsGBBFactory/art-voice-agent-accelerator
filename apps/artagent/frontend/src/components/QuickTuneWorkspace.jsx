@@ -10,7 +10,6 @@ import CloseFullscreenIcon from '@mui/icons-material/CloseFullscreen';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import TuneIcon from '@mui/icons-material/Tune';
-import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import useQuickTune from '../hooks/useQuickTune.js';
 import useScenarioEditor from '../hooks/useScenarioEditor.js';
 import {
@@ -21,6 +20,7 @@ import ScenarioDraftComposer from './ScenarioDraftComposer.jsx';
 import ScenarioFlowEditor from './ScenarioFlowEditor.jsx';
 import ScenarioDetailsEditor from './ScenarioDetailsEditor.jsx';
 import ScenarioGraphDialog from './ScenarioGraphDialog.jsx';
+import ScenarioGraphPreview from './ScenarioGraphPreview.jsx';
 import { OrchestrationDiagramModal } from './OrchestrationDiagram.jsx';
 import logger from '../utils/logger.js';
 import { authoringAutocompleteSlots, authoringSurfaceSx } from '../styles/authoringStyles.js';
@@ -38,7 +38,7 @@ const QuickTuneWorkspace = memo(function QuickTuneWorkspace({
   }), [parentTheme]);
   const tune = useQuickTune({ open, sessionId, activeAgentName });
   const scenarioEditor = useScenarioEditor({
-    open, enabled: view === 'flow', sessionId, activeScenario: scenario, scenarios,
+    open, enabled: view !== 'create', sessionId, activeScenario: scenario, scenarios,
   });
   const { loadCatalog } = tune;
   const [mode, setMode] = useState(activeMode);
@@ -166,6 +166,12 @@ const QuickTuneWorkspace = memo(function QuickTuneWorkspace({
     await onScenarioApplied(config, agents);
     await loadCatalog();
   }, [onScenarioApplied, loadCatalog]);
+  const openFlowGraph = useCallback(() => {
+    setInspectedFlowAgent(null);
+    setShowFlowGraph(true);
+    onViewChange('flow');
+    setNotice('');
+  }, [onViewChange]);
   const updateFlowGraph = (updater) => setFlow((previous) => {
     const expanded = previous.agents?.length ? previous : { ...previous, agents: scenarioAgentNames };
     const updated = typeof updater === 'function' ? updater(expanded) : updater;
@@ -256,6 +262,12 @@ const QuickTuneWorkspace = memo(function QuickTuneWorkspace({
                 {tune.catalogErrors.map((message) => <Typography variant="body2" key={message}>{message}</Typography>)}
               </Alert>
             )}
+            {view !== 'create' && (
+              <ScenarioGraphPreview config={flowGraphConfig} agents={tune.catalog.agents}
+                name={scenarioEditor.selectedName} loading={flowLoading}
+                error={flowError} dirty={flowDirty} disabled={busy}
+                onOpen={openFlowGraph} onRetry={scenarioEditor.retry} />
+            )}
             <Box hidden={view !== 'tune'} data-testid="quick-tune-agent">
               <Stack spacing={2}>
                 <Stack direction="row" spacing={1} alignItems="flex-start">
@@ -328,18 +340,9 @@ const QuickTuneWorkspace = memo(function QuickTuneWorkspace({
                     if (item) { scenarioEditor.select(item.name); setNotice(''); setInspectedFlowAgent(null); }
                   }}
                   renderInput={(params) => <TextField {...params} label="Scenario to edit" />} />
-                <Stack alignItems="flex-start" gap={1}>
-                  <Typography variant="body2" color="text.secondary">
-                    Edit details, context, agents, and handoffs. Each scenario keeps its own draft until you save.
-                  </Typography>
-                  {flow && (
-                    <Button size="small" startIcon={<AccountTreeIcon fontSize="small" />}
-                      onClick={() => setShowFlowGraph(true)} disabled={flowLoading}
-                      sx={{ textTransform: 'none', whiteSpace: 'nowrap' }}>
-                      Graphical editor
-                    </Button>
-                  )}
-                </Stack>
+                <Typography variant="body2" color="text.secondary">
+                  Edit details, context, agents, and handoffs. Each scenario keeps its own draft until you save.
+                </Typography>
                 {flowError && <Alert severity="error" action={!flow
                   ? <Button onClick={scenarioEditor.retry}>Retry</Button> : undefined}>{flowError}</Alert>}
                 {flow && !flowIsCurrent && (

@@ -83,6 +83,7 @@ import { API_BASE_URL } from '../config/constants.js';
 import logger from '../utils/logger.js';
 import { AgentDetailsDialog } from './AgentBuilderContent.jsx';
 import { authoringMenuSx, authoringSurfaceSx } from '../styles/authoringStyles.js';
+import { scenarioAgentNames } from '../utils/scenarioGraph.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CONSTANTS & STYLES
@@ -1075,15 +1076,7 @@ const ScenarioGraphCanvas = React.memo(function ScenarioGraphCanvas({
   // membership list (same field the flow list editor and the backend
   // ScenarioDraft schema use) so isolated/new draft agents render even before
   // they have a handoff connecting them - no invented edges required.
-  const scenarioAgents = useMemo(() => {
-    const agentSet = new Set(config.agents || []);
-    if (config.start_agent) agentSet.add(config.start_agent);
-    (config.handoffs || []).forEach(h => {
-      agentSet.add(h.from_agent);
-      agentSet.add(h.to_agent);
-    });
-    return Array.from(agentSet);
-  }, [config]);
+  const scenarioAgents = useMemo(() => scenarioAgentNames(config), [config]);
 
   // Calculate base node layout (without user-dragged positions)
   // This only recalculates when the graph structure changes, NOT during drag

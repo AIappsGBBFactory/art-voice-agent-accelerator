@@ -143,7 +143,7 @@ test.describe('Graphical editor for the current scenario', () => {
     await page.getByRole('button', { name: 'Open Quick Tune', exact: true }).click();
     const panel = page.getByRole('complementary', { name: 'Quick Tune workspace' });
     await panel.getByRole('tab', { name: 'Edit scenario', exact: true }).click();
-    const graphButton = panel.getByRole('button', { name: 'Graphical editor', exact: true });
+    const graphButton = panel.getByRole('button', { name: 'Open graphical editor for Banking', exact: true });
     await expect(graphButton).toBeVisible();
     await graphButton.click();
     const dialog = page.getByRole('dialog', { name: /Graphical editor - Banking/ });

@@ -218,6 +218,17 @@ test('browser edits register in the real agent and scenario stores', async ({ pa
     await page.getByRole('button', { name: 'Open Quick Tune', exact: true }).click();
     const panel = page.getByRole('complementary', { name: 'Quick Tune workspace' });
     await expect(panel.getByRole('combobox', { name: 'Agent to tune' })).toHaveValue(first.name);
+    const preview = panel.getByRole('button', { name: `Open graphical editor for ${scenario.name}`, exact: true });
+    await expect(preview).toContainText('2 agents / 1 handoff');
+    await expect(preview.getByTestId(`scenario-preview-node-${first.name}`)).toContainText('Start / 1 tool');
+    const beforePreview = await expectSuccess(await request.get(`${api}/scenario-builder/session/${sid}`));
+    await preview.click();
+    const graph = page.getByRole('dialog', { name: `Graphical editor - ${scenario.name}`, exact: true });
+    await expect(graph.getByTestId(`graph-node-${second.name}`)).toBeVisible();
+    await graph.getByRole('button', { name: 'Close graphical editor', exact: true }).click();
+    const afterPreview = await expectSuccess(await request.get(`${api}/scenario-builder/session/${sid}`));
+    expect(afterPreview.config).toEqual(beforePreview.config);
+    await panel.getByRole('tab', { name: 'Tune agent', exact: true }).click();
     await panel.getByRole('button', { name: /^Behavior/ }).click();
     await panel.getByRole('textbox', { name: 'First greeting', exact: true }).fill('A real local registration update.');
     await panel.getByRole('button', { name: /^Voice & model/ }).click();

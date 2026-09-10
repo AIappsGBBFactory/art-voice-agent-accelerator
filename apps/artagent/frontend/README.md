@@ -96,6 +96,18 @@ configuration options.
 | **Edit scenario** | Choose any existing template or session scenario, including single-agent scenarios. Update its purpose, icon, context, defaults, agents, and handoffs, or open the graphical editor. |
 | **Create scenario** | Describe an outcome, optionally restrict the tool catalog, and generate an editable draft. |
 
+**Tune agent** and **Edit scenario** include a clickable graph preview of the
+scenario selected for editing (initially the active scenario). It shows up to
+three real agents, their configured tool counts when available, and actual
+handoffs; larger scenarios show how many agents are included in the excerpt.
+**Open graphical editor** opens that same scenario draft to drag nodes, connect
+agents, and edit handoff conditions. Previewing or opening the graph does not
+save, activate, or change the running conversation. Unsaved scenario edits are
+reflected in the preview and labeled **Draft**. The full canvas keeps the user's
+node positions; the compact preview uses its own readable, automatic layout.
+If the complete scenario cannot load, **Retry preview** reloads it without
+blocking agent tuning or replacing a session override with an unrelated template.
+
 Tuning targets the named agent, not the last-created session agent. Unedited
 prompts, tool assignments, model options, and context are retained when saving.
 Use **Duplicate agent** to create an independent copy; existing names cannot be
