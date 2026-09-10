@@ -98,6 +98,7 @@ class SpeechEvent:
     voice_name: str | None = None
     voice_style: str | None = None
     voice_rate: str | None = None
+    voice_pitch: str | None = None
     is_greeting: bool = False
 
 
@@ -351,6 +352,12 @@ class ThreadBridge:
                     future.result(timeout=0.1)
                 except Exception as e:
                     logger.error(f"[{self.connection_id}] Failed to queue speech: {e}")
+
+    async def queue_speech_result_async(
+        self, speech_queue: asyncio.Queue, event: SpeechEvent, *, timeout: float = 5.0
+    ) -> None:
+        """Backpressure async input providers instead of evicting finalized turns."""
+        await asyncio.wait_for(speech_queue.put(event), timeout=timeout)
 
 
 class SpeechSDKThread:
@@ -637,7 +644,7 @@ class RouteTurnThread:
             on_announcement: Callback for announcement events (emitted to transport).
             on_user_transcript: Callback for final user transcripts (emitted to transport).
             on_tts_request: Callback for TTS playback requests. Signature:
-                (text, event_type, *, voice_name, voice_style, voice_rate) -> None
+                (text, event_type, *, voice_name, voice_style, voice_rate, voice_pitch) -> None
         """
         self.connection_id = connection_id
         self._conn_short = connection_id[-8:] if connection_id else "unknown"
@@ -700,6 +707,7 @@ class RouteTurnThread:
                                 voice_name=speech_event.voice_name,
                                 voice_style=speech_event.voice_style,
                                 voice_rate=speech_event.voice_rate,
+                                voice_pitch=speech_event.voice_pitch,
                             )
                         logger.debug(
                             f"[{self._conn_short}] TTS response processed: {speech_event.text[:50]}..."
@@ -715,6 +723,7 @@ class RouteTurnThread:
                                 voice_name=speech_event.voice_name,
                                 voice_style=speech_event.voice_style,
                                 voice_rate=speech_event.voice_rate,
+                                voice_pitch=speech_event.voice_pitch,
                             )
                     elif speech_event.event_type in {
                         SpeechEventType.ANNOUNCEMENT,
@@ -731,6 +740,7 @@ class RouteTurnThread:
                                 voice_name=speech_event.voice_name,
                                 voice_style=speech_event.voice_style,
                                 voice_rate=speech_event.voice_rate,
+                                voice_pitch=speech_event.voice_pitch,
                             )
                     elif speech_event.event_type == SpeechEventType.ERROR:
                         logger.error(f"[{self._conn_short}] Speech error: {speech_event.text}")
@@ -1288,6 +1298,7 @@ class SpeechCascadeHandler:
         voice_name: str | None = None,
         voice_style: str | None = None,
         voice_rate: str | None = None,
+        voice_pitch: str | None = None,
     ) -> bool:
         """Queue a greeting for playback with optional voice configuration."""
         return self.queue_event(
@@ -1299,6 +1310,7 @@ class SpeechCascadeHandler:
                 voice_name=voice_name,
                 voice_style=voice_style,
                 voice_rate=voice_rate,
+                voice_pitch=voice_pitch,
             )
         )
 
@@ -1310,6 +1322,7 @@ class SpeechCascadeHandler:
         voice_name: str | None = None,
         voice_style: str | None = None,
         voice_rate: str | None = None,
+        voice_pitch: str | None = None,
     ) -> bool:
         """Queue an announcement for playback with optional voice configuration."""
         return self.queue_event(
@@ -1320,6 +1333,7 @@ class SpeechCascadeHandler:
                 voice_name=voice_name,
                 voice_style=voice_style,
                 voice_rate=voice_rate,
+                voice_pitch=voice_pitch,
             )
         )
 
@@ -1330,6 +1344,7 @@ class SpeechCascadeHandler:
         voice_name: str | None = None,
         voice_style: str | None = None,
         voice_rate: str | None = None,
+        voice_pitch: str | None = None,
     ) -> None:
         """
         Play TTS immediately without queueing.
@@ -1342,6 +1357,7 @@ class SpeechCascadeHandler:
             voice_name: Optional Azure TTS voice name override.
             voice_style: Optional voice style (e.g., "cheerful").
             voice_rate: Optional speech rate (e.g., "1.1").
+            voice_pitch: Optional voice pitch (e.g., "-15%", "+10%").
         """
         if not text or not text.strip():
             return
@@ -1353,6 +1369,7 @@ class SpeechCascadeHandler:
                 voice_name=voice_name,
                 voice_style=voice_style,
                 voice_rate=voice_rate,
+                voice_pitch=voice_pitch,
             )
 
     def queue_tts(
@@ -1362,6 +1379,7 @@ class SpeechCascadeHandler:
         voice_name: str | None = None,
         voice_style: str | None = None,
         voice_rate: str | None = None,
+        voice_pitch: str | None = None,
         language: str = "en-US",
     ) -> bool:
         """
@@ -1375,6 +1393,7 @@ class SpeechCascadeHandler:
             voice_name: Optional Azure TTS voice name override.
             voice_style: Optional voice style (e.g., "cheerful").
             voice_rate: Optional speech rate (e.g., "1.1").
+            voice_pitch: Optional voice pitch (e.g., "-15%", "+10%").
             language: Language code for synthesis.
 
         Returns:
@@ -1388,6 +1407,7 @@ class SpeechCascadeHandler:
                 voice_name=voice_name,
                 voice_style=voice_style,
                 voice_rate=voice_rate,
+                voice_pitch=voice_pitch,
             )
         )
 

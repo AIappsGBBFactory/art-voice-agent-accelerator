@@ -43,10 +43,12 @@ Example:
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import time
 import uuid
 from collections import deque
+from collections.abc import Collection, Mapping
 from typing import TYPE_CHECKING, Any
 
 from utils.ml_logging import get_logger
@@ -56,7 +58,12 @@ from src.agenticmemory.types import ChatHistory, CoreMemory
 from src.agenticmemory.utils import LatencyTracker
 
 # TODO Fix this area
-from src.redis.manager import AzureRedisManager
+from src.redis.manager import (
+    ACTIVATION_FIELDS,
+    AUTHORING_FIELDS,
+    AUTHORING_REVISION_KEY,
+    AzureRedisManager,
+)
 from src.tools.latency_helpers import PersistentLatency, StageSample
 
 if TYPE_CHECKING:
@@ -165,6 +172,7 @@ class MemoManager:
         self._pending_persist_task: asyncio.Task | None = None
         self._mcp_manager: MCPSessionManager | None = None
         self._turn_sequence: int = 0  # Track turn segments for tool call boundaries
+        self._activation_baseline: dict[str, Any] = {}
         now = time.time()
         self.corememory.set("created_at", now)
         self.corememory.set("last_activity", now)
@@ -258,6 +266,41 @@ class MemoManager:
             self._HISTORY_KEY: self.chatHistory.to_json(),
         }
 
+    def _capture_activation_baseline(self) -> None:
+        self._activation_baseline = {
+            key: copy.deepcopy(self.context[key])
+            for key in ACTIVATION_FIELDS
+            if key in self.context
+        }
+
+    def _changed_activation_fields(self, submitted_core: str) -> tuple[str, ...]:
+        submitted = json.loads(submitted_core)
+        return tuple(
+            sorted(
+                key
+                for key in ACTIVATION_FIELDS
+                if (key in submitted) != (key in self._activation_baseline)
+                or submitted.get(key) != self._activation_baseline.get(key)
+            )
+        )
+
+    def _acknowledge_session_write(self, submitted_core: str, persisted_core: str) -> None:
+        """Learn server-owned config without disguising stale runtime state as a handoff."""
+        submitted = json.loads(submitted_core)
+        persisted = json.loads(persisted_core)
+        if self.context.get(AUTHORING_REVISION_KEY) == submitted.get(AUTHORING_REVISION_KEY):
+            for key in AUTHORING_FIELDS | {AUTHORING_REVISION_KEY}:
+                if key in persisted:
+                    self.corememory.set(key, persisted[key])
+                else:
+                    self.context.pop(key, None)
+        # Keep this memo's own activation baseline. Adopting the server's active
+        # agent here would make the next stale orchestrator sync look like a new
+        # handoff. An explicit Redis refresh resets the baseline instead.
+        self._activation_baseline = {
+            key: submitted[key] for key in ACTIVATION_FIELDS if key in submitted
+        }
+
     @classmethod
     def from_redis(cls, session_id: str, redis_mgr: AzureRedisManager) -> "MemoManager":
         """
@@ -295,6 +338,7 @@ class MemoManager:
             mm.corememory.from_json(data[mm._CORE_KEY])
         if mm._HISTORY_KEY in data:
             mm.chatHistory.from_json(data[mm._HISTORY_KEY])
+        mm._capture_activation_baseline()
         return mm
 
     @classmethod
@@ -328,6 +372,7 @@ class MemoManager:
                 mm.corememory.from_json(data[cls._CORE_KEY])
             if cls._HISTORY_KEY in data:
                 mm.chatHistory.from_json(data[cls._HISTORY_KEY])
+        mm._capture_activation_baseline()
         return mm
 
     async def persist(self, redis_mgr: AzureRedisManager | None = None) -> None:
@@ -366,7 +411,12 @@ class MemoManager:
         await self.persist_to_redis_async(mgr)
 
     def persist_to_redis(
-        self, redis_mgr: AzureRedisManager, ttl_seconds: int | None = None
+        self,
+        redis_mgr: AzureRedisManager,
+        ttl_seconds: int | None = None,
+        *,
+        authoring_fields: Collection[str] = (),
+        registry_updates: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> None:
         """
         Synchronously persist session state to Redis.
@@ -398,7 +448,17 @@ class MemoManager:
             to avoid blocking the event loop.
         """
         key = self.build_redis_key(self.session_id)
-        redis_mgr.store_session_data(key, self.to_redis_dict())
+        data = self.to_redis_dict()
+        submitted_core = data[self._CORE_KEY]
+        success = redis_mgr.store_session_data(
+            key,
+            data,
+            authoring_fields=authoring_fields,
+            registry_updates=registry_updates,
+            runtime_changes=self._changed_activation_fields(submitted_core),
+        )
+        if success:
+            self._acknowledge_session_write(submitted_core, data[self._CORE_KEY])
         if ttl_seconds:
             redis_mgr.redis_client.expire(key, ttl_seconds)
         logger.info(
@@ -409,8 +469,13 @@ class MemoManager:
         )
 
     async def persist_to_redis_async(
-        self, redis_mgr: AzureRedisManager, ttl_seconds: int | None = None,
-        *, raise_on_failure: bool = False,
+        self,
+        redis_mgr: AzureRedisManager,
+        ttl_seconds: int | None = None,
+        *,
+        raise_on_failure: bool = False,
+        authoring_fields: Collection[str] = (),
+        registry_updates: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> bool:
         """
         Asynchronously persist session state to Redis without blocking.
@@ -427,6 +492,11 @@ class MemoManager:
             raise_on_failure (bool): When True, raise on write failure instead of
                 silently returning False. Use this in code paths where the caller
                 **must** know whether persistence succeeded (e.g. scenario creation).
+            authoring_fields: Explicit configuration fields owned by this write.
+                Ordinary conversation persistence must leave this empty.
+            registry_updates: Per-name replacements/deletions in authoring registries;
+                None values delete entries. Other records and conversation history
+                are preserved atomically.
 
         Returns:
             bool: True if persistence succeeded, False otherwise.
@@ -445,13 +515,22 @@ class MemoManager:
         """
         try:
             key = self.build_redis_key(self.session_id)
-            success = await redis_mgr.store_session_data_async(key, self.to_redis_dict())
+            data = self.to_redis_dict()
+            submitted_core = data[self._CORE_KEY]
+            success = await redis_mgr.store_session_data_async(
+                key,
+                data,
+                authoring_fields=authoring_fields,
+                registry_updates=registry_updates,
+                runtime_changes=self._changed_activation_fields(submitted_core),
+            )
             if not success:
                 msg = f"Redis write returned failure for session {self.session_id}"
                 logger.error(msg)
                 if raise_on_failure:
                     raise RuntimeError(msg)
                 return False
+            self._acknowledge_session_write(submitted_core, data[self._CORE_KEY])
             if ttl_seconds:
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, redis_mgr.redis_client.expire, key, ttl_seconds)
@@ -1559,6 +1638,7 @@ class MemoManager:
             if "corememory" in data:
                 new_context = json.loads(data["corememory"])
                 self.context = new_context
+                self._capture_activation_baseline()
             logger.info(f"Successfully refreshed live data for session {self.session_id}")
             return True
         except Exception as e:
@@ -1581,6 +1661,7 @@ class MemoManager:
             if "corememory" in data:
                 new_context = json.loads(data["corememory"])
                 self.context = new_context
+                self._capture_activation_baseline()
             logger.info(f"Successfully refreshed live data for session {self.session_id}")
             return True
         except Exception as e:

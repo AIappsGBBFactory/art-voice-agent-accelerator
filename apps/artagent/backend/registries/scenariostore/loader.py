@@ -7,6 +7,7 @@ Loads scenario configurations and applies agent overrides.
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -559,9 +560,17 @@ def get_scenario_agents(
     else:
         agents = dict(base_agents)
 
-    # Apply global defaults (no per-agent overrides)
+    return apply_scenario_overrides(scenario, agents)
+
+
+def apply_scenario_overrides(
+    scenario: ScenarioConfig, agents: dict[str, Any]
+) -> dict[str, Any]:
+    """Apply the existing scenario defaults to isolated, session-safe agent copies."""
+    agents = {name: copy.deepcopy(agent) for name, agent in agents.items()}
     for agent in agents.values():
-        merged = dict(scenario.global_template_vars)
+        merged = dict(getattr(agent, "template_vars", None) or {})
+        merged.update(copy.deepcopy(scenario.global_template_vars))
 
         if scenario.agent_defaults:
             override = scenario.agent_defaults
@@ -578,13 +587,8 @@ def get_scenario_agents(
             if override.voice_rate is not None and hasattr(agent, "voice") and agent.voice:
                 agent.voice.rate = override.voice_rate
 
-            merged.update(override.template_vars)
-
-        if hasattr(agent, "template_vars"):
-            merged.update(agent.template_vars or {})
-            agent.template_vars = merged
-        else:
-            agent.template_vars = merged
+            merged.update(copy.deepcopy(override.template_vars))
+        agent.template_vars = merged
 
     return agents
 

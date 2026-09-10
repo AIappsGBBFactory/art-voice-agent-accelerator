@@ -42,13 +42,17 @@ export const MANAGED_VOICELIVE_MODELS = [
   { id: 'gpt-4.1', tier: 'pro' },
   { id: 'gpt-5', tier: 'pro' },
   { id: 'gpt-5-chat', tier: 'pro' },
+  { id: 'gpt-5.1', tier: 'pro' },
+  { id: 'gpt-5.2', tier: 'pro' },
+  { id: 'gpt-5.4', tier: 'pro' },
+  { id: 'gpt-5.6-terra', tier: 'pro' },
   { id: 'gpt-realtime-mini', tier: 'basic' },
   { id: 'gpt-4o-mini', tier: 'basic' },
   { id: 'gpt-4.1-mini', tier: 'basic' },
+  { id: 'gpt-4.1-nano', tier: 'lite' },
   { id: 'gpt-5-mini', tier: 'basic' },
   { id: 'gpt-5-nano', tier: 'lite' },
   { id: 'phi4-mm-realtime', tier: 'lite' },
-  { id: 'phi4-mini', tier: 'lite' },
 ];
 
 // {id, label} options for the managed VoiceLive model dropdown (label shows tier).
@@ -62,9 +66,12 @@ export const MANAGED_VOICELIVE_OPTIONS = MANAGED_VOICELIVE_MODELS.map((m) => ({
  * Fetch the live model deployments from the connected Foundry/Azure OpenAI
  * resource. Returns { models, source, byCategory } or null on failure/empty.
  */
-export async function fetchFoundryModels() {
+export async function fetchFoundryModels({ signal } = {}) {
   try {
-    const res = await fetch(`${API_BASE_URL}/api/v1/agent-builder/models`);
+    const timeout = AbortSignal.timeout(20000);
+    const res = await fetch(`${API_BASE_URL}/api/v1/agent-builder/models`, {
+      signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+    });
     if (!res.ok) return null;
     const data = await res.json();
     const models = Array.isArray(data.models) ? data.models : [];

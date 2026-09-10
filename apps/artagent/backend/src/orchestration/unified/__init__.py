@@ -33,11 +33,13 @@ from typing import TYPE_CHECKING, Dict, Optional, Tuple
 from apps.artagent.backend.src.orchestration.naming import (
     get_scenario_from_corememory,
 )
+from apps.artagent.backend.src.orchestration.prompt_context import cascade_prompt_context
 from apps.artagent.backend.src.orchestration.session_agents import (
     get_session_agent,
     register_adapter_update_callback,
 )
 from apps.artagent.backend.src.orchestration.session_scenarios import (
+    get_session_scenario,
     register_scenario_update_callback,
 )
 from apps.artagent.backend.src.utils.tracing import (
@@ -159,7 +161,9 @@ def _get_or_create_adapter(
     _adapters[session_id] = adapter
 
     # Check for pre-existing session agent (created via Agent Builder before call started)
-    session_agent = get_session_agent(session_id)
+    session_agent = (
+        get_session_agent(session_id) if get_session_scenario(session_id) is None else None
+    )
     if session_agent:
         adapter.agents[session_agent.name] = session_agent
         adapter._active_agent = session_agent.name
@@ -280,7 +284,7 @@ def update_session_scenario(session_id: str, scenario) -> bool:
                 agent = config.agents.get(agent_name)
                 if agent:
                     # Build the base system prompt from the agent
-                    base_prompt = agent.render_prompt({}) or ""
+                    base_prompt = agent.render_prompt(config.template_vars) or ""
                     
                     # Build handoff instructions from the scenario
                     handoff_instructions = scenario.build_handoff_instructions(agent_name)
@@ -464,23 +468,11 @@ async def route_turn(
 
         try:
             # Build session context from MemoManager for prompt rendering
-            active_agent = cm.get_value_from_corememory("active_agent") or adapter.current_agent
             session_context = {
                 "is_acs": is_acs,
                 "run_id": run_id,
                 "memo_manager": cm,
-                # Session profile and context for Jinja templates
-                "session_profile": cm.get_value_from_corememory("session_profile"),
-                "caller_name": cm.get_value_from_corememory("caller_name"),
-                "client_id": cm.get_value_from_corememory("client_id"),
-                "customer_intelligence": cm.get_value_from_corememory("customer_intelligence"),
-                "institution_name": cm.get_value_from_corememory("institution_name"),
-                "active_agent": active_agent,
-                "previous_agent": cm.get_value_from_corememory("previous_agent"),
-                "visited_agents": cm.get_value_from_corememory("visited_agents"),
-                "handoff_context": cm.get_value_from_corememory("handoff_context"),
-                # Add agent_name for prompt templates - use current adapter agent
-                "agent_name": adapter.current_agent,
+                **cascade_prompt_context(cm, agent_name=adapter.current_agent),
             }
 
             # Build context for the orchestrator
@@ -606,11 +598,13 @@ async def route_turn(
                 voice_name = None
                 voice_style = None
                 voice_rate = None
+                voice_pitch = None
                 agent_config = adapter.agents.get(agent_name)
                 if agent_config and agent_config.voice:
                     voice_name = agent_config.voice.name
                     voice_style = agent_config.voice.style
                     voice_rate = agent_config.voice.rate
+                    voice_pitch = agent_config.voice.pitch
 
                 # Play TTS immediately (bypass queue which is blocked during orchestration)
                 if hasattr(ws.state, "speech_cascade") and ws.state.speech_cascade:
@@ -619,6 +613,7 @@ async def route_turn(
                         voice_name=voice_name,
                         voice_style=voice_style,
                         voice_rate=voice_rate,
+                        voice_pitch=voice_pitch,
                     )
 
                 envelope = make_assistant_streaming_envelope(

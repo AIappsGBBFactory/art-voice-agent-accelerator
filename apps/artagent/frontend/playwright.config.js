@@ -1,6 +1,13 @@
 // @ts-check
 import { defineConfig } from '@playwright/test';
 
+const port = Number(process.env.PLAYWRIGHT_PORT || 5173);
+const baseURL = `http://localhost:${port}`;
+const browserName = process.env.PLAYWRIGHT_BROWSER || 'chromium';
+if (browserName !== 'chromium' && browserName !== 'webkit' && browserName !== 'firefox') {
+  throw new Error('PLAYWRIGHT_BROWSER must be chromium, webkit, or firefox.');
+}
+
 /**
  * Playwright E2E test configuration for scenario switching.
  *
@@ -21,20 +28,20 @@ export default defineConfig({
   retries: 0,                     // no retries — tests must be deterministic
   reporter: [['list'], ['html', { open: 'never' }]],
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL,
     headless: true,
     screenshot: 'only-on-failure',
     trace: 'on-first-retry',
   },
   projects: [
     {
-      name: 'chromium',
-      use: { browserName: 'chromium' },
+      name: browserName,
+      use: { browserName },
     },
   ],
   webServer: {
-    command: 'npm run dev',
-    url: 'http://localhost:5173',
+    command: `npm run dev -- --port ${port} --strictPort`,
+    url: baseURL,
     reuseExistingServer: true,    // use existing Vite server if running
     timeout: 30_000,
   },

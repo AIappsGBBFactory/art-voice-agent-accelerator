@@ -37,6 +37,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import time
 from collections import deque
@@ -46,6 +47,10 @@ from typing import TYPE_CHECKING, Any
 from apps.artagent.backend.registries.toolstore import (
     execute_tool,
     initialize_tools,
+)
+from apps.artagent.backend.src.orchestration.prompt_context import (
+    refresh_voicelive_prompt_context,
+    voicelive_prompt_context,
 )
 from apps.artagent.backend.src.services.session_loader import load_user_profile_by_client_id
 from apps.artagent.backend.voice.handoffs import sanitize_handoff_context
@@ -246,6 +251,7 @@ class LiveOrchestrator:
         *,
         transport: str = "acs",
         model_name: str | None = None,
+        byom_profile: str | None = None,
         memo_manager: MemoManager | None = None,
     ):
         self.conn = conn
@@ -255,6 +261,7 @@ class LiveOrchestrator:
         self.audio = audio_processor
         self.messenger = messenger
         self._model_name = model_name or "gpt-4o-realtime"
+        self._connection_byom_profile = byom_profile
         self.visited_agents: set = set()
         self._pending_greeting: str | None = None
         self._pending_greeting_agent: str | None = None
@@ -646,6 +653,8 @@ class LiveOrchestrator:
                     say=None,  # Don't trigger a greeting on scenario switch
                     session_id=session_id,
                     call_connection_id=self.call_connection_id,
+                    connection_model=self._model_name,
+                    connection_byom_profile=self._connection_byom_profile,
                 )
 
                 # Update messenger's active agent
@@ -738,29 +747,7 @@ class LiveOrchestrator:
             return
 
         try:
-            # Refresh session profile if updated externally
-            session_profile = self._memo_manager.get_value_from_corememory("session_profile")
-            if session_profile and isinstance(session_profile, dict):
-                # Update system_vars with fresh profile data
-                self._system_vars["session_profile"] = session_profile
-                self._system_vars["client_id"] = session_profile.get("client_id")
-                self._system_vars["caller_name"] = session_profile.get("full_name")
-                self._system_vars["customer_intelligence"] = session_profile.get(
-                    "customer_intelligence", {}
-                )
-                if session_profile.get("institution_name"):
-                    self._system_vars["institution_name"] = session_profile["institution_name"]
-
-            # Refresh slots (collected information from previous turns)
-            slots = self._memo_manager.get_context("slots", {})
-            if slots:
-                self._system_vars["slots"] = slots
-                self._system_vars["collected_information"] = slots
-
-            # Refresh tool outputs for context continuity
-            tool_outputs = self._memo_manager.get_context("tool_outputs", {})
-            if tool_outputs:
-                self._system_vars["tool_outputs"] = tool_outputs
+            refresh_voicelive_prompt_context(self._system_vars, self._memo_manager)
 
             logger.debug("[LiveOrchestrator] Refreshed session context from MemoManager")
         except Exception:
@@ -786,36 +773,31 @@ class LiveOrchestrator:
         agent = self.agents.get(self.active)
         if not agent:
             return
+        agent = getattr(agent, "_agent", agent)
 
         try:
             # Build context for prompt rendering
-            context_vars = dict(self._system_vars)
-            context_vars["active_agent"] = self.active
-
-            # Add conversation context from message history
-            if self._user_message_history:
-                context_vars["recent_user_messages"] = list(self._user_message_history)
-                if len(self._user_message_history) > 1:
-                    context_vars["conversation_summary"] = " → ".join(self._user_message_history)
-
-            # Add last assistant response for context continuity
-            if self._last_assistant_message:
-                context_vars["last_assistant_response"] = self._last_assistant_message
+            context_vars = voicelive_prompt_context(
+                self._system_vars,
+                active_agent=self.active,
+                user_messages=self._user_message_history,
+                last_assistant_response=self._last_assistant_message,
+            )
 
             # Render base instructions from agent prompt template
-            base_instructions = agent._agent.render_prompt(context_vars) or ""
+            base_instructions = agent.render_prompt(context_vars) or ""
 
             # Inject handoff instructions from scenario configuration
             # Use the cached orchestrator config (supports both file-based and session-scoped)
             config = self._orchestrator_config
-            if config.scenario and agent._agent.name:
+            if config.scenario and agent.name:
                 # Use scenario.build_handoff_instructions directly (works for session scenarios)
-                handoff_instructions = config.scenario.build_handoff_instructions(agent._agent.name)
+                handoff_instructions = config.scenario.build_handoff_instructions(agent.name)
                 if handoff_instructions:
                     base_instructions = f"{base_instructions}\n\n{handoff_instructions}" if base_instructions else handoff_instructions
                     logger.info(
                         "[LiveOrchestrator] Injected handoff instructions | agent=%s scenario=%s len=%d",
-                        agent._agent.name,
+                        agent.name,
                         config.scenario_name,
                         len(handoff_instructions),
                     )
@@ -823,7 +805,7 @@ class LiveOrchestrator:
                 logger.debug(
                     "[LiveOrchestrator] No scenario or agent name for handoff instructions | scenario=%s agent=%s",
                     config.scenario_name if config.scenario else None,
-                    agent._agent.name if hasattr(agent, '_agent') else None,
+                    agent.name,
                 )
 
             # Build conversation recap to append to instructions
@@ -853,7 +835,8 @@ class LiveOrchestrator:
                 list(context_vars.get("slots", {}).keys()) if context_vars.get("slots") else [],
             )
         except Exception:
-            logger.debug("Failed to update session context", exc_info=True)
+            logger.error("Failed to update VoiceLive session instructions", exc_info=True)
+            raise
 
     async def apply_live_session_settings(
         self,
@@ -876,7 +859,8 @@ class LiveOrchestrator:
         agent = self.agents.get(self.active)
         if not agent:
             return False
-        ua = getattr(agent, "_agent", agent)
+        active_name = self.active
+        ua = copy.deepcopy(getattr(agent, "_agent", agent))
 
         # Mutate the per-session agent so the tweak persists across turns.
         if turn_detection:
@@ -913,9 +897,19 @@ class LiveOrchestrator:
             return False
 
         await self.conn.session.update(session=RequestSession(**kwargs))
+        # A caller may have passed shared registry objects at connect. Keep live
+        # edits local, and do not mutate those objects before the update succeeds.
+        self.agents = dict(self.agents)
+        if hasattr(agent, "_agent"):
+            updated_agent = copy.copy(agent)
+            updated_agent._agent = ua
+        else:
+            updated_agent = ua
+        self.agents[active_name] = updated_agent
+        self._handoff_service = None
         logger.info(
             "[LiveOrchestrator] Pushed live session settings | agent=%s keys=%s",
-            self.active,
+            active_name,
             list(kwargs.keys()),
         )
         return True
@@ -1623,6 +1617,8 @@ class LiveOrchestrator:
                         say=None,
                         session_id=session_id,
                         call_connection_id=self.call_connection_id,
+                        connection_model=self._model_name,
+                        connection_byom_profile=self._connection_byom_profile,
                     )
                     apply_ms = (time.perf_counter() - t_apply) * 1000
                     logger.info(
@@ -2577,4 +2573,3 @@ __all__ = [
     "get_voicelive_orchestrator",
     "get_orchestrator_registry_size",
 ]
-

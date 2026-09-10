@@ -15,11 +15,15 @@ Storage Structure:
 
 from __future__ import annotations
 
+import asyncio
+import copy
 import time
+import uuid
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from apps.artagent.backend.src.orchestration.naming import find_agent_by_name
+from apps.artagent.backend.src.orchestration.naming import agent_key, find_agent_by_name
+from src.redis.manager import AUTHORING_REVISION_KEY
 from utils.ml_logging import get_logger
 
 if TYPE_CHECKING:
@@ -29,6 +33,9 @@ logger = get_logger(__name__)
 
 # Session-scoped dynamic agents: session_id -> {agent_name -> UnifiedAgent}
 _session_agents: dict[str, dict[str, UnifiedAgent]] = {}
+_persisted_agent_data: dict[str, dict[str, dict[str, Any]]] = {}
+_pending_agent_edits: dict[str, dict[str, tuple[str, dict[str, Any] | None]]] = {}
+_agent_persist_tasks: dict[str, asyncio.Task] = {}
 
 # Callback for notifying the orchestrator adapter of updates
 # Set by the unified orchestrator module at import time
@@ -52,6 +59,9 @@ _REDIS_LOAD_COOLDOWN_S: float = 2.0
 def set_redis_manager(redis_mgr: Any) -> None:
     """Set the Redis manager reference for persistence operations."""
     global _redis_manager
+    if redis_mgr is not _redis_manager:
+        _persisted_agent_data.clear()
+        _pending_agent_edits.clear()
     _redis_manager = redis_mgr
     logger.debug("Redis manager set for session_agents")
 
@@ -87,6 +97,7 @@ def _serialize_agent(agent: UnifiedAgent) -> dict[str, Any]:
         "model": agent.model.to_dict() if agent.model else None,
         "cascade_model": agent.cascade_model.to_dict() if agent.cascade_model else None,
         "voicelive_model": agent.voicelive_model.to_dict() if agent.voicelive_model else None,
+        "byom": agent.byom.to_dict() if agent.byom else None,
         "voice": agent.voice.to_dict() if agent.voice else None,
         "speech": agent.speech.to_dict() if agent.speech else None,
         "session": agent.session or {},
@@ -106,6 +117,7 @@ def _deserialize_agent(data: dict[str, Any]) -> UnifiedAgent:
         SpeechConfig,
         UnifiedAgent,
         VoiceConfig,
+        VoiceLiveBYOMConfig,
     )
 
     model = ModelConfig.from_dict(data["model"]) if data.get("model") else ModelConfig()
@@ -126,6 +138,7 @@ def _deserialize_agent(data: dict[str, Any]) -> UnifiedAgent:
         model=model,
         cascade_model=cascade_model,
         voicelive_model=voicelive_model,
+        byom=VoiceLiveBYOMConfig.from_dict(data["byom"]) if data.get("byom") else None,
         voice=voice,
         speech=speech,
         session=data.get("session") or {},
@@ -135,6 +148,52 @@ def _deserialize_agent(data: dict[str, Any]) -> UnifiedAgent:
         template_vars=data.get("template_vars") or {},
         metadata=data.get("metadata") or {},
     )
+
+
+def _agent_data_changes(
+    baseline: dict[str, dict[str, Any]], current: dict[str, dict[str, Any]]
+) -> dict[str, dict[str, Any] | None]:
+    before = {agent_key(name): (name, value) for name, value in baseline.items()}
+    after = {agent_key(name): (name, value) for name, value in current.items()}
+    changes = {}
+    for key in before.keys() | after.keys():
+        if key not in after:
+            changes[before[key][0]] = None
+        elif key not in before or before[key] != after[key]:
+            name, value = after[key]
+            changes[name] = value
+    return changes
+
+
+def cache_persisted_agents(
+    session_id: str,
+    persisted: dict[str, dict[str, Any]],
+    *,
+    submitted: dict[str, dict[str, Any]] | None = None,
+) -> None:
+    """Refresh authoritative agents while retaining edits made during an in-flight write."""
+    current = {
+        name: _serialize_agent(agent) for name, agent in _session_agents.get(session_id, {}).items()
+    }
+    baseline = submitted if submitted is not None else _persisted_agent_data.get(session_id, {})
+    local_changes = {
+        name: value
+        for name, value in _agent_data_changes(baseline, current).items()
+        if value is not None
+    }
+    for name, (_, value) in _pending_agent_edits.get(session_id, {}).items():
+        local_changes[name] = value
+    merged = copy.deepcopy(persisted)
+    for name, value in local_changes.items():
+        actual_name, _ = find_agent_by_name(merged, name)
+        if actual_name:
+            merged.pop(actual_name)
+        if value is not None:
+            merged[name] = value
+    _persisted_agent_data[session_id] = copy.deepcopy(persisted)
+    _session_agents[session_id] = {
+        name: _deserialize_agent(value) for name, value in merged.items()
+    }
 
 
 def _persist_agents_to_redis(session_id: str) -> None:
@@ -149,42 +208,66 @@ def _persist_agents_to_redis(session_id: str) -> None:
         return
 
     try:
-        from src.stateful.state_managment import MemoManager
-
-        memo = MemoManager.from_redis(session_id, _redis_manager)
-        all_agents_data = {
-            name: _serialize_agent(agent)
-            for name, agent in _session_agents.get(session_id, {}).items()
-        }
-        memo.set_corememory(AGENTS_KEY_ALL, all_agents_data)
-
-        import asyncio
-
         try:
             loop = asyncio.get_running_loop()
-            task = loop.create_task(memo.persist_to_redis_async(_redis_manager))
+            task = loop.create_task(
+                persist_session_agents_to_redis(session_id, raise_on_failure=True)
+            )
             task.add_done_callback(_log_persistence_result)
-            _session_load_times[session_id] = time.monotonic()
         except RuntimeError:
             logger.debug("No event loop, skipping async session agent persistence")
 
         logger.debug(
             "Session agents queued for Redis persistence | session=%s count=%d",
             session_id,
-            len(all_agents_data),
+            len(_session_agents.get(session_id, {})),
         )
     except Exception as e:
         logger.warning("Failed to persist session agents to Redis: %s", e)
 
 
-async def persist_session_agents_to_redis(session_id: str) -> None:
+async def persist_session_agents_to_redis(
+    session_id: str, *, raise_on_failure: bool = False
+) -> None:
+    """Flush agent edits, sharing the same durable write with fire-and-forget callers."""
+    if not _redis_manager:
+        return
+    try:
+        while _redis_manager is not None:
+            task = _agent_persist_tasks.get(session_id)
+            if task is None:
+                task = asyncio.create_task(
+                    _persist_agent_edits_once(session_id, raise_on_failure=True)
+                )
+                _agent_persist_tasks[session_id] = task
+                task.add_done_callback(_log_persistence_result)
+            try:
+                await asyncio.shield(task)
+            finally:
+                if task.done() and _agent_persist_tasks.get(session_id) is task:
+                    _agent_persist_tasks.pop(session_id, None)
+            current = {
+                name: _serialize_agent(agent)
+                for name, agent in _session_agents.get(session_id, {}).items()
+            }
+            changed = _agent_data_changes(_persisted_agent_data.get(session_id, {}), current)
+            if not _pending_agent_edits.get(session_id) and not any(
+                value is not None for value in changed.values()
+            ):
+                return
+    except Exception as exc:
+        if raise_on_failure:
+            raise
+        logger.warning("Failed to persist session agent edits: %s", exc)
+
+
+async def _persist_agent_edits_once(session_id: str, *, raise_on_failure: bool = False) -> None:
     """
     Persist all in-memory session agents for a session to Redis, awaiting the write.
 
-    Use this from async contexts (e.g., FastAPI endpoints) to guarantee the
-    session agent is durable in Redis before returning a response. This prevents
-    data loss if the process restarts between the write and the next VoiceLive
-    WebSocket connection.
+    Set raise_on_failure=True to report configured Redis write failures. Without
+    a Redis manager, legacy memory-only operation is unchanged; draft Apply
+    separately requires Redis. The default preserves best-effort callers.
     """
     if not _redis_manager:
         return
@@ -192,20 +275,57 @@ async def persist_session_agents_to_redis(session_id: str) -> None:
     try:
         from src.stateful.state_managment import MemoManager
 
-        memo = MemoManager.from_redis(session_id, _redis_manager)
-        all_agents_data = {
-            name: _serialize_agent(agent)
-            for name, agent in _session_agents.get(session_id, {}).items()
+        submitted = copy.deepcopy(
+            {
+                name: _serialize_agent(agent)
+                for name, agent in _session_agents.get(session_id, {}).items()
+            }
+        )
+        edits = dict(_pending_agent_edits.get(session_id, {}))
+        changes = {
+            name: value
+            for name, value in _agent_data_changes(
+                _persisted_agent_data.get(session_id, {}), submitted
+            ).items()
+            if value is not None
         }
-        memo.set_corememory(AGENTS_KEY_ALL, all_agents_data)
-        await memo.persist_to_redis_async(_redis_manager)
+        changes.update({name: value for name, (_, value) in edits.items()})
+        if not changes:
+            return
+        memo = await asyncio.wait_for(
+            asyncio.to_thread(MemoManager.from_redis, session_id, _redis_manager), timeout=5
+        )
+        preview = dict(memo.get_value_from_corememory(AGENTS_KEY_ALL) or {})
+        for name, value in changes.items():
+            actual_name, _ = find_agent_by_name(preview, name)
+            if actual_name:
+                preview.pop(actual_name)
+            if value is not None:
+                preview[name] = value
+        memo.set_corememory(AGENTS_KEY_ALL, preview)
+        success = await memo.persist_to_redis_async(
+            _redis_manager,
+            raise_on_failure=raise_on_failure,
+            registry_updates={AGENTS_KEY_ALL: changes},
+        )
+        if not success:
+            return
+        pending = _pending_agent_edits.get(session_id, {})
+        for name, edit in edits.items():
+            if pending.get(name) == edit:
+                pending.pop(name)
+        cache_persisted_agents(
+            session_id, memo.get_value_from_corememory(AGENTS_KEY_ALL) or {}, submitted=submitted
+        )
         _session_load_times[session_id] = time.monotonic()
         logger.info(
             "session.agents.sync session=%s agents=%d -> redis",
             session_id,
-            len(all_agents_data),
+            len(submitted),
         )
     except Exception as e:
+        if raise_on_failure:
+            raise
         logger.warning("Failed to persist session agents to Redis (sync): %s", e)
 
 
@@ -228,7 +348,10 @@ def _load_agents_from_redis(session_id: str) -> dict[str, UnifiedAgent]:
         memo = MemoManager.from_redis(session_id, _redis_manager)
         all_agents_data = memo.get_value_from_corememory(AGENTS_KEY_ALL)
 
-        if not all_agents_data or not isinstance(all_agents_data, dict):
+        if all_agents_data is None and AUTHORING_REVISION_KEY in memo.context:
+            cache_persisted_agents(session_id, {})
+            return {}
+        if not isinstance(all_agents_data, dict):
             return {}
 
         loaded: dict[str, UnifiedAgent] = {}
@@ -238,10 +361,13 @@ def _load_agents_from_redis(session_id: str) -> dict[str, UnifiedAgent]:
             except Exception as e:
                 logger.warning("Failed to parse session agent '%s': %s", agent_name, e)
 
-        if loaded:
+        if AUTHORING_REVISION_KEY in memo.context:
+            cache_persisted_agents(session_id, all_agents_data)
+        elif loaded:
             # In-memory wins over Redis (more recent on this worker); Redis fills gaps.
             existing = _session_agents.get(session_id, {})
             _session_agents[session_id] = {**loaded, **existing}
+            _persisted_agent_data[session_id] = copy.deepcopy(all_agents_data)
             logger.info(
                 "Loaded %d session agent(s) from Redis | session=%s",
                 len(loaded),
@@ -285,22 +411,41 @@ def _clear_agents_from_redis(session_id: str) -> None:
     try:
         from src.stateful.state_managment import MemoManager
 
-        memo = MemoManager.from_redis(session_id, _redis_manager)
-        memo.set_corememory(AGENTS_KEY_ALL, None)
-
-        import asyncio
+        async def clear() -> None:
+            pending = _agent_persist_tasks.get(session_id)
+            if pending is not None:
+                try:
+                    await asyncio.shield(pending)
+                except Exception as exc:
+                    logger.warning("Prior agent write failed before reset: %s", exc)
+            memo = await asyncio.wait_for(
+                asyncio.to_thread(MemoManager.from_redis, session_id, _redis_manager), timeout=5
+            )
+            memo.set_corememory(AGENTS_KEY_ALL, None)
+            await memo.persist_to_redis_async(
+                _redis_manager,
+                authoring_fields=(AGENTS_KEY_ALL,),
+                raise_on_failure=True,
+            )
+            cache_persisted_agents(
+                session_id,
+                {},
+                submitted={
+                    name: _serialize_agent(agent)
+                    for name, agent in _session_agents.get(session_id, {}).items()
+                },
+            )
 
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(memo.persist_to_redis_async(_redis_manager))
+            task = loop.create_task(clear())
+            task.add_done_callback(_log_persistence_result)
         except RuntimeError:
             logger.debug("No event loop, skipping async session agent clear")
 
         logger.debug("Session agents cleared from Redis | session=%s", session_id)
     except Exception as e:
         logger.warning("Failed to clear session agents from Redis: %s", e)
-
-
 
 
 def get_session_agent(session_id: str, agent_name: str | None = None) -> UnifiedAgent | None:
@@ -338,7 +483,6 @@ def get_session_agents(session_id: str) -> dict[str, UnifiedAgent]:
     return dict(_session_agents.get(session_id, {}))
 
 
-
 def set_session_agent(session_id: str, agent: UnifiedAgent, set_active: bool = False) -> None:
     """
     Set dynamic agent for a session.
@@ -358,8 +502,21 @@ def set_session_agent(session_id: str, agent: UnifiedAgent, set_active: bool = F
     """
     if session_id not in _session_agents:
         _session_agents[session_id] = {}
-    
-    _session_agents[session_id][agent.name] = agent
+
+    existing_key, _ = find_agent_by_name(_session_agents[session_id], agent.name)
+    if existing_key and existing_key != agent.name:
+        _session_agents[session_id] = {
+            (agent.name if key == existing_key else key): (agent if key == existing_key else value)
+            for key, value in _session_agents[session_id].items()
+        }
+    else:
+        _session_agents[session_id][agent.name] = agent
+
+    pending = _pending_agent_edits.setdefault(session_id, {})
+    for pending_name in list(pending):
+        if agent_key(pending_name) == agent_key(agent.name):
+            pending.pop(pending_name)
+    pending[agent.name] = (uuid.uuid4().hex, copy.deepcopy(_serialize_agent(agent)))
 
     # Persist to Redis so the override survives process reloads and is visible
     # to other workers (mirrors session_scenarios persistence).
@@ -398,9 +555,11 @@ def remove_session_agent(session_id: str, agent_name: str | None = None) -> bool
         return False
     
     if agent_name:
+        agent_name, _ = find_agent_by_name(_session_agents[session_id], agent_name)
         # Remove specific agent
         if agent_name in _session_agents[session_id]:
             del _session_agents[session_id][agent_name]
+            _pending_agent_edits.setdefault(session_id, {})[agent_name] = (uuid.uuid4().hex, None)
             logger.info("Session agent removed | session=%s agent=%s", session_id, agent_name)
             # Clean up empty session
             if not _session_agents[session_id]:
@@ -412,6 +571,8 @@ def remove_session_agent(session_id: str, agent_name: str | None = None) -> bool
     else:
         # Remove all agents for session
         del _session_agents[session_id]
+        _persisted_agent_data.pop(session_id, None)
+        _pending_agent_edits.pop(session_id, None)
         _session_load_times.pop(session_id, None)
         # Clear the persisted set in Redis as well
         _clear_agents_from_redis(session_id)

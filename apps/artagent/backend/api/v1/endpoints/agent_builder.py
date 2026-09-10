@@ -19,6 +19,7 @@ Endpoints:
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import os
 import time
@@ -26,6 +27,23 @@ from functools import lru_cache
 from typing import Any
 
 import yaml
+from apps.artagent.backend.api.v1.schemas.agent_builder import (
+    ByomConfigSchema as ByomConfigSchema,
+)
+from apps.artagent.backend.api.v1.schemas.agent_builder import (
+    DynamicAgentConfig,
+    ModelConfigSchema,
+)
+from apps.artagent.backend.api.v1.schemas.agent_builder import (
+    SessionConfigSchema as SessionConfigSchema,
+)
+from apps.artagent.backend.api.v1.schemas.agent_builder import (
+    SpeechConfigSchema as SpeechConfigSchema,
+)
+from apps.artagent.backend.api.v1.schemas.agent_builder import (
+    VoiceConfigSchema as VoiceConfigSchema,
+)
+from apps.artagent.backend.api.v1.schemas.voices import VoiceCatalogResponse, VoiceInfo
 from apps.artagent.backend.registries.agentstore.base import (
     HandoffConfig,
     ModelConfig,
@@ -33,10 +51,11 @@ from apps.artagent.backend.registries.agentstore.base import (
     UnifiedAgent,
     VoiceConfig,
     VoiceLiveBYOMConfig,
-    VOICELIVE_BYOM_MODES,
 )
 from apps.artagent.backend.registries.agentstore.loader import (
     AGENTS_DIR,
+    discover_agents,
+    load_agent,
     load_defaults,
     load_prompt,
 )
@@ -44,7 +63,12 @@ from apps.artagent.backend.registries.toolstore.registry import (
     _TOOL_DEFINITIONS,
     initialize_tools,
 )
-from apps.artagent.backend.src.orchestration.naming import find_agent_by_name
+from apps.artagent.backend.src.orchestration.naming import (
+    agent_key,
+    find_agent_by_name,
+    names_equal,
+    normalize_agent_name,
+)
 from apps.artagent.backend.src.orchestration.session_agents import (
     get_session_agent,
     list_session_agents,
@@ -53,9 +77,22 @@ from apps.artagent.backend.src.orchestration.session_agents import (
     remove_session_agent,
     set_session_agent,
 )
+from apps.artagent.backend.src.orchestration.session_drafts import (
+    DraftActivationError,
+    DraftPersistenceError,
+    DraftStateConflict,
+    get_authoring_redis,
+    publish_new_session_agent,
+    read_authoring_snapshot,
+)
+from apps.artagent.backend.src.services.voice_catalog import (
+    discover_voice_catalog,
+    speech_voice_scope,
+)
 from config import DEFAULT_TTS_VOICE
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
+from redis.exceptions import RedisError
 from utils.ml_logging import get_logger
 
 logger = get_logger("v1.agent_builder")
@@ -79,179 +116,6 @@ class ToolInfo(BaseModel):
     source: str = "local"  # "local" or "mcp"
     mcp_server: str | None = None  # Server name if source is "mcp"
     mcp_transport: str | None = None  # Transport/protocol if source is "mcp"
-
-
-class VoiceInfo(BaseModel):
-    """Voice information for frontend selection."""
-
-    name: str
-    display_name: str
-    category: str  # turbo, standard, hd
-    language: str = "en-US"
-
-
-class ModelConfigSchema(BaseModel):
-    """Model configuration schema."""
-
-    deployment_id: str = "gpt-4o"
-    name: str | None = None
-    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
-    top_p: float = Field(default=0.9, ge=0.0, le=1.0)
-    max_tokens: int = Field(default=4096, ge=1, le=16384)
-
-    # Responses API parameters
-    endpoint_preference: str = Field(
-        default="auto",
-        description="Endpoint selection: 'auto' (smart routing), 'chat' (chat/completions), 'responses' (responses API)"
-    )
-    verbosity: int = Field(default=0, ge=0, le=2, description="Response verbosity: 0=minimal, 1=standard, 2=detailed")
-    min_p: float | None = Field(default=None, ge=0.0, le=1.0, description="Minimum probability threshold")
-    typical_p: float | None = Field(default=None, ge=0.0, le=1.0, description="Typical sampling parameter")
-    reasoning_effort: str | None = Field(
-        default=None,
-        description="Reasoning effort level: 'low', 'medium', 'high' (for o1/o3/o4 models)"
-    )
-    include_reasoning: bool = Field(default=False, description="Include reasoning tokens in response")
-    max_completion_tokens: int | None = Field(
-        default=None,
-        ge=1,
-        le=32768,
-        description="Max completion tokens (for reasoning models and responses API)"
-    )
-
-    # Enhanced parameters
-    store: bool | None = Field(default=None, description="Store conversation for training")
-    metadata: dict[str, Any] | None = Field(default=None, description="Custom metadata")
-    response_format: dict[str, Any] | None = Field(default=None, description="Structured output format")
-
-
-class ByomConfigSchema(BaseModel):
-    """Voice Live BYOM (Bring Your Own Model) configuration.
-
-    Opt-in, VoiceLive mode only. When ``mode`` is set, the VoiceLive connection
-    adds the ``profile`` query param, letting the agent use one of your own model
-    deployments in the connected Foundry resource (picked via voicelive_model).
-    """
-
-    mode: str | None = Field(
-        default=None,
-        description=(
-            "BYOM profile mode: one of byom-azure-openai-realtime, "
-            "byom-azure-openai-chat-completion, byom-foundry-anthropic-messages. "
-            "None/empty disables BYOM (managed VoiceLive)."
-        ),
-    )
-
-    @field_validator("mode")
-    @classmethod
-    def _validate_mode(cls, v: str | None) -> str | None:
-        """Accept None/empty (disabled) or one of the known BYOM profile modes."""
-        if v is None:
-            return None
-        v = v.strip()
-        if not v:
-            return None
-        if v not in VOICELIVE_BYOM_MODES:
-            raise ValueError(
-                f"Invalid BYOM mode '{v}'. Must be one of: {', '.join(VOICELIVE_BYOM_MODES)}"
-            )
-        return v
-
-
-class VoiceConfigSchema(BaseModel):
-    """Voice configuration schema."""
-
-    name: str = "en-US-AvaMultilingualNeural"
-    type: str = "azure-standard"
-    style: str = "chat"
-    rate: str = "+0%"
-    pitch: str = Field(default="+0%", description="Voice pitch: -50% to +50%")
-    endpoint_id: str | None = Field(default=None, description="Custom voice endpoint ID")
-
-
-class SpeechConfigSchema(BaseModel):
-    """Speech recognition (STT) configuration schema."""
-
-    vad_silence_timeout_ms: int = Field(
-        default=800,
-        ge=100,
-        le=5000,
-        description="Silence duration (ms) before finalizing recognition",
-    )
-    use_semantic_segmentation: bool = Field(
-        default=False, description="Enable semantic sentence boundary detection"
-    )
-    candidate_languages: list[str] = Field(
-        default_factory=lambda: ["en-US", "es-ES", "fr-FR", "de-DE", "it-IT"],
-        description="Languages for automatic detection",
-    )
-    enable_diarization: bool = Field(default=False, description="Enable speaker diarization")
-    speaker_count_hint: int = Field(
-        default=2, ge=1, le=10, description="Hint for number of speakers"
-    )
-
-
-class SessionConfigSchema(BaseModel):
-    """VoiceLive session configuration schema."""
-
-    modalities: list[str] = Field(
-        default_factory=lambda: ["TEXT", "AUDIO"],
-        description="Session modalities (TEXT, AUDIO)",
-    )
-    input_audio_format: str = Field(default="PCM16", description="Input audio format")
-    output_audio_format: str = Field(default="PCM16", description="Output audio format")
-    turn_detection_type: str = Field(
-        default="azure_semantic_vad",
-        description="Turn detection type (azure_semantic_vad, server_vad, none)",
-    )
-    turn_detection_threshold: float = Field(
-        default=0.5, ge=0.0, le=1.0, description="VAD threshold"
-    )
-    silence_duration_ms: int = Field(
-        default=700, ge=100, le=3000, description="Silence duration before turn ends"
-    )
-    prefix_padding_ms: int = Field(
-        default=240, ge=0, le=1000, description="Audio prefix padding"
-    )
-    tool_choice: str = Field(default="auto", description="Tool choice mode (auto, none, required)")
-    input_audio_transcription_settings: dict[str, Any] | None = Field(
-        default=None, description="VoiceLive input transcription settings (model, language)"
-    )
-
-
-class DynamicAgentConfig(BaseModel):
-    """Configuration for creating a dynamic agent."""
-
-    name: str = Field(..., min_length=1, max_length=64, description="Agent display name")
-    description: str = Field(default="", max_length=512, description="Agent description")
-    greeting: str = Field(default="", max_length=1024, description="Initial greeting message")
-    return_greeting: str = Field(
-        default="", max_length=1024, description="Return greeting when caller comes back"
-    )
-    handoff_trigger: str = Field(
-        default="", max_length=128, description="Tool name that routes to this agent (e.g., handoff_my_agent)"
-    )
-    prompt: str = Field(..., min_length=10, description="System prompt for the agent")
-    tools: list[str] = Field(default_factory=list, description="List of tool names to enable")
-    cascade_model: ModelConfigSchema | None = Field(
-        default=None, description="Model config for cascade mode (STT→LLM→TTS)"
-    )
-    voicelive_model: ModelConfigSchema | None = Field(
-        default=None, description="Model config for voicelive mode (realtime API)"
-    )
-    byom: ByomConfigSchema | None = Field(
-        default=None,
-        description="Voice Live BYOM (Bring Your Own Model) config (VoiceLive mode only)",
-    )
-    model: ModelConfigSchema | None = Field(
-        default=None, description="Legacy: fallback model config (use cascade_model/voicelive_model instead)"
-    )
-    voice: VoiceConfigSchema | None = None
-    speech: SpeechConfigSchema | None = None
-    session: SessionConfigSchema | None = Field(
-        default=None, description="VoiceLive session settings (VAD, modalities, etc.)"
-    )
-    template_vars: dict[str, Any] | None = None
 
 
 class LiveTurnDetectionPatch(BaseModel):
@@ -425,86 +289,11 @@ AVAILABLE_VOICES = [
 ]
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# REGION VOICE AVAILABILITY
-# ─────────────────────────────────────────────────────────────────────────────
-# The Speech SDK's get_voices_async() is the authoritative source for which voices
-# a given Speech resource supports in its region. We use it to validate the curated
-# catalog so the UI never offers a voice that fails at synthesis time (e.g. a
-# preview MAI voice not deployed in this region). Result is cached to avoid hitting
-# Azure on every /voices call.
-_AVAILABLE_VOICES_CACHE: dict[str, Any] = {"names": None, "expires": 0.0}
-_AVAILABLE_VOICES_TTL_S = 600.0  # 10 minutes
-
 # Model deployments change rarely (they're provisioned out-of-band in Azure), so
 # the live client.models.list() result is cached process-wide to avoid an Azure
 # round-trip on every builder open. Callers can force a refresh with ?refresh=true.
 _AVAILABLE_MODELS_CACHE: dict[str, Any] = {"payload": None, "expires": 0.0}
 _AVAILABLE_MODELS_TTL_S = 600.0  # 10 minutes
-
-
-def _build_voice_query_speech_config():
-    """Build a SpeechConfig for enumerating voices, mirroring the speech stack's
-    key/region/AAD resolution. Returns the config or None if speech isn't configured."""
-    try:
-        import azure.cognitiveservices.speech as speechsdk
-    except ImportError:
-        return None
-
-    key = os.getenv("AZURE_SPEECH_KEY")
-    region = os.getenv("AZURE_SPEECH_REGION")
-    endpoint = os.getenv("AZURE_SPEECH_ENDPOINT")
-
-    try:
-        if key and region:
-            return speechsdk.SpeechConfig(subscription=key, region=region)
-        # Entra ID (managed identity / dev credential) path
-        if endpoint:
-            cfg = speechsdk.SpeechConfig(endpoint=endpoint)
-        elif region:
-            cfg = speechsdk.SpeechConfig(region=region)
-        else:
-            return None
-        from src.speech.auth_manager import get_speech_token_manager
-
-        get_speech_token_manager().apply_to_config(cfg, force_refresh=True)
-        return cfg
-    except Exception as e:  # pragma: no cover - defensive
-        logger.warning("Failed to build speech config for voice listing: %s", e)
-        return None
-
-
-def _fetch_available_voice_names() -> set[str] | None:
-    """Return the set of voice short_names the Speech resource supports in its
-    region (cached for ~10 min), or None if it can't be determined."""
-    now = time.time()
-    if _AVAILABLE_VOICES_CACHE["names"] is not None and now < _AVAILABLE_VOICES_CACHE["expires"]:
-        return _AVAILABLE_VOICES_CACHE["names"]
-    try:
-        import azure.cognitiveservices.speech as speechsdk
-
-        cfg = _build_voice_query_speech_config()
-        if cfg is None:
-            return None
-        synth = speechsdk.SpeechSynthesizer(speech_config=cfg, audio_config=None)
-        result = synth.get_voices_async().get()
-        if (
-            result.reason == speechsdk.ResultReason.VoicesListRetrieved
-            and result.voices
-        ):
-            names = {v.short_name for v in result.voices}
-            _AVAILABLE_VOICES_CACHE["names"] = names
-            _AVAILABLE_VOICES_CACHE["expires"] = now + _AVAILABLE_VOICES_TTL_S
-            logger.info("Region supports %d TTS voices (cached)", len(names))
-            return names
-        logger.warning(
-            "Voice list not retrieved (reason=%s); treating region support as unknown",
-            getattr(result, "reason", None),
-        )
-        return None
-    except Exception as e:
-        logger.warning("Could not enumerate available voices from Azure: %s", e)
-        return None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -590,7 +379,7 @@ async def list_available_tools(
 
 @router.get(
     "/voices",
-    response_model=dict[str, Any],
+    response_model=VoiceCatalogResponse,
     summary="List Available Voices",
     description="Get list of all available TTS voices for agent configuration from Azure Speech Service.",
     tags=["Agent Builder"],
@@ -599,81 +388,87 @@ async def list_available_voices(
     category: str | None = None,
     use_cache: bool = True,
     include_unverified: bool = False,
-) -> dict[str, Any]:
+    language: str | None = None,
+) -> VoiceCatalogResponse:
     """
-    List TTS voices, validated against what the Speech resource supports in its region.
-
-    The curated catalog (AVAILABLE_VOICES) is cross-checked against the live region
-    voice list (Speech SDK ``get_voices_async``) so we never offer a voice that the
-    region will reject at synthesis time — e.g. a preview MAI-Voice-2 voice that
-    isn't deployed in this region.
+    Return all voices discovered from the configured Speech resource.
 
     Args:
         category: Filter by category (turbo, standard, hd, mai).
-        use_cache: Retained for backward compatibility (no longer changes behavior;
-            region availability is cached internally for ~10 min).
-        include_unverified: If True, skip region validation and return the full
-            curated catalog (including preview voices that may not be available).
+        use_cache: Use the ten-minute resource-scoped cache; false requests a refresh.
+        include_unverified: Explicitly request the legacy preset list without discovery.
+        language: Optional locale or language prefix; omitted returns every locale.
     """
     start = time.time()
-
-    # The authoritative source for "what voices does THIS Speech resource support
-    # in its region" is the SDK's get_voices_async(). We use it to validate the
-    # curated catalog so we never surface a voice the region rejects at synth time
-    # (e.g. a preview MAI voice not deployed in this region).
-    #   • available_names is a set of supported short_names, or None if we can't
-    #     reach the resource (no creds / network / SDK).
-    #   • include_unverified=True bypasses validation and returns the full catalog.
-    available_names = None if include_unverified else _fetch_available_voice_names()
-    verified = available_names is not None
-
-    voices: list[VoiceInfo] = []
-    for v in AVAILABLE_VOICES:
-        is_preview = v.category == "mai"
-        if available_names is not None:
-            # We know exactly what the region supports — filter strictly.
-            if v.name in available_names:
-                voices.append(v)
-        else:
-            # Can't verify region support. Keep broadly-available voices, but drop
-            # preview/MAI voices (the "may or may not be available" ones) unless the
-            # caller explicitly opts in.
-            if is_preview and not include_unverified:
-                continue
-            voices.append(v)
-
+    discovery = None if include_unverified else await discover_voice_catalog(use_cache=use_cache)
+    scope = discovery.scope if discovery else speech_voice_scope()
+    snapshot = discovery.snapshot if discovery else None
+    warnings = []
+    if snapshot is not None:
+        friendly_names = {voice.name: voice.display_name for voice in AVAILABLE_VOICES}
+        voices = [
+            voice.model_copy(
+                update={"display_name": friendly_names.get(voice.name, voice.display_name)}
+            )
+            for voice in snapshot.voices
+        ]
+        if discovery.warning:
+            warnings.append(f"Using a cached regional catalog. {discovery.warning}")
+    else:
+        voices = [
+            voice for voice in AVAILABLE_VOICES if include_unverified or voice.category != "mai"
+        ]
+        if discovery and discovery.warning:
+            warnings.append(discovery.warning)
+        warnings.append(
+            "Showing limited starter presets, not the full regional voice catalog. Availability is unverified."
+        )
+    total_available = len(voices)
     if category:
-        voices = [v for v in voices if v.category == category]
-
-    # Group by category
-    by_category: dict[str, list[dict[str, Any]]] = {}
+        voices = [voice for voice in voices if voice.category == category]
+    if language:
+        locale = language.lower()
+        voices = [
+            voice
+            for voice in voices
+            if voice.language.lower() == locale or voice.language.lower().startswith(f"{locale}-")
+        ]
+    by_category: dict[str, list[VoiceInfo]] = {}
     for voice in voices:
-        if voice.category not in by_category:
-            by_category[voice.category] = []
-        by_category[voice.category].append(voice.model_dump() if hasattr(voice, 'model_dump') else {
-            "name": voice.name,
-            "display_name": voice.display_name,
-            "category": voice.category,
-            "language": voice.language,
-        })
-
-    return {
-        "status": "success",
-        "total": len(voices),
-        "voices": [v.model_dump() if hasattr(v, 'model_dump') else {
-            "name": v.name,
-            "display_name": v.display_name,
-            "category": v.category,
-            "language": v.language,
-        } for v in voices],
-        "by_category": by_category,
-        "default_voice": DEFAULT_TTS_VOICE,
-        # "verified" = these voices were confirmed against the live region voice
-        # list; "unverified" = couldn't reach Azure, so the curated list is used.
-        "verified_against_region": verified,
-        "source": "region-validated" if verified else "static-catalog",
-        "response_time_ms": round((time.time() - start) * 1000, 2),
-    }
+        by_category.setdefault(voice.category, []).append(voice)
+    stale = bool(discovery and discovery.stale)
+    return VoiceCatalogResponse(
+        status="success" if snapshot is not None and not stale else "degraded",
+        total=len(voices),
+        total_available=total_available,
+        voices=voices,
+        by_category=by_category,
+        runtime_transcription_models={
+            "cascade": ["azure-speech", "mai-transcribe"],
+            "voicelive": [
+                "mai-transcribe",
+                "azure-speech",
+                "gpt-4o-transcribe",
+                "gpt-4o-mini-transcribe",
+                "whisper-1",
+            ],
+        },
+        default_voice=DEFAULT_TTS_VOICE,
+        verified_against_region=snapshot is not None,
+        catalog_complete=snapshot is not None and not category and not language,
+        source=(
+            "regional-cache"
+            if stale
+            else "regional-service" if snapshot is not None else "static-catalog"
+        ),
+        region=scope.region or None,
+        resource_host=scope.resource_host,
+        cached=bool(discovery and discovery.cached),
+        stale=stale,
+        retrieved_at=snapshot.retrieved_at if snapshot else None,
+        warnings=warnings,
+        response_time_ms=round((time.time() - start) * 1000, 2),
+    )
 
 
 def _categorize_deployment(deployment_id: str) -> tuple[str, str, list[str]]:
@@ -1185,6 +980,31 @@ async def list_agent_templates(session_id: str | None = None) -> dict[str, Any]:
     }
 
 
+def _agent_editor_config(agent: UnifiedAgent) -> dict[str, Any]:
+    """Return the complete effective configuration used by both editing entry points."""
+    prompt = agent.prompt_template or ""
+    return copy.deepcopy(
+        {
+            "name": agent.name,
+            "description": agent.description,
+            "greeting": agent.greeting,
+            "return_greeting": agent.return_greeting,
+            "handoff_trigger": agent.handoff.trigger if agent.handoff else "",
+            "prompt_preview": prompt[:200] + "..." if len(prompt) > 200 else prompt,
+            "prompt_full": prompt,
+            "tools": agent.tool_names,
+            "model": agent.model.to_dict(),
+            "cascade_model": agent.get_model_for_mode("cascade").to_dict(),
+            "voicelive_model": agent.get_model_for_mode("voicelive").to_dict(),
+            "byom": agent.byom.to_dict() if agent.byom else None,
+            "voice": agent.voice.to_dict(),
+            "speech": agent.speech.to_dict() if agent.speech else {},
+            "session": agent.session or {},
+            "template_vars": agent.template_vars,
+        }
+    )
+
+
 @router.get(
     "/templates/{template_id}",
     response_model=dict[str, Any],
@@ -1208,60 +1028,34 @@ async def get_agent_template(template_id: str) -> dict[str, Any]:
             detail=f"Agent template '{template_id}' not found. Use GET /templates to see available templates.",
         )
 
-    defaults = load_defaults(AGENTS_DIR)
-
     try:
-        with open(agent_file) as f:
-            raw = yaml.safe_load(f) or {}
-
-        # Extract all fields
-        name = raw.get("name") or template_id.replace("_", " ").title()
-        description = raw.get("description", "")
-        greeting = raw.get("greeting", "")
-        return_greeting = raw.get("return_greeting", "")
-
-        # Load full prompt
-        prompt_full = ""
-        if "prompts" in raw and raw["prompts"].get("path"):
-            prompt_full = load_prompt(agent_dir, raw["prompts"]["path"])
-        elif raw.get("prompt"):
-            prompt_full = load_prompt(agent_dir, raw["prompt"])
-
-        # Get tools, voice, model
-        tools = raw.get("tools", [])
-        voice = raw.get("voice") or defaults.get("voice", {})
-        model = raw.get("model") or defaults.get("model", {})
-        cascade_model = raw.get("cascade_model") or defaults.get("cascade_model", {})
-        voicelive_model = raw.get("voicelive_model") or defaults.get("voicelive_model", {})
-        byom = raw.get("byom") or defaults.get("byom")
-        template_vars = raw.get("template_vars") or defaults.get("template_vars", {})
+        async with asyncio.timeout(10):
+            defaults = await asyncio.to_thread(load_defaults, AGENTS_DIR)
+            agent = await asyncio.to_thread(load_agent, agent_file, defaults)
+        config = _agent_editor_config(agent)
 
         return {
             "status": "success",
+            "config": config,
             "template": {
+                **config,
                 "id": template_id,
-                "name": name,
-                "description": description if isinstance(description, str) else str(description),
-                "greeting": greeting if isinstance(greeting, str) else str(greeting),
-                "return_greeting": return_greeting,
-                "prompt": prompt_full,
-                "tools": tools,
-                "voice": voice,
-                "model": model,
-                "cascade_model": cascade_model,
-                "voicelive_model": voicelive_model,
-                "byom": byom,
-                "template_vars": template_vars,
-                "handoff": raw.get("handoff", {}),
+                "prompt": config["prompt_full"],
+                "handoff": {
+                    "trigger": agent.handoff.trigger if agent.handoff else "",
+                    "is_entry_point": bool(agent.handoff and agent.handoff.is_entry_point),
+                },
             },
         }
-
-    except Exception as e:
+    except TimeoutError as e:
+        logger.error("Agent template load timed out: %s", template_id)
+        raise HTTPException(status_code=504, detail="Loading the agent template timed out.") from e
+    except (OSError, ValueError, TypeError, yaml.YAMLError) as e:
         logger.error("Failed to load agent template %s: %s", template_id, e)
         raise HTTPException(
             status_code=500,
             detail=f"Failed to load agent template: {str(e)}",
-        )
+        ) from e
 
 
 def _model_from_schema(
@@ -1270,7 +1064,7 @@ def _model_from_schema(
     """Convert a ModelConfigSchema into a ModelConfig (optionally overriding deployment)."""
     return ModelConfig(
         deployment_id=deployment_id or schema.deployment_id,
-        name=schema.name,
+        name=schema.name or deployment_id or schema.deployment_id,
         temperature=schema.temperature,
         top_p=schema.top_p,
         max_tokens=schema.max_tokens,
@@ -1284,6 +1078,8 @@ def _model_from_schema(
         store=schema.store,
         metadata=schema.metadata,
         response_format=schema.response_format,
+        api_version=schema.api_version,
+        model_family=schema.model_family,
     )
 
 
@@ -1318,14 +1114,24 @@ def build_session_agent(
             deployment_id="gpt-4o", temperature=0.7, top_p=0.9, max_tokens=4096
         )
 
-    # VoiceLive model (realtime API): always a realtime deployment.
+    # VoiceLive accepts managed text hosts and explicit BYOM as well as realtime models.
     if config.voicelive_model:
         voicelive_model = _model_from_schema(config.voicelive_model)
     elif config.model:
         base_id = config.model.deployment_id
+        explicit_host = bool(
+            (config.byom and config.byom.mode)
+            or (
+                config.session
+                and (config.session.input_audio_transcription_settings or {}).get("model")
+                == "mai-transcribe"
+            )
+        )
         voicelive_model = _model_from_schema(
             config.model,
-            deployment_id=base_id if "realtime" in base_id.lower() else "gpt-realtime",
+            deployment_id=(
+                base_id if explicit_host or "realtime" in base_id.lower() else "gpt-realtime"
+            ),
         )
     else:
         voicelive_model = ModelConfig(
@@ -1342,6 +1148,7 @@ def build_session_agent(
     )
 
     speech_config = SpeechConfig(
+        transcription_model=config.speech.transcription_model if config.speech else "azure-speech",
         vad_silence_timeout_ms=config.speech.vad_silence_timeout_ms if config.speech else 800,
         use_semantic_segmentation=(
             config.speech.use_semantic_segmentation if config.speech else False
@@ -1370,10 +1177,9 @@ def build_session_agent(
             "tool_choice": config.session.tool_choice,
         }
         if config.session.input_audio_transcription_settings:
-            session_dict["input_audio_transcription_settings"] = {
-                "model": config.session.input_audio_transcription_settings.get("model"),
-                "language": config.session.input_audio_transcription_settings.get("language"),
-            }
+            session_dict["input_audio_transcription_settings"] = copy.deepcopy(
+                config.session.input_audio_transcription_settings
+            )
 
     metadata: dict[str, Any] = {
         "source": "dynamic",
@@ -1438,51 +1244,50 @@ def _session_agent_response(
     )
 
 
-def _resolve_live_session_agent(session_id: str, request: Request) -> UnifiedAgent | None:
-    """
-    Return the session-scoped agent to patch for a live-settings change.
-
-    If the session already has an Agent Builder / Quick Tune agent, that is
-    returned. Otherwise the currently-active base agent (resolved from corememory
-    ``active_agent`` → ``app_state.start_agent`` → first registry agent) is
-    deep-copied into session scope so live tweaks are captured in session state
-    instead of being lost on the next reconnect. The clone is never the shared
-    registry object, avoiding cross-session leakage.
-    """
-    existing = get_session_agent(session_id)
-    if existing is not None:
-        return existing
-
+async def _resolve_live_session_agent(
+    session_id: str,
+    request: Request,
+    *,
+    agent_name: str | None = None,
+    active_name: str | None = None,
+    live_agent: UnifiedAgent | None = None,
+) -> UnifiedAgent | None:
+    """Clone the named/current agent, never an unrelated session override."""
+    if agent_name is not None and not normalize_agent_name(agent_name):
+        raise HTTPException(status_code=422, detail="agent_name must not be blank")
     app_state = request.app.state
     unified_agents: dict[str, UnifiedAgent] = getattr(app_state, "unified_agents", {}) or {}
-    if not unified_agents:
-        return None
-
-    # Resolve the active agent name: corememory active_agent → start_agent → first.
-    active_name: str | None = None
-    try:
+    if agent_name is None and not active_name:
         redis_mgr = getattr(app_state, "redis", None) or getattr(
             app_state, "redis_manager", None
         )
         if redis_mgr is not None:
             from src.stateful.state_managment import MemoManager
 
-            memo = MemoManager.from_redis(session_id, redis_mgr)
+            try:
+                memo = await asyncio.wait_for(
+                    asyncio.to_thread(MemoManager.from_redis, session_id, redis_mgr), timeout=5
+                )
+            except (RedisError, TimeoutError, ValueError, TypeError) as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Cannot resolve the active agent. Check Redis and retry with agent_name.",
+                ) from exc
             active_name = memo.get_value_from_corememory("active_agent")
-    except Exception:  # pragma: no cover - defensive
-        active_name = None
-    if not active_name:
-        active_name = getattr(app_state, "start_agent", None)
 
-    base_agent: UnifiedAgent | None = None
-    if active_name:
-        _, base_agent = find_agent_by_name(unified_agents, active_name)
-    if base_agent is None:
+    target_name = agent_name or active_name or getattr(app_state, "start_agent", None)
+    existing = get_session_agent(session_id, target_name)
+    if existing is not None:
+        return copy.deepcopy(existing)
+
+    _, base_agent = find_agent_by_name(unified_agents, target_name)
+    if live_agent is not None and names_equal(live_agent.name, target_name):
+        base_agent = live_agent
+    if base_agent is None and target_name is None:
         base_agent = next(iter(unified_agents.values()), None)
     if base_agent is None:
         return None
 
-    # Session-scoped clone so live tweaks never mutate the shared registry agent.
     clone = copy.deepcopy(base_agent)
     clone.metadata = {
         **(getattr(clone, "metadata", None) or {}),
@@ -1499,6 +1304,9 @@ async def _upsert_session_agent(
     session_id: str,
     *,
     status: str,
+    activate: bool = False,
+    create_only: bool = False,
+    app_state: Any = None,
 ) -> SessionAgentResponse:
     """
     Validate, build, store and persist a session agent (create + update share this).
@@ -1517,7 +1325,39 @@ async def _upsert_session_agent(
             detail=f"Invalid tools: {', '.join(invalid_tools)}. Use GET /tools to see available tools.",
         )
 
-    existing = get_session_agent(session_id)
+    snapshot = None
+    redis_manager = get_authoring_redis(app_state) if create_only else None
+    if create_only:
+        name = normalize_agent_name(config.name)
+        if not name:
+            raise HTTPException(status_code=422, detail="A new agent name must not be blank.")
+        try:
+            snapshot = await read_authoring_snapshot(session_id, redis_manager)
+        except (RedisError, TimeoutError, ValueError, TypeError, KeyError, DraftPersistenceError) as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Unable to read session agents. Check Redis connectivity before creating a duplicate.",
+            ) from exc
+        builtin_agents = discover_agents()
+        app_agents = getattr(app_state, "unified_agents", {}) or {}
+        reserved_names = {
+            agent_key(value)
+            for registry in (builtin_agents, app_agents, snapshot.agents)
+            for key, item in registry.items()
+            for value in (key, item.name)
+        }
+        if agent_key(name) in reserved_names:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Agent '{name}' already exists in the session or builtin registry. Choose an unused name.",
+            )
+        config = config.model_copy(update={"name": name})
+        existing = None
+    else:
+        existing = get_session_agent(session_id, config.name)
+        canonical = existing or find_agent_by_name(discover_agents(), config.name)[1]
+        if canonical:
+            config = config.model_copy(update={"name": canonical.name})
     now = time.time()
     created_at = existing.metadata.get("created_at", now) if existing else now
 
@@ -1525,10 +1365,34 @@ async def _upsert_session_agent(
         config, session_id, created_at=created_at, modified_at=now
     )
 
-    set_session_agent(session_id, agent)
-    # Await Redis persistence directly so the override survives a process restart
-    # between this write and the next WebSocket connection.
-    await persist_session_agents_to_redis(session_id)
+    if create_only:
+        try:
+            await publish_new_session_agent(
+                session_id,
+                agent,
+                snapshot=snapshot,
+                redis_manager=redis_manager,
+                activate=activate,
+            )
+        except DraftStateConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except DraftActivationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except (RedisError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Unable to create the agent durably. Check Redis connectivity and retry.",
+            ) from exc
+    else:
+        set_session_agent(session_id, agent, set_active=activate)
+        # Legacy upserts preserve memory-only mode; create-only requires an atomic Redis commit.
+        try:
+            await persist_session_agents_to_redis(session_id, raise_on_failure=True)
+        except (RedisError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Unable to persist the agent override. Check Redis connectivity and retry.",
+            ) from exc
 
     logger.info(
         "session.agent.%s session=%s name=%s tools=%d",
@@ -1572,42 +1436,28 @@ async def create_dynamic_agent(
 async def get_session_agent_config(
     session_id: str,
     request: Request,
+    agent_name: str | None = None,
 ) -> SessionAgentResponse:
-    """Get the dynamic agent for a session."""
-    agent = get_session_agent(session_id)
+    """Get a named session override, or the legacy default when no name is supplied."""
+    if agent_name is not None and not normalize_agent_name(agent_name):
+        raise HTTPException(status_code=422, detail="agent_name must not be blank")
+    agent = get_session_agent(session_id, agent_name)
 
     if not agent:
         raise HTTPException(
             status_code=404,
-            detail=f"No dynamic agent configured for session {session_id}. Using default agent.",
+            detail=(
+                f"No dynamic agent '{agent_name}' configured for session {session_id}."
+                if agent_name is not None
+                else f"No dynamic agent configured for session {session_id}. Using default agent."
+            ),
         )
 
     return SessionAgentResponse(
         session_id=session_id,
         agent_name=agent.name,
         status="active",
-        config={
-            "name": agent.name,
-            "description": agent.description,
-            "greeting": agent.greeting,
-            "return_greeting": agent.return_greeting,
-            "handoff_trigger": agent.handoff.trigger if agent.handoff else "",
-            "prompt_preview": (
-                agent.prompt_template[:200] + "..."
-                if len(agent.prompt_template) > 200
-                else agent.prompt_template
-            ),
-            "prompt_full": agent.prompt_template,
-            "tools": agent.tool_names,
-            "model": agent.model.to_dict(),
-            "cascade_model": agent.cascade_model.to_dict() if agent.cascade_model else agent.model.to_dict(),
-            "voicelive_model": agent.voicelive_model.to_dict() if agent.voicelive_model else agent.model.to_dict(),
-            "byom": agent.byom.to_dict() if agent.byom else None,
-            "voice": agent.voice.to_dict(),
-            "speech": agent.speech.to_dict() if agent.speech else {},
-            "session": agent.session or {},
-            "template_vars": agent.template_vars,
-        },
+        config=_agent_editor_config(agent),
         created_at=agent.metadata.get("created_at"),
         modified_at=agent.metadata.get("modified_at"),
     )
@@ -1624,14 +1474,23 @@ async def update_session_agent(
     session_id: str,
     config: DynamicAgentConfig,
     request: Request,
+    activate: bool = False,
+    create_only: bool = False,
 ) -> SessionAgentResponse:
     """
     Update the dynamic agent for a session.
 
-    Creates a new agent if one doesn't exist (upsert). Shares the exact build /
-    store / persist path with ``POST /create`` via ``_upsert_session_agent``.
+    By default this is a legacy upsert. create_only=True instead rejects builtin
+    and session name collisions and uses an atomic Redis commit for duplication.
     """
-    return await _upsert_session_agent(config, session_id, status="updated")
+    return await _upsert_session_agent(
+        config,
+        session_id,
+        status="created" if create_only else "updated",
+        activate=activate,
+        create_only=create_only,
+        app_state=request.app.state,
+    )
 
 
 @router.post(
@@ -1649,6 +1508,7 @@ async def apply_live_session_settings(
     session_id: str,
     payload: LiveSettingsRequest,
     request: Request,
+    agent_name: str | None = None,
 ) -> dict[str, Any]:
     """
     Push quick session-setting changes ("shorthand") to a live call.
@@ -1665,51 +1525,70 @@ async def apply_live_session_settings(
       them and the builder reflects them.
     """
     mode = (payload.mode or "voicelive").lower()
+    changes = payload.model_dump(exclude_unset=True, exclude_none=True)
+    td_dict = changes.get("turn_detection", {})
+    voice_dict = {key: value for key, value in changes.get("voice", {}).items() if value}
+    speech_dict = changes.get("speech", {})
+    if not (td_dict or voice_dict or speech_dict):
+        return {
+            "status": "noop",
+            "mode": mode,
+            "applied": False,
+            "live": False,
+            "needs_reconnect": False,
+        }
 
-    # Best-effort persist onto the session agent so the builder and any reconnect
-    # reflect the new values. If no Agent Builder agent exists yet (e.g. a live
-    # scenario/base-agent call), clone the active base agent into session scope so
-    # the tweak is captured in session state rather than lost on reconnect.
-    persisted = False
-    existing = _resolve_live_session_agent(session_id, request)
-    if existing is not None:
-        try:
-            if payload.turn_detection is not None:
-                sess = dict(existing.session or {})
-                td = dict(sess.get("turn_detection") or {})
-                for key in ("type", "threshold", "silence_duration_ms", "prefix_padding_ms"):
-                    val = getattr(payload.turn_detection, key, None)
-                    if val is not None:
-                        td[key] = val
-                sess["turn_detection"] = td
-                existing.session = sess
-            if payload.speech is not None and existing.speech is not None:
-                if payload.speech.vad_silence_timeout_ms is not None:
-                    existing.speech.vad_silence_timeout_ms = payload.speech.vad_silence_timeout_ms
-                if payload.speech.use_semantic_segmentation is not None:
-                    existing.speech.use_semantic_segmentation = (
-                        payload.speech.use_semantic_segmentation
-                    )
-            if payload.voice is not None and existing.voice is not None:
-                if payload.voice.name:
-                    existing.voice.name = payload.voice.name
-                if payload.voice.rate:
-                    existing.voice.rate = payload.voice.rate
-            set_session_agent(session_id, existing)
-            persisted = True
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("Failed to persist live settings for %s: %s", session_id, exc)
-
+    orch = None
     if mode in ("voice_live", "voicelive"):
-        # Import lazily to avoid a hard dependency when VoiceLive isn't installed.
         try:
             from apps.artagent.backend.voice.voicelive.orchestrator import (
                 get_voicelive_orchestrator,
             )
-        except Exception:  # pragma: no cover - defensive
-            get_voicelive_orchestrator = None  # type: ignore[assignment]
+        except ImportError:
+            get_voicelive_orchestrator = None
+        if get_voicelive_orchestrator:
+            orch = get_voicelive_orchestrator(session_id)
 
-        orch = get_voicelive_orchestrator(session_id) if get_voicelive_orchestrator else None
+    active_name = getattr(orch, "active", None)
+    live_agent = (getattr(orch, "agents", {}) or {}).get(active_name)
+    live_agent = getattr(live_agent, "_agent", live_agent)
+    existing = await _resolve_live_session_agent(
+        session_id,
+        request,
+        agent_name=agent_name,
+        active_name=active_name,
+        live_agent=live_agent,
+    )
+    if existing is None and agent_name is not None:
+        raise HTTPException(
+            status_code=404, detail=f"Agent '{agent_name}' was not found in this session or registry."
+        )
+
+    persisted = False
+    if existing is not None:
+        if td_dict:
+            sess = dict(existing.session or {})
+            td = dict(sess.get("turn_detection") or {})
+            td.update(td_dict)
+            sess["turn_detection"] = td
+            existing.session = sess
+        if existing.speech is not None:
+            for key, value in speech_dict.items():
+                setattr(existing.speech, key, value)
+        if existing.voice is not None:
+            for key, value in voice_dict.items():
+                setattr(existing.voice, key, value)
+        set_session_agent(session_id, existing, set_active=False)
+        try:
+            await persist_session_agents_to_redis(session_id, raise_on_failure=True)
+        except (RedisError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Unable to persist agent settings. Check Redis connectivity and retry.",
+            ) from exc
+        persisted = True
+
+    if mode in ("voice_live", "voicelive"):
         if orch is None or getattr(orch, "conn", None) is None:
             return {
                 "status": "no_active_session",
@@ -1720,24 +1599,19 @@ async def apply_live_session_settings(
                 "message": "No active VoiceLive connection; settings saved for next connect.",
             }
 
-        td_dict = (
-            {
-                "type": payload.turn_detection.type,
-                "threshold": payload.turn_detection.threshold,
-                "silence_duration_ms": payload.turn_detection.silence_duration_ms,
-                "prefix_padding_ms": payload.turn_detection.prefix_padding_ms,
+        if existing is None or not names_equal(existing.name, getattr(orch, "active", None)):
+            return {
+                "status": "saved",
+                "mode": "voicelive",
+                "applied": persisted,
+                "live": False,
+                "needs_reconnect": False,
+                "message": "Selected agent is not the live agent; settings saved without switching.",
             }
-            if payload.turn_detection is not None
-            else None
-        )
-        voice_dict = (
-            {"name": payload.voice.name, "rate": payload.voice.rate}
-            if payload.voice is not None
-            else None
-        )
+
         try:
             pushed = await orch.apply_live_session_settings(
-                turn_detection=td_dict, voice=voice_dict
+                turn_detection=td_dict or None, voice=voice_dict or None
             )
         except Exception as exc:
             logger.error("Live VoiceLive session update failed | session=%s: %s", session_id, exc)

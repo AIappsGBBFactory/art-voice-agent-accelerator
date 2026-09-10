@@ -904,7 +904,7 @@ export function OrchestrationDiagram({ initialMode = 'voicelive' }) {
   );
 }
 
-export function OrchestrationDiagramModal({ open, onClose, initialMode = 'voicelive' }) {
+export function OrchestrationDiagramModal({ open, onClose, initialMode = 'voicelive', zIndex = 2000 }) {
   if (!open || typeof document === 'undefined') return null;
 
   return createPortal(
@@ -913,7 +913,7 @@ export function OrchestrationDiagramModal({ open, onClose, initialMode = 'voicel
       style={{
         position: 'fixed',
         inset: 0,
-        zIndex: 2000,
+        zIndex,
         background: 'rgba(15,23,42,0.55)',
         display: 'flex',
         alignItems: 'center',

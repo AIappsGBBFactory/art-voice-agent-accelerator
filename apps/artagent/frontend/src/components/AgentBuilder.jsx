@@ -83,6 +83,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import AddIcon from '@mui/icons-material/Add';
 import HearingIcon from '@mui/icons-material/Hearing';
 import { API_BASE_URL } from '../config/constants.js';
+import VoiceLiveGenerationControls from './VoiceLiveGenerationControls.jsx';
 import logger from '../utils/logger.js';
 import { fetchFoundryModels, deriveModelOptions, MANAGED_VOICELIVE_MODELS } from '../utils/foundryModels.js';
 
@@ -1661,7 +1662,6 @@ export default function AgentBuilder({
 
     try {
       const cascadeEndpointPreference = resolveEndpointPreference(config.cascade_model);
-      const voiceliveEndpointPreference = resolveEndpointPreference(config.voicelive_model);
 
       // Build payload matching backend DynamicAgentConfig schema
       const payload = {
@@ -1692,7 +1692,6 @@ export default function AgentBuilder({
           min_p: config.voicelive_model?.min_p ?? null,
           typical_p: config.voicelive_model?.typical_p ?? null,
           reasoning_effort: config.voicelive_model?.reasoning_effort ?? null,
-          endpoint_preference: voiceliveEndpointPreference,
         },
         // BYOM is opt-in: only send a profile when a mode is selected.
         byom: config.byom?.mode
@@ -3288,8 +3287,8 @@ export default function AgentBuilder({
                       showAlert={false}
                     />
                     <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                      VoiceLive models must be deployed to your connected Foundry resource. To use a model you brought
-                      yourself (fine-tuned, Anthropic/Grok, PTU, model-router), enable BYOM below.
+                      Managed models are provided by VoiceLive. Enable BYOM below to use your own
+                      deployment from the connected resource.
                     </Typography>
 
                     {/* Bring Your Own Model (BYOM) — opt-in connect-time profile */}
@@ -3328,14 +3327,33 @@ export default function AgentBuilder({
 
                 <Divider />
 
+                {audioSubTab === 'voicelive' ? (
+                  <Card variant="outlined" sx={styles.sectionCard}>
+                    <CardContent>
+                      <VoiceLiveGenerationControls model={config.voicelive_model}
+                        onChange={(model) => setConfig((previous) => ({ ...previous, voicelive_model: model }))} />
+                    </CardContent>
+                  </Card>
+                ) : (
                 <Card variant="outlined" sx={styles.sectionCard}>
                   <CardContent>
                     <Typography variant="subtitle2" color="primary" sx={{ mb: 3, fontWeight: 600 }}>
-                      ⚙️ Generation Parameters (Shared)
+                      Cascade Generation Parameters
                     </Typography>
                     <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 3 }}>
-                      These parameters apply to both Cascade and VoiceLive modes.
+                      These parameters apply to Cascade only. VoiceLive has separate session controls.
                     </Typography>
+                    <Alert sx={{ mb: 2 }}
+                      severity={config.cascade_model?.min_p != null || config.cascade_model?.typical_p != null ? 'warning' : 'info'}
+                      action={(config.cascade_model?.min_p != null || config.cascade_model?.typical_p != null) && (
+                        <Button size="small" onClick={() => {
+                          handleNestedConfigChange('cascade_model', 'min_p', null);
+                          handleNestedConfigChange('cascade_model', 'typical_p', null);
+                        }}>Clear unsupported settings</Button>
+                      )}>
+                      Min P and Typical P are not supported by the OpenAI endpoints. Clear any
+                      previously saved values before applying this configuration.
+                    </Alert>
 
                     <Stack spacing={4}>
                       <Box>
@@ -3352,7 +3370,6 @@ export default function AgentBuilder({
                           value={config.cascade_model?.temperature ?? 0.7}
                           onChange={(_e, v) => {
                             handleNestedConfigChange('cascade_model', 'temperature', v);
-                            handleNestedConfigChange('voicelive_model', 'temperature', v);
                           }}
                           min={0}
                           max={2}
@@ -3380,7 +3397,6 @@ export default function AgentBuilder({
                           value={config.cascade_model?.top_p ?? 0.9}
                           onChange={(_e, v) => {
                             handleNestedConfigChange('cascade_model', 'top_p', v);
-                            handleNestedConfigChange('voicelive_model', 'top_p', v);
                           }}
                           min={0}
                           max={1}
@@ -3408,7 +3424,6 @@ export default function AgentBuilder({
                           value={config.cascade_model?.max_tokens ?? 4096}
                           onChange={(_e, v) => {
                             handleNestedConfigChange('cascade_model', 'max_tokens', v);
-                            handleNestedConfigChange('voicelive_model', 'max_tokens', v);
                           }}
                           min={256}
                           max={16384}
@@ -3436,7 +3451,6 @@ export default function AgentBuilder({
                           value={config.cascade_model?.verbosity ?? 0}
                           onChange={(_e, v) => {
                             handleNestedConfigChange('cascade_model', 'verbosity', v);
-                            handleNestedConfigChange('voicelive_model', 'verbosity', v);
                           }}
                           min={0}
                           max={2}
@@ -3461,10 +3475,10 @@ export default function AgentBuilder({
                         </Stack>
                         <Slider
                           value={config.cascade_model?.min_p ?? 0}
+                          disabled
                           onChange={(_e, v) => {
                             const val = v === 0 ? null : v;
                             handleNestedConfigChange('cascade_model', 'min_p', val);
-                            handleNestedConfigChange('voicelive_model', 'min_p', val);
                           }}
                           min={0}
                           max={0.5}
@@ -3490,10 +3504,10 @@ export default function AgentBuilder({
                         </Stack>
                         <Slider
                           value={config.cascade_model?.typical_p ?? 0}
+                          disabled
                           onChange={(_e, v) => {
                             const val = v === 0 ? null : v;
                             handleNestedConfigChange('cascade_model', 'typical_p', val);
-                            handleNestedConfigChange('voicelive_model', 'typical_p', val);
                           }}
                           min={0}
                           max={1}
@@ -3522,7 +3536,6 @@ export default function AgentBuilder({
                           onChange={(e) => {
                             const val = e.target.value || null;
                             handleNestedConfigChange('cascade_model', 'reasoning_effort', val);
-                            handleNestedConfigChange('voicelive_model', 'reasoning_effort', val);
                           }}
                           size="small"
                           fullWidth
@@ -3537,6 +3550,7 @@ export default function AgentBuilder({
                     </Stack>
                   </CardContent>
                 </Card>
+                )}
               </Stack>
             </TabPanel>
           </>

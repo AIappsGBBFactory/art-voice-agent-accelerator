@@ -21,6 +21,11 @@ from apps.artagent.backend.registries.agentstore.loader import (
     build_handoff_map,
     discover_agents,
 )
+from apps.artagent.backend.registries.agentstore.base import (
+    MAI_TRANSCRIPTION_MODEL,
+    MAI_VOICELIVE_API_VERSION,
+    validate_voicelive_transcription,
+)
 from apps.artagent.backend.src.utils.tracing import (
     create_service_dependency_attrs,
     create_service_handler_attrs,
@@ -48,6 +53,7 @@ from apps.artagent.backend.voice.shared import (
 )
 from apps.artagent.backend.src.services.session_loader import load_user_profile_by_email
 from apps.artagent.backend.src.orchestration.session_agents import get_session_agent
+from apps.artagent.backend.src.orchestration.naming import find_agent_by_name
 
 # ─────────────────────────────────────────────────────────────────────────────
 # VoiceLive Channel Imports (local to voice_channels)
@@ -68,7 +74,12 @@ from azure.ai.voicelive.models import (
 )
 from azure.core.credentials import AzureKeyCredential, TokenCredential
 from azure.identity.aio import DefaultAzureCredential, ManagedIdentityCredential
-from utils.azure_auth import _is_local_dev, _using_managed_identity
+from utils.azure_auth import (
+    AsyncSubscriptionPinnedAzureCliCredential,
+    _is_local_dev,
+    _using_managed_identity,
+    get_local_cli_credential_options,
+)
 
 # Module-level cached credential to avoid re-probing the credential chain per session.
 # Azure Identity credentials are reusable across connections.
@@ -116,9 +127,16 @@ class VoiceLivePreparedConnection:
     session_prepared: bool = False
     created_at: float = field(default_factory=time.perf_counter)
     claimed: bool = False
+    api_version: str | None = None
 
-    def matches(self, model: str, byom_query: dict[str, str] | None) -> bool:
-        return self.model == model and (self.byom_query or None) == (byom_query or None)
+    def matches(
+        self, model: str, byom_query: dict[str, str] | None, *, api_version: str | None = None
+    ) -> bool:
+        return (
+            self.model == model
+            and (self.byom_query or None) == (byom_query or None)
+            and self.api_version == api_version
+        )
 
     def claim(self) -> None:
         self.claimed = True
@@ -962,7 +980,12 @@ class VoiceLiveSDKHandler:
                 # These are independent and can run concurrently to cut startup time.
                 # ─────────────────────────────────────────────────────────────
 
-                async def _connect_voicelive(connection_model: str, byom_query: dict[str, str] | None = None):
+                async def _connect_voicelive(
+                    connection_model: str,
+                    byom_query: dict[str, str] | None = None,
+                    *,
+                    api_version: str | None = None,
+                ):
                     """Establish VoiceLive WebSocket connection.
 
                     NOTE: The VoiceLive SDK fixes the generative model at connect() time;
@@ -986,6 +1009,7 @@ class VoiceLiveSDKHandler:
                             model=connection_model,
                             connection_options=connection_options,
                             **({"query": byom_query} if byom_query else {}),
+                            **({"api_version": api_version} if api_version else {}),
                         )
                         self._connection = await self._connection_cm.__aenter__()
                         conn_span.set_attribute("voicelive.model", connection_model)
@@ -1059,38 +1083,12 @@ class VoiceLiveSDKHandler:
                         )
                         agent_source = "discovered"
 
-                    # Merge scenario agents if scenario is active
-                    if orchestrator_config and orchestrator_config.has_scenario:
-                        if orchestrator_config.agents:
-                            merged_agents = dict(agents)
-                            merged_agents.update(orchestrator_config.agents)
-                            agents = merged_agents
-                        logger.info(
-                            "Loaded scenario configuration | scenario=%s start_agent=%s",
-                            orchestrator_config.scenario_name,
-                            orchestrator_config.start_agent,
-                        )
-
-                    # Session Agent Check (Agent Builder) - Priority 1
-                    session_agent = get_session_agent(self.session_id)
-                    if session_agent:
-                        agents = dict(agents)
-                        agents[session_agent.name] = session_agent
-                        logger.info(
-                            "Session agent found (Agent Builder) | name=%s voice=%s session_id=%s",
-                            session_agent.name,
-                            session_agent.voice.name if session_agent.voice else "default",
-                            self.session_id,
-                        )
-
-                    # Determine effective start agent
-                    effective_start_agent = DEFAULT_START_AGENT
-                    if session_agent:
-                        effective_start_agent = session_agent.name
-                    elif orchestrator_config and orchestrator_config.start_agent:
-                        effective_start_agent = orchestrator_config.start_agent
-                    elif hasattr(self._settings, "start_agent") and self._settings.start_agent:
-                        effective_start_agent = self._settings.start_agent
+                    agents, session_agent, effective_start_agent = _select_voicelive_agents(
+                        agents,
+                        orchestrator_config,
+                        session_id=self.session_id,
+                        configured_start_agent=getattr(self._settings, "start_agent", None),
+                    )
 
                     # Load user profile (fast in-memory lookup)
                     user_profile = None
@@ -1154,13 +1152,19 @@ class VoiceLiveSDKHandler:
                 # managed VoiceLive (no profile param sent).
                 byom_query: dict[str, str] | None = None
                 if start_agent_obj is not None:
-                    try:
-                        byom_query = start_agent_obj.get_byom_query()
-                    except Exception as byom_err:  # pragma: no cover - defensive
-                        logger.warning(
-                            "[VoiceLive Startup] Failed to resolve BYOM config for %s | err=%s",
-                            effective_start_agent, byom_err,
-                        )
+                    byom_query = start_agent_obj.get_byom_query()
+                transcription = validate_voicelive_transcription(
+                    (start_agent_obj.session or {}).get("input_audio_transcription_settings")
+                    if start_agent_obj is not None
+                    else None,
+                    model_name=connection_model,
+                    byom_profile=(byom_query or {}).get("profile"),
+                )
+                api_version = (
+                    MAI_VOICELIVE_API_VERSION
+                    if transcription.get("model") == MAI_TRANSCRIPTION_MODEL
+                    else None
+                )
                 if byom_query:
                     logger.info(
                         "[VoiceLive Startup] BYOM enabled | agent=%s profile=%s%s session=%s",
@@ -1177,7 +1181,9 @@ class VoiceLiveSDKHandler:
                 # Establish the WebSocket connection with the resolved model.
                 prepared = self._prepared_connection
                 self._prepared_connection = None
-                if prepared and prepared.matches(connection_model, byom_query):
+                if prepared and prepared.matches(
+                    connection_model, byom_query, api_version=api_version
+                ):
                     prepared.claim()
                     self._settings = prepared.settings
                     self._credential = prepared.credential
@@ -1200,7 +1206,9 @@ class VoiceLiveSDKHandler:
                             connection_model,
                         )
                         await prepared.close()
-                    await _connect_voicelive(connection_model, byom_query)
+                    await _connect_voicelive(
+                        connection_model, byom_query, api_version=api_version
+                    )
 
 
                 # Set span attributes from resolved values
@@ -1242,6 +1250,7 @@ class VoiceLiveSDKHandler:
                     call_connection_id=self.call_connection_id,
                     transport=self._transport,
                     model_name=connection_model,
+                    byom_profile=(byom_query or {}).get("profile"),
                     memo_manager=memo_manager,
                 )
                 span.set_attribute("voicelive.start_agent", effective_start_agent)
@@ -1339,7 +1348,7 @@ class VoiceLiveSDKHandler:
 
     async def stop(self) -> None:
         """Stop event processing and release VoiceLive resources."""
-        if not self._running:
+        if not self._running and self._connection_cm is None:
             if self._prepared_connection:
                 await self._prepared_connection.close()
                 self._prepared_connection = None
@@ -2334,6 +2343,11 @@ class VoiceLiveSDKHandler:
                         logger.info(
                             "Created shared ManagedIdentityCredential for VoiceLive (cached for process lifetime)"
                         )
+                    elif _is_local_dev() and get_local_cli_credential_options():
+                        _CACHED_CREDENTIAL = AsyncSubscriptionPinnedAzureCliCredential(
+                            **get_local_cli_credential_options()
+                        )
+                        logger.info("Created subscription-pinned local Azure CLI credential for VoiceLive")
                     elif _is_local_dev():
                         _CACHED_CREDENTIAL = DefaultAzureCredential(
                             exclude_environment_credential=False,
@@ -2637,6 +2651,19 @@ async def _prepare_voicelive_call_warmup(
         )
     )
 
+    start_agent_obj = agents.get(effective_start_agent) if agents else None
+    transcription = validate_voicelive_transcription(
+        (start_agent_obj.session or {}).get("input_audio_transcription_settings")
+        if start_agent_obj is not None
+        else None,
+        model_name=connection_model,
+        byom_profile=(byom_query or {}).get("profile"),
+    )
+    api_version = (
+        MAI_VOICELIVE_API_VERSION
+        if transcription.get("model") == MAI_TRANSCRIPTION_MODEL
+        else None
+    )
     credential = await VoiceLiveSDKHandler._build_credential(settings)
     connection_cm = connect(
         endpoint=settings.azure_voicelive_endpoint,
@@ -2644,6 +2671,7 @@ async def _prepare_voicelive_call_warmup(
         model=connection_model,
         connection_options=connection_options,
         **({"query": byom_query} if byom_query else {}),
+        **({"api_version": api_version} if api_version else {}),
     )
     connection = await connection_cm.__aenter__()
     prepared = VoiceLivePreparedConnection(
@@ -2653,6 +2681,7 @@ async def _prepare_voicelive_call_warmup(
         settings=settings,
         model=connection_model,
         byom_query=byom_query,
+        api_version=api_version,
     )
 
     try:
@@ -2680,6 +2709,37 @@ async def _prepare_voicelive_call_warmup(
         raise
 
 
+def _select_voicelive_agents(
+    agents: dict[str, Any],
+    orchestrator_config: Any,
+    *,
+    session_id: str,
+    configured_start_agent: str | None,
+) -> tuple[dict[str, Any], Any | None, str]:
+    """Use the same scenario-scoped start agent for warmup and the actual connection."""
+    if orchestrator_config and orchestrator_config.has_scenario:
+        scoped_agents = dict(orchestrator_config.agents or {})
+        start_key, start_agent = find_agent_by_name(
+            scoped_agents, orchestrator_config.start_agent
+        )
+        if not start_key or start_agent is None:
+            raise ValueError("The active scenario has no valid VoiceLive starting agent.")
+        return scoped_agents, None, start_key
+
+    agents = dict(agents)
+    session_agent = get_session_agent(session_id)
+    if session_agent:
+        agents[session_agent.name] = session_agent
+        return agents, session_agent, session_agent.name
+    start_name = (
+        getattr(orchestrator_config, "start_agent", None)
+        or configured_start_agent
+        or DEFAULT_START_AGENT
+    )
+    start_key, _ = find_agent_by_name(agents, start_name)
+    return agents, None, start_key or start_name
+
+
 async def _resolve_voicelive_warmup_config(
     *,
     app_state: Any,
@@ -2697,23 +2757,12 @@ async def _resolve_voicelive_warmup_config(
         session_id=session_id,
         scenario_name=scenario_name,
     )
-    if orchestrator_config and orchestrator_config.has_scenario and orchestrator_config.agents:
-        merged_agents = dict(agents)
-        merged_agents.update(orchestrator_config.agents)
-        agents = merged_agents
-
-    session_agent = get_session_agent(session_id)
-    if session_agent:
-        agents = dict(agents)
-        agents[session_agent.name] = session_agent
-
-    effective_start_agent = DEFAULT_START_AGENT
-    if session_agent:
-        effective_start_agent = session_agent.name
-    elif orchestrator_config and orchestrator_config.start_agent:
-        effective_start_agent = orchestrator_config.start_agent
-    elif getattr(settings, "start_agent", None):
-        effective_start_agent = settings.start_agent
+    agents, _, effective_start_agent = _select_voicelive_agents(
+        agents,
+        orchestrator_config,
+        session_id=session_id,
+        configured_start_agent=getattr(settings, "start_agent", None),
+    )
 
     connection_model = settings.azure_voicelive_model
     byom_query: dict[str, str] | None = None
@@ -2723,8 +2772,7 @@ async def _resolve_voicelive_warmup_config(
             vl_model = start_agent_obj.get_model_for_mode("voicelive")
             if vl_model and getattr(vl_model, "deployment_id", None):
                 connection_model = vl_model.deployment_id
-        with contextlib.suppress(Exception):
-            byom_query = start_agent_obj.get_byom_query()
+        byom_query = start_agent_obj.get_byom_query()
 
     system_vars: dict[str, Any] = {"active_agent": effective_start_agent}
     if user_email:

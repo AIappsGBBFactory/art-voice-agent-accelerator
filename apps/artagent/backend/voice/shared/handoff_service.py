@@ -366,6 +366,10 @@ class HandoffService:
         Returns:
             HandoffConfig with type, share_context, greet_on_switch
         """
+        if self._scenario is not None:
+            return self._scenario.get_handoff_config(
+                from_agent=source_agent, tool_name=tool_name
+            )
         return get_handoff_config(
             scenario_name=self._scenario_name,
             from_agent=source_agent,

@@ -87,6 +87,7 @@ import { API_BASE_URL } from '../config/constants.js';
 import logger from '../utils/logger.js';
 import { fetchFoundryModels, deriveModelOptions, MANAGED_VOICELIVE_OPTIONS } from '../utils/foundryModels.js';
 import { OrchestrationDiagramModal } from './OrchestrationDiagram.jsx';
+import VoiceLiveGenerationControls from './VoiceLiveGenerationControls.jsx';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // STYLES
@@ -1227,10 +1228,6 @@ export default function AgentBuilderContent({
     () => resolveEndpointPreference(config.cascade_model),
     [config.cascade_model],
   );
-  const voiceliveEndpointPreference = useMemo(
-    () => resolveEndpointPreference(config.voicelive_model),
-    [config.voicelive_model],
-  );
   // Cascade model dropdown options: prefer the LIVE deployments from the
   // connected Foundry resource; fall back to the static presets when the query
   // failed or returned nothing.
@@ -1990,7 +1987,6 @@ export default function AgentBuilderContent({
         },
         voicelive_model: {
           ...config.voicelive_model,
-          endpoint_preference: voiceliveEndpointPreference,
         },
         // BYOM is opt-in: only send a profile when a mode is selected.
         byom: config.byom?.mode
@@ -3373,6 +3369,16 @@ export default function AgentBuilderContent({
                               Responses API parameters (for o-reasoning/GPT-5 models)
                             </Typography>
                           </Alert>
+                          <Alert severity={config.cascade_model?.min_p != null || config.cascade_model?.typical_p != null ? 'warning' : 'info'}
+                            action={(config.cascade_model?.min_p != null || config.cascade_model?.typical_p != null) && (
+                              <Button size="small" onClick={() => {
+                                handleNestedConfigChange('cascade_model', 'min_p', null);
+                                handleNestedConfigChange('cascade_model', 'typical_p', null);
+                              }}>Clear unsupported settings</Button>
+                            )}>
+                            Min P and Typical P are not supported by the OpenAI endpoints. They cannot
+                            be applied; clear any previously saved values before using this model.
+                          </Alert>
 
                           <Box>
                             <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
@@ -3410,6 +3416,7 @@ export default function AgentBuilderContent({
                             </Stack>
                             <Slider
                               value={config.cascade_model?.min_p ?? 0}
+                              disabled
                               onChange={(_e, v) => {
                                 const val = v === 0 ? null : v;
                                 handleNestedConfigChange('cascade_model', 'min_p', val);
@@ -3437,6 +3444,7 @@ export default function AgentBuilderContent({
                             </Stack>
                             <Slider
                               value={config.cascade_model?.typical_p ?? 0}
+                              disabled
                               onChange={(_e, v) => {
                                 const val = v === 0 ? null : v;
                                 handleNestedConfigChange('cascade_model', 'typical_p', val);
@@ -3485,8 +3493,8 @@ export default function AgentBuilderContent({
                             }
                             label={
                               <Stack direction="row" alignItems="center" spacing={1}>
-                                <Typography variant="body2">Include Reasoning Tokens</Typography>
-                                <Tooltip title="Include reasoning process in response (o1/o3 models)">
+                                <Typography variant="body2">Request reasoning summary</Typography>
+                                <Tooltip title="Requests an available reasoning summary through the Responses endpoint, not hidden chain-of-thought.">
                                   <InfoOutlinedIcon fontSize="small" color="action" />
                                 </Tooltip>
                               </Stack>
@@ -3666,241 +3674,16 @@ export default function AgentBuilderContent({
                         );
                       })()}
 
-                      <TextField
-                        select
-                        label="Endpoint"
-                        value={config.voicelive_model?.endpoint_preference || 'auto'}
-                        onChange={(e) => handleNestedConfigChange('voicelive_model', 'endpoint_preference', e.target.value)}
-                        fullWidth
-                        size="small"
-                        helperText={
-                          config.voicelive_model?.endpoint_preference === 'auto'
-                            ? `Auto: ${voiceliveEndpointPreference === 'responses' ? 'Responses API' : 'Chat Completions'}`
-                          : 'API endpoint to use for this model'
-                        }
-                        SelectProps={{ native: true }}
-                      >
-                        <option value="auto">Auto (detect from model/parameters)</option>
-                        <option value="chat">Chat Completions (/chat/completions)</option>
-                        <option value="responses">Responses API (/responses)</option>
-                      </TextField>
-
                       <Typography variant="caption" color="text.secondary">
-                        VoiceLive models must be deployed to your connected Foundry resource. To use a model you
-                        brought yourself (fine-tuned, Anthropic/Grok, PTU, model-router), enable BYOM above.
+                        Managed models are provided by VoiceLive. Enable BYOM above to use your own
+                        deployment from the connected resource.
                       </Typography>
 
                       <Divider />
 
-                      {/* Chat completions parameters (including temperature) */}
-                      {voiceliveEndpointPreference === 'chat' && (
-                        <>
-                          <Box>
-                            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
-                              <Stack direction="row" alignItems="center" spacing={1}>
-                                <Typography variant="body2" fontWeight={500}>Temperature</Typography>
-                                <Tooltip title="Controls randomness. Lower = focused, Higher = creative.">
-                                  <InfoOutlinedIcon fontSize="small" color="action" />
-                                </Tooltip>
-                              </Stack>
-                              <Chip label={config.voicelive_model?.temperature ?? 0.7} size="small" color="primary" />
-                            </Stack>
-                            <Slider
-                              value={config.voicelive_model?.temperature ?? 0.7}
-                              onChange={(_e, v) => handleNestedConfigChange('voicelive_model', 'temperature', v)}
-                              min={0}
-                              max={2}
-                              step={0.1}
-                              marks={[
-                                { value: 0, label: 'Focused' },
-                                { value: 0.7, label: '0.7' },
-                                { value: 1, label: 'Balanced' },
-                                { value: 2, label: 'Creative' },
-                              ]}
-                            />
-                          </Box>
+                      <VoiceLiveGenerationControls model={config.voicelive_model}
+                        onChange={(model) => setConfig((previous) => ({ ...previous, voicelive_model: model }))} />
 
-                          <Box>
-                            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
-                              <Stack direction="row" alignItems="center" spacing={1}>
-                                <Typography variant="body2" fontWeight={500}>Top P (Nucleus Sampling)</Typography>
-                                <Tooltip title="Controls diversity via nucleus sampling.">
-                                  <InfoOutlinedIcon fontSize="small" color="action" />
-                                </Tooltip>
-                              </Stack>
-                              <Chip label={config.voicelive_model?.top_p ?? 0.9} size="small" color="primary" />
-                            </Stack>
-                            <Slider
-                              value={config.voicelive_model?.top_p ?? 0.9}
-                              onChange={(_e, v) => handleNestedConfigChange('voicelive_model', 'top_p', v)}
-                              min={0}
-                              max={1}
-                              step={0.05}
-                              marks={[
-                                { value: 0.1, label: '0.1' },
-                                { value: 0.5, label: '0.5' },
-                                { value: 0.9, label: '0.9' },
-                                { value: 1, label: '1.0' },
-                              ]}
-                            />
-                          </Box>
-
-                          <Box>
-                            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
-                              <Stack direction="row" alignItems="center" spacing={1}>
-                                <Typography variant="body2" fontWeight={500}>Max Tokens</Typography>
-                                <Tooltip title="Maximum tokens in response.">
-                                  <InfoOutlinedIcon fontSize="small" color="action" />
-                                </Tooltip>
-                              </Stack>
-                              <Chip label={`${(config.voicelive_model?.max_tokens ?? 4096).toLocaleString()} tokens`} size="small" color="primary" />
-                            </Stack>
-                            <Slider
-                              value={config.voicelive_model?.max_tokens ?? 4096}
-                              onChange={(_e, v) => handleNestedConfigChange('voicelive_model', 'max_tokens', v)}
-                              min={256}
-                              max={16384}
-                              step={256}
-                              marks={[
-                                { value: 1024, label: '1K' },
-                                { value: 4096, label: '4K' },
-                                { value: 8192, label: '8K' },
-                                { value: 16384, label: '16K' },
-                              ]}
-                            />
-                          </Box>
-                        </>
-                      )}
-
-                      {/* Responses API parameters */}
-                      {voiceliveEndpointPreference === 'responses' && (
-                        <>
-                          <Alert severity="info" sx={{ borderRadius: '8px' }}>
-                            <Typography variant="caption">
-                              Responses API parameters (for o-reasoning/GPT-5 models)
-                            </Typography>
-                          </Alert>
-
-                          <Box>
-                            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
-                              <Stack direction="row" alignItems="center" spacing={1}>
-                                <Typography variant="body2" fontWeight={500}>Verbosity Level</Typography>
-                                <Tooltip title="0=Minimal (fastest, realtime), 1=Standard, 2=Detailed">
-                                  <InfoOutlinedIcon fontSize="small" color="action" />
-                                </Tooltip>
-                              </Stack>
-                              <Chip label={config.voicelive_model?.verbosity ?? 0} size="small" color="secondary" />
-                            </Stack>
-                            <Slider
-                              value={config.voicelive_model?.verbosity ?? 0}
-                              onChange={(_e, v) => handleNestedConfigChange('voicelive_model', 'verbosity', v)}
-                              min={0}
-                              max={2}
-                              step={1}
-                              marks={[
-                                { value: 0, label: 'Minimal' },
-                                { value: 1, label: 'Standard' },
-                                { value: 2, label: 'Detailed' },
-                              ]}
-                            />
-                          </Box>
-
-                          <Box>
-                            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
-                              <Stack direction="row" alignItems="center" spacing={1}>
-                                <Typography variant="body2" fontWeight={500}>Min P</Typography>
-                                <Tooltip title="Minimum probability threshold for token selection.">
-                                  <InfoOutlinedIcon fontSize="small" color="action" />
-                                </Tooltip>
-                              </Stack>
-                              <Chip label={config.voicelive_model?.min_p ?? 'Auto'} size="small" color="secondary" />
-                            </Stack>
-                            <Slider
-                              value={config.voicelive_model?.min_p ?? 0}
-                              onChange={(_e, v) => {
-                                const val = v === 0 ? null : v;
-                                handleNestedConfigChange('voicelive_model', 'min_p', val);
-                              }}
-                              min={0}
-                              max={0.5}
-                              step={0.01}
-                              marks={[
-                                { value: 0, label: 'Auto' },
-                                { value: 0.1, label: '0.1' },
-                                { value: 0.2, label: '0.2' },
-                              ]}
-                            />
-                          </Box>
-
-                          <Box>
-                            <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
-                              <Stack direction="row" alignItems="center" spacing={1}>
-                                <Typography variant="body2" fontWeight={500}>Typical P</Typography>
-                                <Tooltip title="Typical sampling parameter.">
-                                  <InfoOutlinedIcon fontSize="small" color="action" />
-                                </Tooltip>
-                              </Stack>
-                              <Chip label={config.voicelive_model?.typical_p ?? 'Auto'} size="small" color="secondary" />
-                            </Stack>
-                            <Slider
-                              value={config.voicelive_model?.typical_p ?? 0}
-                              onChange={(_e, v) => {
-                                const val = v === 0 ? null : v;
-                                handleNestedConfigChange('voicelive_model', 'typical_p', val);
-                              }}
-                              min={0}
-                              max={1}
-                              step={0.05}
-                              marks={[
-                                { value: 0, label: 'Auto' },
-                                { value: 0.5, label: '0.5' },
-                                { value: 1, label: '1.0' },
-                              ]}
-                            />
-                          </Box>
-
-                          <Box>
-                            <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1} sx={{ mb: 1 }}>
-                              <Stack direction="row" alignItems="center" spacing={1}>
-                                <Typography variant="body2" fontWeight={500}>Reasoning Effort</Typography>
-                                <Tooltip title="Compute effort for o1/o3 models.">
-                                  <InfoOutlinedIcon fontSize="small" color="action" />
-                                </Tooltip>
-                              </Stack>
-                              <Chip label={config.voicelive_model?.reasoning_effort || 'Auto'} size="small" color="secondary" />
-                            </Stack>
-                            <Select
-                              value={config.voicelive_model?.reasoning_effort || ''}
-                              onChange={(e) => handleNestedConfigChange('voicelive_model', 'reasoning_effort', e.target.value || null)}
-                              size="small"
-                              fullWidth
-                              displayEmpty
-                            >
-                              <MenuItem value="">Auto</MenuItem>
-                              <MenuItem value="low">Low</MenuItem>
-                              <MenuItem value="medium">Medium</MenuItem>
-                              <MenuItem value="high">High</MenuItem>
-                            </Select>
-                          </Box>
-
-                          <FormControlLabel
-                            control={
-                              <Checkbox
-                                checked={config.voicelive_model?.include_reasoning ?? false}
-                                onChange={(e) => handleNestedConfigChange('voicelive_model', 'include_reasoning', e.target.checked)}
-                              />
-                            }
-                            label={
-                              <Stack direction="row" alignItems="center" spacing={1}>
-                                <Typography variant="body2">Include Reasoning Tokens</Typography>
-                                <Tooltip title="Include reasoning process in response (o1/o3 models)">
-                                  <InfoOutlinedIcon fontSize="small" color="action" />
-                                </Tooltip>
-                              </Stack>
-                            }
-                          />
-                        </>
-                      )}
                       <Divider />
 
                       <Typography variant="subtitle2" color="primary" sx={{ fontWeight: 600 }}>

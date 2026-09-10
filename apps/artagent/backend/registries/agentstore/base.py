@@ -285,6 +285,88 @@ VOICELIVE_BYOM_MODES = (
     "byom-foundry-anthropic-messages",
 )
 
+MAI_TRANSCRIPTION_MODEL = "mai-transcribe"
+MAI_VOICELIVE_API_VERSION = "2026-04-10"
+# Managed text hosts listed in the Voice Live overview. Other deployments need
+# an explicit BYOM profile; deployment names do not establish their capabilities.
+_VOICELIVE_MANAGED_TEXT_MODELS = frozenset(
+    {
+        "gpt-4o",
+        "gpt-4o-mini",
+        "gpt-4.1",
+        "gpt-4.1-mini",
+        "gpt-4.1-nano",
+        "gpt-5",
+        "gpt-5-chat",
+        "gpt-5-mini",
+        "gpt-5-nano",
+        "gpt-5.1",
+        "gpt-5.2",
+        "gpt-5.4",
+        "gpt-5.6-terra",
+    }
+)
+
+
+def normalize_transcription_model(model: str) -> str:
+    """Resolve old MAI family labels to the service-managed alias, not a version."""
+    if model.strip().lower() in {"mai-transcribe", "mai-transcribe-1.5", "mai-transcribe-2"}:
+        return MAI_TRANSCRIPTION_MODEL
+    return model
+
+
+def validate_mai_customization(model: str, settings: dict[str, Any]) -> None:
+    """Reject retained Azure Speech customization rather than ignoring it for MAI."""
+    if normalize_transcription_model(model) != MAI_TRANSCRIPTION_MODEL:
+        return
+    incompatible = [
+        key for key in ("custom_speech", "phrase_list") if settings.get(key) is not None
+    ]
+    if incompatible:
+        raise ValueError(
+            f"mai-transcribe does not support {', '.join(incompatible)}. "
+            "Remove these Azure Speech options or select azure-speech."
+        )
+
+
+def validate_voicelive_transcription(
+    settings: dict[str, Any] | None,
+    *,
+    model_name: str,
+    byom_profile: str | None = None,
+) -> dict[str, Any]:
+    """Return normalized input settings, rejecting MAI incompatibilities at runtime.
+
+    Validate against the connection's model/profile during handoffs, not the
+    target agent's unused model choice. Do not use this cross-mode check when
+    saving an agent: its VoiceLive configuration may be unused in Cascade.
+    """
+    if byom_profile and byom_profile not in VOICELIVE_BYOM_MODES:
+        raise ValueError(
+            f"Unsupported VoiceLive BYOM profile '{byom_profile}'. "
+            f"Use one of: {', '.join(VOICELIVE_BYOM_MODES)}."
+        )
+    result = dict(settings or {})
+    if isinstance(result.get("model"), str):
+        result["model"] = normalize_transcription_model(result["model"])
+    if result.get("model") != MAI_TRANSCRIPTION_MODEL:
+        return result
+
+    validate_mai_customization(MAI_TRANSCRIPTION_MODEL, result)
+    if byom_profile == "byom-azure-openai-realtime":
+        raise ValueError(
+            "mai-transcribe cannot use the byom-azure-openai-realtime profile. "
+            "Select a managed text model or an explicit BYOM chat/Anthropic profile."
+        )
+    if not byom_profile and model_name.lower() not in _VOICELIVE_MANAGED_TEXT_MODELS:
+        raise ValueError(
+            f"mai-transcribe requires a non-multimodal managed text model (for example gpt-4.1), "
+            f"not '{model_name}'. Native realtime/audio models are incompatible. "
+            "For your own text deployment, explicitly select byom-azure-openai-chat-completion "
+            "or byom-foundry-anthropic-messages; model names alone do not select BYOM."
+        )
+    return result
+
 
 @dataclass
 class VoiceLiveBYOMConfig:
@@ -332,6 +414,11 @@ class VoiceLiveBYOMConfig:
         """
         if not self.mode:
             return None
+        if self.mode not in VOICELIVE_BYOM_MODES:
+            raise ValueError(
+                f"Unsupported VoiceLive BYOM profile '{self.mode}'. "
+                f"Use one of: {', '.join(VOICELIVE_BYOM_MODES)}."
+            )
         return {"profile": self.mode}
 
 
@@ -356,6 +443,7 @@ class SpeechConfig:
     # Advanced features
     enable_diarization: bool = False  # Speaker diarization for multi-speaker scenarios
     speaker_count_hint: int = 2  # Hint for number of speakers in diarization
+    transcription_model: str = "azure-speech"
 
     # Default languages constant for from_dict
     _DEFAULT_LANGS: list[str] = field(
@@ -373,6 +461,7 @@ class SpeechConfig:
         """Create SpeechConfig from dict."""
         if not data:
             return cls()
+        validate_mai_customization(data.get("transcription_model", "azure-speech"), data)
         default_langs = ["en-US", "es-ES", "fr-FR", "de-DE", "it-IT"]
         return cls(
             vad_silence_timeout_ms=int(data.get("vad_silence_timeout_ms", 800)),
@@ -380,17 +469,23 @@ class SpeechConfig:
             candidate_languages=data.get("candidate_languages", default_langs),
             enable_diarization=bool(data.get("enable_diarization", False)),
             speaker_count_hint=int(data.get("speaker_count_hint", 2)),
+            transcription_model=normalize_transcription_model(
+                data.get("transcription_model", "azure-speech")
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict for serialization."""
-        return {
+        result = {
             "vad_silence_timeout_ms": self.vad_silence_timeout_ms,
             "use_semantic_segmentation": self.use_semantic_segmentation,
             "candidate_languages": self.candidate_languages,
             "enable_diarization": self.enable_diarization,
             "speaker_count_hint": self.speaker_count_hint,
         }
+        if self.transcription_model != "azure-speech":
+            result["transcription_model"] = normalize_transcription_model(self.transcription_model)
+        return result
 
 
 @dataclass
@@ -590,16 +685,8 @@ class UnifiedAgent:
     # PROMPT RENDERING
     # ═══════════════════════════════════════════════════════════════════
 
-    def render_prompt(self, context: dict[str, Any]) -> str:
-        """
-        Render prompt template with runtime context.
-
-        Args:
-            context: Runtime context (caller_name, customer_intelligence, etc.)
-
-        Returns:
-            Rendered prompt string
-        """
+    def get_prompt_context(self, context: dict[str, Any]) -> dict[str, Any]:
+        """Resolve defaults and runtime bindings without rendering or executing tools."""
         import os
 
         # Provide sensible defaults for common template variables
@@ -617,7 +704,11 @@ class UnifiedAgent:
                     filtered_context[k] = v
 
         # Merge: defaults < template_vars < filtered runtime context
-        full_context = {**defaults, **self.template_vars, **filtered_context}
+        return {**defaults, **self.template_vars, **filtered_context}
+
+    def render_prompt(self, context: dict[str, Any]) -> str:
+        """Render the prompt with the existing runtime defaults and error fallback."""
+        full_context = self.get_prompt_context(context)
 
         try:
             template = Template(self.prompt_template)
@@ -1055,6 +1146,8 @@ class UnifiedAgent:
         say: str | None = None,
         session_id: str | None = None,
         call_connection_id: str | None = None,
+        connection_model: str | None = None,
+        connection_byom_profile: str | None = None,
     ) -> None:
         """
         Apply this agent's configuration to a VoiceLive session.
@@ -1069,7 +1162,18 @@ class UnifiedAgent:
             say: Optional greeting text to trigger after session update
             session_id: Session ID for tracing
             call_connection_id: Call connection ID for tracing
+            connection_model: Actual connect-time model, including during handoffs.
+            connection_byom_profile: Actual connect-time BYOM profile, if any.
         """
+        transcription_cfg = validate_voicelive_transcription(
+            self.session.get("input_audio_transcription_settings"),
+            model_name=connection_model or self.get_model_for_mode("voicelive").deployment_id,
+            byom_profile=(
+                connection_byom_profile
+                if connection_model is not None
+                else (self.byom.mode if self.byom else None)
+            ),
+        )
         try:
             from azure.ai.voicelive.models import (
                 AudioInputTranscriptionOptions,
@@ -1098,6 +1202,18 @@ class UnifiedAgent:
             system_vars = system_vars or {}
             system_vars.setdefault("active_agent", self.name)
             instructions = self.render_prompt(system_vars)
+            if session_id:
+                from apps.artagent.backend.voice.shared.config_resolver import (
+                    resolve_orchestrator_config,
+                )
+
+                config = resolve_orchestrator_config(session_id=session_id)
+                if config.scenario:
+                    handoff_instructions = config.scenario.build_handoff_instructions(self.name)
+                    if handoff_instructions:
+                        instructions = "\n\n".join(
+                            part for part in (instructions, handoff_instructions) if part
+                        )
 
             # Build session components
             voice_payload = self.build_voicelive_voice()
@@ -1113,12 +1229,14 @@ class UnifiedAgent:
             )
 
             # Build transcription settings
-            transcription_cfg = self.session.get("input_audio_transcription_settings") or {}
             transcription_kwargs: dict[str, Any] = {}
             if transcription_cfg.get("model"):
                 transcription_kwargs["model"] = transcription_cfg["model"]
             if transcription_cfg.get("language"):
                 transcription_kwargs["language"] = transcription_cfg["language"]
+            for field in ("custom_speech", "phrase_list"):
+                if field in transcription_cfg and transcription_cfg[field] is not None:
+                    transcription_kwargs[field] = transcription_cfg[field]
 
             input_audio_transcription = (
                 AudioInputTranscriptionOptions(**transcription_kwargs)
@@ -1134,6 +1252,14 @@ class UnifiedAgent:
                 output_audio_format=out_fmt,
                 turn_detection=vad,
             )
+            model_config = self.get_model_for_mode("voicelive")
+            if model_config.temperature is not None:
+                if not 0.0 <= model_config.temperature <= 1.0:
+                    raise ValueError("VoiceLive temperature must be between 0.0 and 1.0.")
+                kwargs["temperature"] = model_config.temperature
+            max_output_tokens = model_config.max_completion_tokens or model_config.max_tokens
+            if max_output_tokens is not None:
+                kwargs["max_response_output_tokens"] = max_output_tokens
 
             if input_audio_transcription:
                 kwargs["input_audio_transcription"] = input_audio_transcription

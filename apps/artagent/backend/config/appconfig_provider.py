@@ -246,14 +246,9 @@ def _load_config_from_appconfig() -> dict[str, Any] | None:
 
     try:
         from azure.appconfiguration.provider import SettingSelector, load
-        from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
+        from utils.azure_auth import get_credential
 
-        # Choose credential based on AZURE_CLIENT_ID
-        azure_client_id = os.getenv("AZURE_CLIENT_ID")
-        if azure_client_id:
-            credential = ManagedIdentityCredential(client_id=azure_client_id)
-        else:
-            credential = DefaultAzureCredential()
+        credential = get_credential()
 
         # Load with retry (exponential backoff)
         import time
