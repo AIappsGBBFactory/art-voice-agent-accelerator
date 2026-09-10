@@ -3,6 +3,11 @@
   "version": 1,
   "pages": [
     {
+      "url": "adopt.html",
+      "title": "Adopt & Extend",
+      "sections": 6
+    },
+    {
       "url": "agents.html",
       "title": "Agents & Scenarios",
       "sections": 10
@@ -25,7 +30,7 @@
     {
       "url": "guides.html",
       "title": "Guides",
-      "sections": 27
+      "sections": 29
     },
     {
       "url": "index.html",
@@ -39,6 +44,54 @@
     }
   ],
   "sections": [
+    {
+      "url": "adopt.html#top",
+      "anchor": "top",
+      "level": 1,
+      "page": "Adopt & Extend",
+      "title": "Adopt & Extend",
+      "text": "This accelerator is meant to be taken apart. Use it as a running reference, a library of Azure integrations, or a full starting point for your own voice agent — pick the level of commitment that fits your project. Framing: everything below assumes you are not the maintainer of this repo. You're evaluating how much of it to bring into a project of your own, and how to keep your fork or your extracted pieces upgradeable as the accelerator evolves."
+    },
+    {
+      "url": "adopt.html#three-ways",
+      "anchor": "three-ways",
+      "level": 2,
+      "page": "Adopt & Extend",
+      "title": "Three Ways to Adopt",
+      "text": "There is no single \"right\" way to consume this accelerator — pick based on how much of the real-time voice stack you actually need to own. Mode What you keep What you own Best for Fork & run Everything — apps/ , src/ , infra/ Agent YAML, scenarios, tools, branding, deployment config Teams whose product is a voice agent and want the full pipeline (telephony, orchestrators, UI) day one. Library reuse src/ only (ACS, Speech, AOAI, Redis, Cosmos, pools, VAD) Your own FastAPI app, your own orchestrator loop Teams with an existing backend who just want production-grade Azure integrations without rebuilding client pooling, retry, and auth from scratch. Pattern reuse Nothing — no code dependency A re-implementation of the same shape : YAML-declared agents, a centralized tool registry, scenario-based handoff routing Teams on a different stack (Node, .NET, a different cloud) who want the architecture, not the Python."
+    },
+    {
+      "url": "adopt.html#decision-guide",
+      "anchor": "decision-guide",
+      "level": 2,
+      "page": "Adopt & Extend",
+      "title": "Which One Do I Want?",
+      "text": "flowchart TD q1{\"Is your product a real-time voice agent?\"} q2{\"Do you already have a backend / orchestration loop?\"} q3{\"Are you on Python + FastAPI?\"} fork[\"Fork & run Full accelerator \"] lib[\"Library reuse Import src/ modules \"] pat[\"Pattern reuse Re-implement the shape \"] q1 -- \"Yes, it's the whole product\" --> fork q1 -- \"No, it's one feature of a bigger app\" --> q2 q2 -- \"No\" --> fork q2 -- \"Yes\" --> q3 q3 -- \"Yes\" --> lib q3 -- \"No\" --> pat classDef qNode fill:#F0F7FF,stroke:#0078D4,color:#0A2540 classDef aNode fill:#E6FAEA,stroke:#107C10,color:#0B3D0B class q1,q2,q3 qNode class fork,lib,pat aNode Most teams start with \"Fork & run\" and prune. It's easier to delete a module (e.g. Genesys support, or the React demo frontend) you don't need than to bolt on connection pooling, barge-in handling, and MemoManager session recovery later under deadline pressure. Trim apps/artagent/backend/voice/genesys/ or the entire apps/artagent/frontend/ if they're not relevant to your product — both are cleanly separable."
+    },
+    {
+      "url": "adopt.html#extension-points",
+      "anchor": "extension-points",
+      "level": 2,
+      "page": "Adopt & Extend",
+      "title": "Extension Points Matrix",
+      "text": "Whichever mode you pick, these are the seams the codebase was designed to be cut along. Each row is a real interface or factory you can swap without touching the orchestrators. Concern Where it lives How to swap it Telephony / channel apps/artagent/backend/voice/{genesys,handler.py} ACS and Genesys are two independent WebSocket bridges that both call into the same LiveOrchestrator / SpeechCascade core. See Add a Channel for the contract a third bridge (e.g. Twilio, Vonage) needs to satisfy. Speech-to-text / text-to-speech src/speech/speech_recognizer.py , src/speech/text_to_speech.py Only used by the SpeechCascade orchestrator (VoiceLive bundles STT/TTS itself). Both are thin wrappers around the Azure Speech SDK behind pooled client managers — replace the SDK calls, keep the pooling/lifecycle contract. See Swap a Provider . LLM provider src/aoai/client_manager.py ( AoaiClientManager ) Accepts an injectable factory / async_factory callable at construction — pass a factory that returns any OpenAI-compatible client (Azure OpenAI, OpenAI, or a self-hosted gateway) instead of replacing call sites. Orchestration mode apps/artagent/backend/voice/{speech_cascade,voicelive}/ Selected per-call by ACS_STREAMING_MODE . Add a third mode by implementing the same handler contract ( on_audio , on_control , session lifecycle) and registering it alongside the existing two. Session state src/redis/manager.py ( MemoManager ) Backed by Redis for sub-millisecond reads during a live call. Swap the backing store by re-implementing MemoManager 's get/set/mirror surface — every consumer (orchestrators, agent-builder, handoffs) goes through this one class. Persistent storage src/cosmosdb/manager.py Used for transcripts, post-call analytics, and audit records once a call ends. Swap for any document store by matching the manager's write/query surface — nothing upstream depends on Cosmos-specific query syntax. Tools / business logic apps/artagent/backend/registries/toolstore/registry.py Anything decorated with @register_tool becomes callable by any agent. This is the seam for connecting your own CRM, ticketing system, or internal APIs — see Add a Tool . Agent behavior & routing registries/agentstore/*/agent.yaml , registries/scenariostore/*/orchestration.yaml No code changes required — new agents and handoff graphs are pure YAML. See Create an Agent and Create a Scenario . Observability utils/telemetry_config.py , utils/ml_logging.py OpenTelemetry-based; point the exporter at any OTLP-compatible backend instead of Application Insights without touching instrumented call sites."
+    },
+    {
+      "url": "adopt.html#principles",
+      "anchor": "principles",
+      "level": 2,
+      "page": "Adopt & Extend",
+      "title": "Principles Worth Stealing",
+      "text": "Even in \"pattern reuse\" mode with zero shared code, these design choices (detailed with their full rationale in Architecture → Key Design Decisions ) are the ones worth carrying into your own stack: Declare agents in config, not code. A YAML file with a system-prompt template and a tool list is reviewable by non-engineers and hot-swappable per session — you don't need a Python subclass per persona. Separate \"what an agent can do\" from \"how agents connect.\" Tools and agents are reusable primitives; a scenario is just a routing graph over them. The same agent behaves differently in different scenarios without duplicating its definition. Centralize side-effecting capabilities behind one registry. Every tool goes through one decorator and one lookup path — no tool is ever defined inline inside an agent, which keeps discovery and auditing tractable as the tool count grows. Pool expensive clients; never construct them per request. STT, TTS, and LLM clients cost 100-500ms to stand up. In a system with a 1-second turn budget, that's not optional — it's the difference between a usable and unusable product. Keep session state external and cheap to read. Conversation state lives in Redis, not in-process globals, so any container can pick up any call — this is what makes horizontal scaling and worker restarts safe mid-conversation. Own the orchestration loop; don't hide it behind a generic agent-framework abstraction. When every millisecond of a turn matters, you need to see and control each stage (VAD → STT → LLM → TTS → playback) directly. See Architecture → Why this complexity? for the full argument."
+    },
+    {
+      "url": "adopt.html#checklist",
+      "anchor": "checklist",
+      "level": 2,
+      "page": "Adopt & Extend",
+      "title": "Minimal-Footprint Checklist",
+      "text": "If you're bringing only a slice of this accelerator into an existing project, this is the shortest path that stays coherent: Step Do this 1 Decide your adoption mode (above) before copying any code — it determines whether you take apps/ , just src/ , or nothing. 2 If reusing src/ : bring the whole module you need (e.g. src/aoai/ ) rather than individual files — the pooling, retry, and auth-refresh logic is split across a few cooperating classes. 3 Keep the tool-registry pattern even if you drop everything else — it's the cheapest single change that keeps your agent's capabilities auditable as they grow. 4 Budget your own turn latency the same way: measure STT-start → LLM-first-token → TTS-first-chunk separately, and pool anything that crosses a network boundary. 5 Read Key Design Decisions and the Production Deployment checklist before you assume a dev-mode config is safe to ship. Next: once you know what you're taking, Swap a Provider and Add a Channel in the Guides walk through the two most common customizations step by step."
+    },
     {
       "url": "agents.html#top",
       "anchor": "top",
@@ -592,6 +645,22 @@
       "text": "Scenarios define how agents connect. Same agents, different wiring. scenariostore/my_scenario/orchestration.yaml name : my_scenario description : Widget support flow start_agent : Concierge agents : - Concierge - MyAgent - AuthAgent handoffs : - from : Concierge to : AuthAgent tool : handoff_auth_agent type : announced - from : AuthAgent to : MyAgent tool : handoff_my_agent type : discrete agent_defaults : company_name : \"Contoso Widgets\" Handoff types: Type Behavior announced Agent tells the caller they're being transferred discrete Silent handoff — caller doesn't know"
     },
     {
+      "url": "guides.html#swap-provider",
+      "anchor": "swap-provider",
+      "level": 2,
+      "page": "Guides",
+      "title": "Swap a Provider",
+      "text": "Every external dependency — STT, TTS, and the LLM itself — sits behind a thin, pooled client wrapper. You don't need to touch the orchestrators to replace one; you need to satisfy the wrapper's contract. LLM: bring your own client AoaiClientManager ( src/aoai/client_manager.py ) never constructs a client inline — it accepts an injectable factory at construction time: your own bootstrap code from src.aoai.client_manager import AoaiClientManager def my_client_factory (): # Return any client that speaks the OpenAI-compatible chat/completions API — # plain OpenAI, a self-hosted gateway, or a different Azure OpenAI deployment. return MyOpenAiCompatibleClient(...) manager = AoaiClientManager( factory =my_client_factory) Everything downstream — pooling, refresh-on-auth-failure, session metadata — keeps working because it only calls get_client() / get_async_client() , never the factory directly. STT / TTS: swap the SDK, keep the pool src/speech/speech_recognizer.py and src/speech/text_to_speech.py wrap the Azure Speech SDK behind the same pooled-client lifecycle used for the LLM (see src/pools/ ). VoiceLive doesn't use these at all — STT/TTS is bundled into the managed VoiceLive API, so this swap only applies if you're running the SpeechCascade orchestrator. What to preserve when swapping: the semaphore-bounded concurrency limits, the auth-refresh-on-failure path, and the per-call lifecycle ( set_call_connection_id → synthesize/recognize → clear_session_state ). These exist to keep a single noisy call from starving others under the shared connection pool. Storage: Redis and Cosmos are single choke points MemoManager ( src/redis/manager.py ) is the only thing that touches session state during a live call; src/cosmosdb/manager.py is the only thing that persists transcripts and post-call records. To move off Redis or Cosmos, re-implement the same read/write/mirror surface those two classes expose — no orchestrator code references Redis or Cosmos APIs directly."
+    },
+    {
+      "url": "guides.html#add-channel",
+      "anchor": "add-channel",
+      "level": 2,
+      "page": "Guides",
+      "title": "Add a Channel",
+      "text": "The accelerator already ships two independent telephony bridges — Azure Communication Services and Genesys Cloud — that both terminate into the exact same agent/tool/scenario/handoff core. Use them as the reference contract for a third channel (Twilio, Vonage, a custom SIP trunk, a web-chat widget with voice, etc.). Both existing bridges do the same three jobs; a new channel needs to do the same: Terminate the transport. Speak whatever protocol the channel uses (ACS uses its own media-streaming WebSocket protocol; Genesys speaks AudioHook v2 ). This lives entirely in apps/artagent/backend/voice/<channel>/ and never leaks into the orchestrators. Normalize the audio codec. Decode/upsample inbound audio to the format your chosen orchestration mode expects (PCM16 24kHz for VoiceLive), and encode/downsample outbound audio back to the channel's format — see apps/artagent/backend/voice/genesys/audio_codec.py for a worked µ-law ⇄ PCM16 example. Hand off to the shared core. Once a session opens, resolve the agent set / active scenario the same way the existing bridges do, and start the orchestrator ( LiveOrchestrator for VoiceLive, or the SpeechCascade orchestrator if your channel needs per-component STT/TTS control). Inject any channel-specific caller context (phone number, account id, IVR state) into MemoManager so it's available to agents and tools — see the Genesys input-variable mapping for the pattern. Rule of thumb: if your new channel handler ever needs to know which agent is active or what a tool does, you've broken the boundary — that logic belongs in the shared orchestrator/agent layer, not the channel bridge. The bridge's only job is transport and codec."
+    },
+    {
       "url": "guides.html#production",
       "anchor": "production",
       "level": 2,
@@ -669,7 +738,7 @@
       "level": 2,
       "page": "ART Agent",
       "title": "Next Steps",
-      "text": "Understand Architecture Data flows, orchestration modes, agent framework, storage tiers. Build Guides Create agents, add tools, deploy to production, run locally. Explore Agents & Scenarios Pre-built agents for banking, insurance, healthcare. Scenario wiring. Reference API Reference REST endpoints, WebSocket protocol, MCP integration."
+      "text": "Understand Architecture Data flows, orchestration modes, agent framework, storage tiers. Build Guides Create agents, add tools, deploy to production, run locally. Extend Adopt & Extend Fork it, reuse src/ as a library, or lift just the patterns. Extension points for every provider and channel. Explore Agents & Scenarios Pre-built agents for banking, insurance, healthcare. Scenario wiring. Reference API Reference REST endpoints, WebSocket protocol, MCP integration."
     },
     {
       "url": "quick-tune.html#top",
