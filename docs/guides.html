@@ -18,7 +18,9 @@
     <a href="index.html">Home</a>
     <a href="architecture.html">Architecture</a>
     <a href="guides.html">Guides</a>
+    <a href="adopt.html">Adopt</a>
     <a href="agents.html">Agents</a>
+    <a href="quick-tune.html">Quick Tune</a>
     <a href="api.html">API</a>
     <a href="certification.html">Certify</a>
   </nav>
@@ -49,6 +51,8 @@
       <a href="#create-agent">Create an Agent</a>
       <a href="#add-tool">Add a Tool</a>
       <a href="#create-scenario">Create a Scenario</a>
+      <a href="#swap-provider">Swap a Provider</a>
+      <a href="#add-channel">Add a Channel</a>
     </div>
     <div class="sidebar-section">
       <h4>Operations</h4>
@@ -650,6 +654,51 @@ If you can't help, use the handoff_concierge tool to transfer back.</code></pre>
           <tr><td><code>discrete</code></td><td>Silent handoff — caller doesn't know</td></tr>
         </tbody>
       </table>
+
+      <hr>
+
+      <h2 id="swap-provider">Swap a Provider</h2>
+      <p>Every external dependency — STT, TTS, and the LLM itself — sits behind a thin, pooled client wrapper. You don't need to touch the orchestrators to replace one; you need to satisfy the wrapper's contract.</p>
+
+      <h3>LLM: bring your own client</h3>
+      <p><code>AoaiClientManager</code> (<code>src/aoai/client_manager.py</code>) never constructs a client inline — it accepts an injectable factory at construction time:</p>
+
+      <div class="code-label">your own bootstrap code</div>
+<pre><code><span class="tok-kw">from</span> src.aoai.client_manager <span class="tok-kw">import</span> AoaiClientManager
+
+<span class="tok-kw">def</span> <span class="tok-fn">my_client_factory</span>():
+    <span class="tok-cmt"># Return any client that speaks the OpenAI-compatible chat/completions API —</span>
+    <span class="tok-cmt"># plain OpenAI, a self-hosted gateway, or a different Azure OpenAI deployment.</span>
+    <span class="tok-kw">return</span> MyOpenAiCompatibleClient(...)
+
+manager = AoaiClientManager(<span class="tok-attr">factory</span>=my_client_factory)</code></pre>
+
+      <p>Everything downstream — pooling, refresh-on-auth-failure, session metadata — keeps working because it only calls <code>get_client()</code> / <code>get_async_client()</code>, never the factory directly.</p>
+
+      <h3>STT / TTS: swap the SDK, keep the pool</h3>
+      <p><code>src/speech/speech_recognizer.py</code> and <code>src/speech/text_to_speech.py</code> wrap the Azure Speech SDK behind the same pooled-client lifecycle used for the LLM (see <code>src/pools/</code>). VoiceLive doesn't use these at all — STT/TTS is bundled into the managed VoiceLive API, so this swap only applies if you're running the SpeechCascade orchestrator.</p>
+      <div class="callout">
+        <p><strong>What to preserve when swapping:</strong> the semaphore-bounded concurrency limits, the auth-refresh-on-failure path, and the per-call lifecycle (<code>set_call_connection_id</code> → synthesize/recognize → <code>clear_session_state</code>). These exist to keep a single noisy call from starving others under the shared connection pool.</p>
+      </div>
+
+      <h3>Storage: Redis and Cosmos are single choke points</h3>
+      <p><code>MemoManager</code> (<code>src/redis/manager.py</code>) is the only thing that touches session state during a live call; <code>src/cosmosdb/manager.py</code> is the only thing that persists transcripts and post-call records. To move off Redis or Cosmos, re-implement the same read/write/mirror surface those two classes expose — no orchestrator code references Redis or Cosmos APIs directly.</p>
+
+      <hr>
+
+      <h2 id="add-channel">Add a Channel</h2>
+      <p>The accelerator already ships two independent telephony bridges — <a href="#enable-phone-calling">Azure Communication Services</a> and <a href="#genesys">Genesys Cloud</a> — that both terminate into the exact same agent/tool/scenario/handoff core. Use them as the reference contract for a third channel (Twilio, Vonage, a custom SIP trunk, a web-chat widget with voice, etc.).</p>
+
+      <p>Both existing bridges do the same three jobs; a new channel needs to do the same:</p>
+      <ol>
+        <li><strong>Terminate the transport.</strong> Speak whatever protocol the channel uses (ACS uses its own media-streaming WebSocket protocol; Genesys speaks <a href="https://developer.genesys.cloud/devapps/audiohook/" target="_blank" rel="noopener">AudioHook v2</a>). This lives entirely in <code>apps/artagent/backend/voice/&lt;channel&gt;/</code> and never leaks into the orchestrators.</li>
+        <li><strong>Normalize the audio codec.</strong> Decode/upsample inbound audio to the format your chosen orchestration mode expects (PCM16 24kHz for VoiceLive), and encode/downsample outbound audio back to the channel's format — see <code>apps/artagent/backend/voice/genesys/audio_codec.py</code> for a worked µ-law ⇄ PCM16 example.</li>
+        <li><strong>Hand off to the shared core.</strong> Once a session opens, resolve the agent set / active scenario the same way the existing bridges do, and start the orchestrator (<code>LiveOrchestrator</code> for VoiceLive, or the SpeechCascade orchestrator if your channel needs per-component STT/TTS control). Inject any channel-specific caller context (phone number, account id, IVR state) into <code>MemoManager</code> so it's available to agents and tools — see the <a href="#genesys">Genesys input-variable mapping</a> for the pattern.</li>
+      </ol>
+
+      <div class="callout tip">
+        <p><strong>Rule of thumb:</strong> if your new channel handler ever needs to know which agent is active or what a tool does, you've broken the boundary — that logic belongs in the shared orchestrator/agent layer, not the channel bridge. The bridge's only job is transport and codec.</p>
+      </div>
 
       <hr>
 
