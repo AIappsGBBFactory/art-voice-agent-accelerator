@@ -7,6 +7,7 @@ Unified authentication for Azure Communication Services (ACS) and Entra ID.
 import base64
 import json
 from functools import cache
+from typing import Any
 
 import httpx
 import jwt
@@ -72,6 +73,91 @@ def get_easyauth_identity(request: Request) -> dict:
         return principal
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid EasyAuth header encoding")
+
+
+# ---------------------------------------------------------------------------
+# EasyAuth identity extraction (non-raising, telemetry-friendly)
+# ---------------------------------------------------------------------------
+
+# AAD / EasyAuth claim types that carry the stable object id and the email/UPN.
+_OID_CLAIM_TYPES: tuple[str, ...] = (
+    "http://schemas.microsoft.com/identity/claims/objectidentifier",
+    "oid",
+)
+_EMAIL_CLAIM_TYPES: tuple[str, ...] = (
+    "preferred_username",
+    "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress",
+    "emails",
+    "email",
+    "upn",
+    "http://schemas.microsoft.com/identity/claims/upn",
+)
+
+
+def parse_easyauth_principal(encoded: str | None) -> dict | None:
+    """Decode a base64 ``x-ms-client-principal`` header into a principal dict.
+
+    Returns None on any error (missing/invalid header) rather than raising, so
+    it is safe to call on unauthenticated requests and WebSocket handshakes.
+    """
+    if not encoded:
+        return None
+    try:
+        decoded = base64.b64decode(encoded).decode("utf-8")
+        return json.loads(decoded)
+    except Exception:
+        return None
+
+
+def _claim_value(principal: dict, claim_types: tuple[str, ...]) -> str | None:
+    """Return the first matching claim value from an EasyAuth principal."""
+    by_type: dict[str, str] = {}
+    for claim in principal.get("claims") or []:
+        typ = claim.get("typ") or claim.get("type")
+        val = claim.get("val") or claim.get("value")
+        if typ and val and typ not in by_type:
+            by_type[typ] = val
+    for claim_type in claim_types:
+        if claim_type in by_type:
+            return by_type[claim_type]
+    return None
+
+
+def extract_client_identity(
+    headers: Any,
+    fallback_id: str | None = None,
+    fallback_email: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Best-effort ``(user_id, user_email)`` from EasyAuth headers.
+
+    Resolution order:
+        1. Decoded ``x-ms-client-principal`` claims (object id + email/UPN).
+        2. EasyAuth convenience headers (``x-ms-client-principal-id`` / ``-name``).
+        3. Caller-supplied fallbacks (e.g. query params forwarded by the SPA
+           when the backend itself is not fronted by EasyAuth).
+
+    Non-raising. Accepts any mapping-like headers object (Starlette Request or
+    WebSocket ``.headers``).
+    """
+
+    def _get(key: str) -> str | None:
+        try:
+            return headers.get(key)
+        except Exception:
+            return None
+
+    user_id: str | None = None
+    user_email: str | None = None
+
+    principal = parse_easyauth_principal(_get("x-ms-client-principal"))
+    if principal:
+        user_id = _claim_value(principal, _OID_CLAIM_TYPES)
+        user_email = _claim_value(principal, _EMAIL_CLAIM_TYPES)
+
+    user_id = user_id or _get("x-ms-client-principal-id") or fallback_id
+    user_email = user_email or _get("x-ms-client-principal-name") or fallback_email
+
+    return user_id, user_email
 
 
 async def validate_entraid_token(request: Request) -> dict:

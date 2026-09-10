@@ -10,10 +10,10 @@ These tests simulate the actual handoff flow to verify:
 
 Run with:
     pytest tests/test_discrete_handoff_consistency.py -v
-    
+
 Run multiple times to verify consistency:
     pytest tests/test_discrete_handoff_consistency.py -v --count=10
-    
+
 Or use the parametrized test that runs N iterations internally.
 """
 
@@ -24,7 +24,8 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
+from apps.artagent.backend.registries.agentstore.base import UnifiedAgent
+from apps.artagent.backend.voice.voicelive import session as voicelive_session
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # HANDOFF CONFIGURATIONS FROM SCENARIOS
@@ -148,16 +149,16 @@ class MockVoiceLiveConnection:
         self._closed = True
 
 
-class MockUnifiedAgent:
+class MockUnifiedAgent(UnifiedAgent):
     """Mock agent with discrete handoff prompt template."""
 
     def __init__(
-        self, 
-        name: str, 
+        self,
+        name: str,
         greeting: str = None,
         has_discrete_prompt: bool = True,
     ):
-        self.name = name
+        super().__init__(name=name)
         self._greeting = greeting or f"Hello, I'm {name}!"
         self._has_discrete_prompt = has_discrete_prompt
         self.tool_names = ["handoff_to_agent"]
@@ -238,20 +239,20 @@ class HandoffSimulator:
             source_agent: MockUnifiedAgent(source_agent),
             target_agent: MockUnifiedAgent(target_agent),
         }
-        
+
     async def simulate_handoff(self) -> HandoffSimulationResult:
         """
         Simulate a handoff following the orchestrator's actual flow.
-        
+
         This mirrors the code in orchestrator.py:_execute_tool_call()
         """
         result = HandoffSimulationResult()
         result.handoff_type = self.handoff_type
-        
+
         try:
             # Step 1: Build handoff context (from HandoffService)
             greet_on_switch = self.handoff_type == "announced"
-            
+
             system_vars = {
                 "is_handoff": True,
                 "greet_on_switch": greet_on_switch,
@@ -263,7 +264,7 @@ class HandoffSimulator:
                     "question": self.user_message,
                 },
             }
-            
+
             result.events.append(HandoffEvent(
                 event_type="handoff_started",
                 data={
@@ -272,14 +273,15 @@ class HandoffSimulator:
                     "tool": self.tool_name,
                 },
             ))
-            
+
             # Step 2: Cancel old agent's response
             await self.conn.response.cancel()
             result.events.append(HandoffEvent(event_type="old_response_cancelled"))
-            
+
             # Step 3: Switch agent (apply new session)
             target = self.agents[self.target_agent]
-            await target.apply_voicelive_session(
+            await voicelive_session.apply_voicelive_session(
+                target,
                 self.conn,
                 system_vars=system_vars,
             )
@@ -288,7 +290,7 @@ class HandoffSimulator:
                 event_type="agent_switched",
                 data={"to": self.target_agent},
             ))
-            
+
             # Step 4: Check if greeting should be selected
             # For discrete handoffs, greet_on_switch=False, so no greeting
             if greet_on_switch:
@@ -303,20 +305,20 @@ class HandoffSimulator:
                 # Discrete mode - no greeting
                 result.greeting_sent = False
                 result.events.append(HandoffEvent(event_type="greeting_skipped"))
-            
+
             # Step 5: Skip tool output creation (matches our fix)
             # We intentionally do NOT send the handoff tool output back to the model.
             # The old agent's tool call was an internal action that triggered the switch.
             result.events.append(HandoffEvent(event_type="tool_output_skipped"))
-            
+
             # Step 6: Trigger handoff response (THE KEY PART)
             # This mirrors the FIXED code from orchestrator.py:
-            # - Uses conn.response.create(additional_instructions=...) 
+            # - Uses conn.response.create(additional_instructions=...)
             # - additional_instructions APPENDS to system prompt (doesn't override)
             # - The agent's prompt template already has discrete handoff behavior
-            
+
             user_question = self.user_message
-            
+
             if greet_on_switch:
                 # Announced mode: include greeting instruction
                 additional_instruction = (
@@ -330,9 +332,9 @@ class HandoffSimulator:
                     f'The customer\'s request: "{user_question}". '
                     f"Respond immediately without any greeting or introduction."
                 )
-            
+
             result.response_instruction = additional_instruction
-            
+
             # Use response.create with additional_instructions (APPENDS, not overrides)
             await self.conn.response.create(additional_instructions=additional_instruction)
             result.response_triggered = True
@@ -340,9 +342,9 @@ class HandoffSimulator:
                 event_type="response_triggered",
                 data={"instruction": additional_instruction},
             ))
-            
+
             result.success = True
-            
+
         except Exception as e:
             result.success = False
             result.error = str(e)
@@ -350,7 +352,7 @@ class HandoffSimulator:
                 event_type="error",
                 data={"error": str(e)},
             ))
-        
+
         return result
 
 
@@ -523,7 +525,7 @@ class TestAllHandoffTools:
     ):
         """
         Test that each banking scenario handoff respects its configured type.
-        
+
         Banking scenario uses discrete handoffs for seamless specialist transfers.
         """
         simulator = HandoffSimulator(
@@ -533,13 +535,13 @@ class TestAllHandoffTools:
             tool_name=tool_name,
             user_message=f"Testing {description}",
         )
-        
+
         result = await simulator.simulate_handoff()
-        
+
         assert result.success, f"{tool_name} failed: {result.error}"
         assert result.agent_switched, f"{tool_name} should switch agent"
         assert result.response_triggered, f"{tool_name} should trigger response"
-        
+
         if handoff_type == "discrete":
             assert not result.greeting_sent, (
                 f"{tool_name} is discrete but sent greeting"
@@ -562,7 +564,7 @@ class TestAllHandoffTools:
     ):
         """
         Test that each insurance scenario handoff respects its configured type.
-        
+
         Insurance scenario uses:
         - Announced handoffs for customer paths (new agent greets)
         - Discrete handoffs for B2B subrogation (seamless)
@@ -574,13 +576,13 @@ class TestAllHandoffTools:
             tool_name=tool_name,
             user_message=f"Testing {description}",
         )
-        
+
         result = await simulator.simulate_handoff()
-        
+
         assert result.success, f"{tool_name} failed: {result.error}"
         assert result.agent_switched, f"{tool_name} should switch agent"
         assert result.response_triggered, f"{tool_name} should trigger response"
-        
+
         if handoff_type == "discrete":
             assert not result.greeting_sent, (
                 f"{tool_name} is discrete but sent greeting"
@@ -603,7 +605,7 @@ class TestAllHandoffTools:
     ):
         """
         Unified test for all handoff tools across all scenarios.
-        
+
         Verifies each tool produces correct behavior based on its type:
         - discrete: no greeting, "Respond immediately" instruction
         - announced: with greeting, greeting-aware instruction
@@ -615,9 +617,9 @@ class TestAllHandoffTools:
             tool_name=tool_name,
             user_message=f"Testing {description}",
         )
-        
+
         result = await simulator.simulate_handoff()
-        
+
         assert result.is_behavior_correct, (
             f"{tool_name} ({handoff_type}) behavior incorrect:\n"
             f"  from: {from_agent} → to: {to_agent}\n"
@@ -642,7 +644,7 @@ class TestDiscreteHandoffConsistency:
     async def test_discrete_handoff_consistent_across_runs(self, run_number):
         """
         Run discrete handoff simulation multiple times to verify consistency.
-        
+
         Each run should produce identical behavior:
         - Agent switches successfully
         - Response is triggered
@@ -654,9 +656,9 @@ class TestDiscreteHandoffConsistency:
             handoff_type="discrete",
             user_message=f"Run {run_number}: I want a credit card",
         )
-        
+
         result = await simulator.simulate_handoff()
-        
+
         assert result.is_discrete_behavior_correct, (
             f"Run {run_number} failed:\n"
             f"  success={result.success}\n"
@@ -698,10 +700,11 @@ class TestDiscreteHandoffConsistency:
     async def test_concurrent_discrete_handoffs(self):
         """
         Simulate multiple discrete handoffs concurrently.
-        
+
         This tests that the handoff logic doesn't have race conditions
         or shared state issues.
         """
+
         async def run_handoff(agent_pair: tuple[str, str, str]) -> HandoffSimulationResult:
             source, target, message = agent_pair
             simulator = HandoffSimulator(
@@ -711,7 +714,7 @@ class TestDiscreteHandoffConsistency:
                 user_message=message,
             )
             return await simulator.simulate_handoff()
-        
+
         # Create 5 concurrent handoff simulations
         handoff_pairs = [
             ("Concierge", "CardAgent", "Card question 1"),
@@ -720,11 +723,11 @@ class TestDiscreteHandoffConsistency:
             ("CardAgent", "Concierge", "Back to main"),
             ("FraudAgent", "Concierge", "Done with fraud"),
         ]
-        
+
         results = await asyncio.gather(
             *[run_handoff(pair) for pair in handoff_pairs]
         )
-        
+
         # All should have correct discrete behavior
         for i, result in enumerate(results):
             source, target, _ = handoff_pairs[i]
@@ -752,7 +755,7 @@ class TestDiscreteHandoffSummary:
     async def test_discrete_handoff_full_validation(self):
         """
         Full validation of discrete handoff behavior.
-        
+
         Requirements:
         1. ✓ Tool call triggers handoff
         2. ✓ Agent config is swapped/updated
@@ -766,24 +769,24 @@ class TestDiscreteHandoffSummary:
             handoff_type="discrete",
             user_message="I'm looking for a travel rewards card with no foreign transaction fees",
         )
-        
+
         result = await simulator.simulate_handoff()
-        
+
         # Requirement 1 & 2: Tool call triggers handoff and agent switches
         assert result.success, "Handoff should succeed"
         assert result.agent_switched, "Agent should switch"
-        
+
         # Requirement 3: Response is triggered
         assert result.response_triggered, "Response should be triggered for new agent"
-        
+
         # Requirement 4: No greeting
         assert not result.greeting_sent, "Discrete handoff should NOT send greeting"
-        
+
         # Requirement 5: Instruction tells agent to respond immediately without greeting
         assert result.response_instruction is not None
         assert "Respond immediately" in result.response_instruction
         assert "without any greeting" in result.response_instruction.lower()
-        
+
         # Full validation
         assert result.is_discrete_behavior_correct, (
             "Discrete handoff should have correct behavior:\n"

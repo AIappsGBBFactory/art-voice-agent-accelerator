@@ -14,7 +14,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # MOCK CLASSES
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -326,6 +325,7 @@ class TestBackgroundTaskTracking:
 
     def _create_task_tracker(self):
         """Create a minimal object with background task tracking methods."""
+
         # Create a minimal mock that has just the background task functionality
         class TaskTracker:
             def __init__(self):
@@ -447,10 +447,11 @@ class TestGreetingTaskCleanup:
 
         assert len(orchestrator._greeting_tasks) == 3
 
+        tasks = set(orchestrator._greeting_tasks)
+        await orchestrator.cancel_and_join_tasks()
         orchestrator.cleanup()
-
-        # All tasks should be cancelled
-        assert len(orchestrator._greeting_tasks) == 0
+        assert all(task.done() for task in tasks)
+        assert not orchestrator._greeting_tasks
 
     @pytest.mark.asyncio
     async def test_cancel_pending_greeting_tasks_method(self):
@@ -458,8 +459,9 @@ class TestGreetingTaskCleanup:
         orchestrator = self._create_orchestrator_with_greeting_tasks()
 
         orchestrator._cancel_pending_greeting_tasks()
-
-        assert len(orchestrator._greeting_tasks) == 0
+        # Cancellation retains ownership until acknowledgement, not just a clear().
+        await orchestrator.cancel_and_join_tasks()
+        assert not orchestrator._greeting_tasks
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -534,7 +536,9 @@ class TestMemoryLeakPrevention:
 
         ws = FakeWebSocket()
         # _SessionMessenger requires background_task_fn kwarg
-        messenger = _SessionMessenger(ws, background_task_fn=lambda coro, label: asyncio.create_task(coro))
+        messenger = _SessionMessenger(
+            ws, background_task_fn=lambda coro, label: asyncio.create_task(coro)
+        )
 
         # Verify cleanup is possible
         messenger._ws = None
@@ -893,8 +897,9 @@ class TestScenarioUpdate:
         )
 
         # The cached config should have been cleared
-        assert not hasattr(orchestrator, "_cached_orchestrator_config"), \
-            "_cached_orchestrator_config was not cleared - VoiceLive will use wrong scenario config!"
+        assert not hasattr(
+            orchestrator, "_cached_orchestrator_config"
+        ), "_cached_orchestrator_config was not cleared - VoiceLive will use wrong scenario config!"
 
         orchestrator.cleanup()
 
@@ -926,6 +931,109 @@ class TestScenarioUpdate:
 
         # Handoff service should have been cleared
         assert orchestrator._handoff_service is None
+
+        orchestrator.cleanup()
+
+    def test_orchestrator_config_can_be_seeded_at_construction(self):
+        """The handler's resolved scenario must reach the orchestrator.
+
+        Without seeding, ``_orchestrator_config`` re-resolves with no scenario
+        name, silently yielding ``scenario=None`` — which drops the scenario's
+        handoff instructions and routing.
+        """
+        from apps.artagent.backend.voice.shared import OrchestratorConfigResult
+        from apps.artagent.backend.voice.voicelive.orchestrator import LiveOrchestrator
+
+        conn = FakeVoiceLiveConnection()
+        agents = {"Concierge": FakeVoiceLiveAgent("Concierge")}
+        scenario = MagicMock()
+        scenario.name = "banking"
+        config = OrchestratorConfigResult(
+            start_agent="Concierge",
+            agents=agents,
+            handoff_map={"handoff_concierge": "Concierge"},
+            scenario=scenario,
+            scenario_name="banking",
+        )
+
+        orchestrator = LiveOrchestrator(
+            conn=conn,
+            agents=agents,
+            handoff_map={},
+            start_agent="Concierge",
+            orchestrator_config=config,
+        )
+
+        assert orchestrator._orchestrator_config is config
+        assert orchestrator._orchestrator_config.scenario_name == "banking"
+        assert orchestrator._orchestrator_config.scenario is scenario
+
+        orchestrator.cleanup()
+
+    def test_seeded_config_flows_into_handoff_service(self):
+        """HandoffService must be built with the seeded scenario, not a re-resolve."""
+        from apps.artagent.backend.voice.shared import OrchestratorConfigResult
+        from apps.artagent.backend.voice.voicelive.orchestrator import LiveOrchestrator
+
+        conn = FakeVoiceLiveConnection()
+        agents = {"Concierge": FakeVoiceLiveAgent("Concierge")}
+        scenario = MagicMock()
+        scenario.name = "banking"
+
+        orchestrator = LiveOrchestrator(
+            conn=conn,
+            agents=agents,
+            handoff_map={},
+            start_agent="Concierge",
+            orchestrator_config=OrchestratorConfigResult(
+                start_agent="Concierge",
+                agents=agents,
+                scenario=scenario,
+                scenario_name="banking",
+            ),
+        )
+
+        service = orchestrator.handoff_service
+        assert service.scenario_name == "banking"
+        assert service._scenario is scenario
+
+        orchestrator.cleanup()
+
+    def test_update_scenario_seeds_cached_config_when_scenario_given(self):
+        """Passing ``scenario=`` re-seeds the cache instead of dropping it."""
+        from apps.artagent.backend.voice.voicelive.orchestrator import LiveOrchestrator
+
+        conn = FakeVoiceLiveConnection()
+        agents = {"Concierge": FakeVoiceLiveAgent("Concierge")}
+
+        orchestrator = LiveOrchestrator(
+            conn=conn,
+            agents=agents,
+            handoff_map={},
+            start_agent="Concierge",
+        )
+        orchestrator._cached_orchestrator_config = MagicMock()
+        orchestrator._cached_orchestrator_config.scenario_name = "old_scenario"
+
+        new_scenario = MagicMock()
+        new_scenario.name = "insurance"
+        new_scenario.global_template_vars = {"institution_name": "Test"}
+        new_agents = {"Banking": FakeVoiceLiveAgent("Banking")}
+
+        orchestrator.update_scenario(
+            agents=new_agents,
+            handoff_map={"handoff_banking": "Banking"},
+            start_agent="Banking",
+            scenario_name="insurance",
+            scenario=new_scenario,
+        )
+
+        config = orchestrator._orchestrator_config
+        assert config.scenario is new_scenario
+        assert config.scenario_name == "insurance"
+        assert config.start_agent == "Banking"
+        assert config.handoff_map == {"handoff_banking": "Banking"}
+        assert config.template_vars == {"institution_name": "Test"}
 
         orchestrator.cleanup()
 
@@ -969,6 +1077,7 @@ class TestHotPathOptimization:
     def test_schedule_throttled_session_update_throttles_correctly(self):
         """Verify throttling prevents too-frequent updates."""
         import time
+
         from apps.artagent.backend.voice.voicelive.orchestrator import LiveOrchestrator
 
         conn = FakeVoiceLiveConnection()
@@ -999,6 +1108,7 @@ class TestHotPathOptimization:
     async def test_schedule_throttled_session_update_respects_pending_flag(self):
         """Verify pending flag bypasses throttle."""
         import time
+
         from apps.artagent.backend.voice.voicelive.orchestrator import LiveOrchestrator
 
         conn = FakeVoiceLiveConnection()
@@ -1030,8 +1140,9 @@ class TestHotPathOptimization:
 
         orchestrator.cleanup()
 
-    def test_schedule_background_sync_is_non_blocking(self):
-        """Verify _schedule_background_sync doesn't block."""
+    @pytest.mark.asyncio
+    async def test_schedule_background_sync_is_non_blocking(self):
+        """Sync runs once on the next loop iteration, never inline."""
         from apps.artagent.backend.voice.voicelive.orchestrator import LiveOrchestrator
 
         conn = FakeVoiceLiveConnection()
@@ -1046,15 +1157,20 @@ class TestHotPathOptimization:
             memo_manager=memo_manager,
         )
 
-        # Should not raise and should return immediately
-        orchestrator._schedule_background_sync()
-
-        orchestrator.cleanup()
+        try:
+            with patch.object(orchestrator, "_sync_to_memo_manager") as sync:
+                orchestrator._schedule_background_sync()
+                sync.assert_not_called()
+                await asyncio.sleep(0)
+                sync.assert_called_once_with()
+        finally:
+            orchestrator.cleanup()
 
     @pytest.mark.asyncio
     async def test_handle_response_done_is_non_blocking(self):
         """Verify _handle_response_done doesn't block on network calls."""
         import time
+
         from apps.artagent.backend.voice.voicelive.orchestrator import LiveOrchestrator
 
         conn = FakeVoiceLiveConnection()

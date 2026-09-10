@@ -266,6 +266,16 @@ generic_handoff:
 # handoff_to_agent(target_agent="InvestmentAdvisor", reason="...")
 ```
 
+Scenario Builder preserves the full `generic_handoff` block across create,
+update, list, detail, Redis persistence, and cold restore. If an existing
+session scenario is updated by an older client that omits `generic_handoff`,
+the current policy is preserved instead of being reset to disabled defaults. If
+a new builder scenario omits the block, the builder default enables generic
+handoffs for the scenario agents and uses the selected `handoff_type`.
+
+`allowed_targets` are normalized the same way agent names are normalized, so
+display suffixes and duplicate casing do not create separate targets.
+
 ## Agent Defaults
 
 Apply settings to all agents in the scenario:
@@ -312,6 +322,11 @@ start = get_scenario_start_agent("banking")
 handoff_map = build_handoff_map_from_scenario("banking")
 # Returns: {"handoff_card_recommendation": "CardRecommendation", ...}
 ```
+
+`get_scenario_agents()` returns copied agent instances before applying scenario
+defaults. Updating `agent_defaults`, template variables, or voice overrides for
+one scenario does not mutate the shared base agent catalog used by other
+sessions or scenarios.
 
 ### Get Handoff Configuration
 

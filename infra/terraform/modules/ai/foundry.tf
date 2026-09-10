@@ -43,10 +43,6 @@ resource "azapi_resource" "ai_foundry_account" {
     "properties.endpoint",
     "properties.endpoints"
   ]
-
-  lifecycle {
-    ignore_changes = [tags]
-  }
 }
 
 
@@ -75,6 +71,7 @@ resource "azapi_resource" "ai_foundry_project" {
   location                  = var.location
   schema_validation_enabled = false
   ignore_missing_property   = true
+  tags                      = var.tags
 
   body = {
 

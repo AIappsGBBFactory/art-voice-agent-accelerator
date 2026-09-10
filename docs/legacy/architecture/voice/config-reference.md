@@ -83,6 +83,8 @@ DEFAULT_TEMPERATURE=0.7
 | `AZURE_VOICELIVE_ENDPOINT` | string | `""` | VoiceLive service endpoint |
 | `AZURE_VOICELIVE_API_KEY` | string | `""` | API key (prefer managed identity) |
 | `AZURE_VOICELIVE_MODEL` | string | `"gpt-4o"` | Model: `gpt-4o`, `gpt-4.1`, `gpt-5`, `phi` |
+| `AZURE_VOICELIVE_REGION` | string | `""` | Optional. Overrides the region attributed to the Voice Live account in the builder |
+| `AZURE_OPENAI_REGION` | string | `""` | Optional. Overrides the region attributed to the primary Foundry account |
 
 **Alternative Names (legacy):**
 
@@ -91,6 +93,26 @@ DEFAULT_TEMPERATURE=0.7
 | `AZURE_VOICELIVE_ENDPOINT` | `AZURE_VOICE_LIVE_ENDPOINT` |
 | `AZURE_VOICELIVE_API_KEY` | `AZURE_VOICE_API_KEY` |
 | `AZURE_VOICELIVE_MODEL` | `AZURE_VOICE_LIVE_MODEL` |
+| `AZURE_VOICELIVE_REGION` | `AZURE_VOICE_LIVE_REGION` |
+
+### Region attribution
+
+Voice Live is offered in only a subset of Azure regions, so its account is
+routinely provisioned in a different geography from both the primary AI Foundry
+account (which serves the SpeechCascade LLM and Speech) and the app itself.
+Every turn then pays that distance, which no setting in the Quick Tune panel can
+compensate for — so `GET /api/v1/agent-builder/models` and
+`GET /api/v1/agent-builder/voices` return which resource and region produced each
+list, and the panel renders it plus an advisory when the regions differ.
+
+The region is resolved at runtime from the account actually connected to: Azure
+AI Services stamps `x-ms-region` on the deployments listing the backend already
+makes, so no extra call, management-plane permission or configuration is
+involved. The `*_REGION` variables above are a fallback for when that listing
+can't be reached. The app's own region comes from the Container Apps-provided
+`CONTAINER_APP_ENV_DNS_SUFFIX` (`<hash>.<region>.azurecontainerapps.io`),
+falling back to `AZURE_LOCATION`. When a region can't be determined the panel
+omits the attribution rather than guessing.
 
 ---
 
@@ -315,31 +337,28 @@ These values are hard-coded and cannot be changed via environment:
 
 ### Available Voices
 
-```python
-AVAILABLE_VOICES = {
-    "standard": [
-        "en-US-AvaMultilingualNeural",
-        "en-US-AndrewMultilingualNeural",
-        "en-US-EmmaMultilingualNeural",
-        "en-US-BrianMultilingualNeural",
-    ],
-    "turbo": [
-        "en-US-AlloyTurboMultilingualNeural",
-        "en-US-EchoTurboMultilingualNeural",
-        "en-US-FableTurboMultilingualNeural",
-        "en-US-OnyxTurboMultilingualNeural",
-        "en-US-NovaTurboMultilingualNeural",
-        "en-US-ShimmerTurboMultilingualNeural",
-    ],
-    "hd": [
-        "en-US-Adam:DragonHDLatestNeural",
-        "en-US-Andrew:DragonHDLatestNeural",
-        "en-US-Ava:DragonHDLatestNeural",
-        "en-US-Brian:DragonHDLatestNeural",
-        "en-US-Emma:DragonHDLatestNeural",
-    ],
-}
-```
+`GET /api/v1/agent-builder/voices` builds its list from the **live region voice
+list** (Speech SDK `get_voices_async`), so it reflects every voice the connected
+Speech resource can synthesize — typically several hundred across 100+ locales,
+including the DragonHD / HD Omni / HD Flash families. The static
+`AVAILABLE_VOICES` catalog in `agent_builder.py` is only a fallback for when
+Azure can't be reached, plus a safety net if the region enumerates no HD voices.
+
+Each entry is tagged so the UI can label it:
+
+| Field | Meaning |
+|-------|---------|
+| `category` | `hd` \| `turbo` \| `standard` \| `mai` — the picker's group |
+| `voice_type` | `neural`, `neural-turbo`, `neural-hd`, `neural-hd-omni`, `neural-hd-flash`, `mai` |
+| `is_hd` | `true` for any high-definition voice (rendered as an `HD` chip) |
+| `language` | BCP-47 locale, e.g. `en-US`, `ja-JP` |
+| `region_verified` | `false` when the voice came from the static catalog rather than the region list |
+
+Query parameters: `category`, `locale`, `hd_only`, `include_unverified`, `refresh`.
+
+HD voice naming follows `<locale>-<Persona>:<HdModel>`, e.g.
+`en-US-Ava:DragonHDLatestNeural`. See
+[High-definition voices in Azure Speech](https://learn.microsoft.com/azure/ai-services/speech-service/high-definition-voices).
 
 ### Supported Languages
 

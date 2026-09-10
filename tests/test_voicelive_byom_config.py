@@ -118,3 +118,269 @@ def test_schema_blank_mode_normalizes_to_none():
     from apps.artagent.backend.api.v1.endpoints.agent_builder import ByomConfigSchema
 
     assert ByomConfigSchema(mode="   ").mode is None
+
+
+# =============================================================================
+# The cross-field invariant the earlier tests could NOT catch
+# =============================================================================
+#
+# Every test above validates BYOM in ISOLATION and treats byom=None as correct
+# (it IS correct for a managed model like gpt-realtime). None of them relate the
+# chosen *model* to the BYOM flag, so the real production misconfig — a BYOM-only
+# model (o3-mini) saved with BYOM OFF, which connects as managed and goes silent —
+# slipped through. These tests encode that missing invariant.
+
+
+@pytest.mark.parametrize(
+    "deployment_id, managed",
+    [
+        ("gpt-realtime", True),
+        ("gpt-4o", True),
+        ("GPT-4O", True),  # case-insensitive
+        ("gpt-5.4", True),
+        (None, True),  # empty → nothing to validate (runtime default)
+        ("", True),
+        ("o3-mini", False),  # the jinlocal failure model — BYOM-only
+        ("o1", False),
+        ("o3", False),
+        ("gpt-5-chat", False),  # plain chat (not the versioned gpt-5.x-chat)
+        ("my-finetuned-deployment", False),
+    ],
+)
+def test_is_managed_voicelive_model(deployment_id, managed):
+    from apps.artagent.backend.registries.agentstore.base import (
+        is_managed_voicelive_model,
+    )
+
+    assert is_managed_voicelive_model(deployment_id) is managed
+
+
+def test_build_session_agent_flags_non_managed_model_without_byom(caplog):
+    """Reproduce the exact jinlocal misconfig and assert it is now detectable.
+
+    o3-mini selected for VoiceLive with byom=None is what silently connected to
+    managed Voice Live and made the agent go dead. build_session_agent must both
+    build the (poisoned) agent AND emit the guard warning so the save is no longer
+    silent — this is precisely what no prior test asserted.
+    """
+    import logging
+
+    from apps.artagent.backend.api.v1.endpoints.agent_builder import (
+        DynamicAgentConfig,
+        ModelConfigSchema,
+        build_session_agent,
+    )
+    from apps.artagent.backend.registries.agentstore.base import (
+        is_managed_voicelive_model,
+    )
+
+    cfg = DynamicAgentConfig(
+        name="BankingConcierge",
+        prompt="You are a helpful banking concierge agent.",
+        voicelive_model=ModelConfigSchema(deployment_id="o3-mini"),
+        byom=None,  # <-- the misconfig: BYOM-only model, BYOM left off
+    )
+
+    with caplog.at_level(logging.WARNING, logger="v1.agent_builder"):
+        agent = build_session_agent(cfg, "sess-misconfig", created_at=0.0)
+
+    # The agent is built with the exact silent-failure shape...
+    assert agent.get_model_for_mode("voicelive").deployment_id == "o3-mini"
+    assert agent.byom is None
+    assert not is_managed_voicelive_model("o3-mini")
+    # ...and the save path now flags it (was silent before this guard existed).
+    assert any(
+        "non_managed_voicelive_without_byom" in rec.getMessage()
+        for rec in caplog.records
+    )
+
+
+def test_build_session_agent_non_managed_with_byom_is_clean(caplog):
+    """Adding the BYOM profile fixes the misconfig: byom persists, no warning."""
+    import logging
+
+    from apps.artagent.backend.api.v1.endpoints.agent_builder import (
+        ByomConfigSchema,
+        DynamicAgentConfig,
+        ModelConfigSchema,
+        build_session_agent,
+    )
+
+    cfg = DynamicAgentConfig(
+        name="BankingConcierge",
+        prompt="You are a helpful banking concierge agent.",
+        voicelive_model=ModelConfigSchema(deployment_id="o3-mini"),
+        byom=ByomConfigSchema(mode="byom-azure-openai-chat-completion"),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="v1.agent_builder"):
+        agent = build_session_agent(cfg, "sess-fixed", created_at=0.0)
+
+    assert agent.byom is not None
+    assert agent.byom.mode == "byom-azure-openai-chat-completion"
+    assert not any(
+        "non_managed_voicelive_without_byom" in rec.getMessage()
+        for rec in caplog.records
+    )
+
+
+def test_build_session_agent_managed_model_without_byom_is_clean(caplog):
+    """A managed model (gpt-realtime) with BYOM off is valid — no warning."""
+    import logging
+
+    from apps.artagent.backend.api.v1.endpoints.agent_builder import (
+        DynamicAgentConfig,
+        ModelConfigSchema,
+        build_session_agent,
+    )
+
+    cfg = DynamicAgentConfig(
+        name="BankingConcierge",
+        prompt="You are a helpful banking concierge agent.",
+        voicelive_model=ModelConfigSchema(deployment_id="gpt-realtime"),
+        byom=None,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="v1.agent_builder"):
+        agent = build_session_agent(cfg, "sess-managed", created_at=0.0)
+
+    assert agent.byom is None
+    assert not any(
+        "non_managed_voicelive_without_byom" in rec.getMessage()
+        for rec in caplog.records
+    )
+
+
+# =============================================================================
+# BYOM profile <-> model protocol compatibility
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "deployment_id,realtime",
+    [
+        ("gpt-realtime", True),
+        ("gpt-realtime-mini", True),
+        ("phi4-mm-realtime", True),
+        ("GPT-Realtime", True),
+        ("gpt-4o", False),
+        ("gpt-5.4", False),
+        ("o3-mini", False),
+        ("", False),
+        (None, False),
+    ],
+)
+def test_is_realtime_voicelive_model(deployment_id, realtime):
+    from apps.artagent.backend.registries.agentstore.base import (
+        is_realtime_voicelive_model,
+    )
+
+    assert is_realtime_voicelive_model(deployment_id) is realtime
+
+
+def test_chat_completion_profile_with_realtime_model_conflicts():
+    """The exact mosdev misconfig: Quick Tune saved the chat-completion BYOM
+    profile alongside gpt-realtime.
+
+    App Insights showed the result: the socket connected, the session contract
+    validated (``session_contract_ok``) and STT kept producing transcripts, but
+    every turn completed with ``ttft=N/A ttfb=N/A synth=N/A`` because a realtime
+    deployment does not serve /chat/completions.
+    """
+    from apps.artagent.backend.registries.agentstore.base import (
+        byom_profile_model_conflict,
+    )
+
+    reason = byom_profile_model_conflict(
+        "byom-azure-openai-chat-completion", "gpt-realtime"
+    )
+    assert reason is not None
+    assert "chat completions" in reason
+    assert "gpt-realtime" in reason
+
+
+def test_realtime_profile_with_chat_model_conflicts():
+    """The mirror image is equally dead and must be flagged too."""
+    from apps.artagent.backend.registries.agentstore.base import (
+        byom_profile_model_conflict,
+    )
+
+    reason = byom_profile_model_conflict("byom-azure-openai-realtime", "gpt-4o")
+    assert reason is not None
+    assert "realtime API" in reason
+
+
+@pytest.mark.parametrize(
+    "mode,deployment_id",
+    [
+        # Matching protocols.
+        ("byom-azure-openai-realtime", "gpt-realtime"),
+        ("byom-azure-openai-chat-completion", "gpt-4o"),
+        ("byom-azure-openai-chat-completion", "o3-mini"),
+        # Anthropic deployments are arbitrarily named — never guess.
+        ("byom-foundry-anthropic-messages", "gpt-realtime"),
+        ("byom-foundry-anthropic-messages", "my-claude"),
+        # Nothing to validate.
+        (None, "gpt-realtime"),
+        ("byom-azure-openai-chat-completion", None),
+    ],
+)
+def test_byom_profile_model_compatible_pairs(mode, deployment_id):
+    from apps.artagent.backend.registries.agentstore.base import (
+        byom_profile_model_conflict,
+    )
+
+    assert byom_profile_model_conflict(mode, deployment_id) is None
+
+
+def test_build_session_agent_flags_byom_profile_model_conflict(caplog):
+    """Saving the poisoned pair must no longer be silent."""
+    import logging
+
+    from apps.artagent.backend.api.v1.endpoints.agent_builder import (
+        ByomConfigSchema,
+        DynamicAgentConfig,
+        ModelConfigSchema,
+        build_session_agent,
+    )
+
+    cfg = DynamicAgentConfig(
+        name="BankingConcierge",
+        prompt="You are a helpful banking concierge agent.",
+        voicelive_model=ModelConfigSchema(deployment_id="gpt-realtime"),
+        byom=ByomConfigSchema(mode="byom-azure-openai-chat-completion"),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="v1.agent_builder"):
+        build_session_agent(cfg, "sess-byom-conflict", created_at=0.0)
+
+    assert any(
+        "byom_profile_model_conflict" in rec.getMessage() for rec in caplog.records
+    )
+
+
+def test_build_session_agent_compatible_byom_pair_is_clean(caplog):
+    """A profile that matches the deployment's protocol emits no conflict."""
+    import logging
+
+    from apps.artagent.backend.api.v1.endpoints.agent_builder import (
+        ByomConfigSchema,
+        DynamicAgentConfig,
+        ModelConfigSchema,
+        build_session_agent,
+    )
+
+    cfg = DynamicAgentConfig(
+        name="BankingConcierge",
+        prompt="You are a helpful banking concierge agent.",
+        voicelive_model=ModelConfigSchema(deployment_id="gpt-realtime"),
+        byom=ByomConfigSchema(mode="byom-azure-openai-realtime"),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="v1.agent_builder"):
+        agent = build_session_agent(cfg, "sess-byom-ok", created_at=0.0)
+
+    assert agent.byom.mode == "byom-azure-openai-realtime"
+    assert not any(
+        "byom_profile_model_conflict" in rec.getMessage() for rec in caplog.records
+    )

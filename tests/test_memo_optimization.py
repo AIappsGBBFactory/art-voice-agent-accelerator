@@ -1,6 +1,6 @@
 """Quick verification tests for MemoManager optimizations."""
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from src.stateful.state_managment import MemoManager
@@ -86,7 +86,7 @@ def test_cancel_pending_persist_no_task():
 async def test_persist_background_creates_task():
     """persist_background creates and tracks the task."""
     mock_redis = MagicMock()
-    mock_redis.set_session_data = MagicMock(return_value=None)
+    mock_redis.store_session_data_async = AsyncMock(return_value=True)
 
     mm = MemoManager(session_id="task-test", redis_mgr=mock_redis)
 
@@ -100,56 +100,37 @@ async def test_persist_background_creates_task():
     assert mm._pending_persist_task is not None
 
     # Wait for task to complete
-    await mm._pending_persist_task
+    assert await mm.flush_pending_persist(raise_on_failure=True)
+    mock_redis.store_session_data_async.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_persist_background_deduplication():
-    """persist_background cancels previous task before creating new one."""
-    import asyncio
-
+    """persist_background coalesces queued snapshots without replacing the writer."""
     mock_redis = MagicMock()
-
-    # Simulate slow persist
-    async def slow_persist(*args, **kwargs):
-        await asyncio.sleep(10)
-
-    mock_redis.set_session_data = slow_persist
+    mock_redis.store_session_data_async = AsyncMock(return_value=True)
 
     mm = MemoManager(session_id="dedup-test", redis_mgr=mock_redis)
 
-    # Start first persist (will hang due to slow mock)
     await mm.persist_background()
     first_task = mm._pending_persist_task
     assert first_task is not None
 
-    # Start second persist - should cancel first
+    mm.set_context("latest", True)
     await mm.persist_background()
     second_task = mm._pending_persist_task
 
-    # Let cancellation propagate
-    await asyncio.sleep(0.01)
-
-    # First task should be cancelled
-    assert first_task.cancelled() or first_task.done()
-    # Second task should be different
-    assert second_task is not first_task
-
-    # Cleanup
-    mm.cancel_pending_persist()
+    assert second_task is first_task
+    assert await mm.flush_pending_persist(raise_on_failure=True)
+    mock_redis.store_session_data_async.assert_awaited_once()
+    assert not first_task.cancelled()
 
 
 @pytest.mark.asyncio
-async def test_cancel_pending_persist_with_active_task():
-    """cancel_pending_persist cancels an active task and returns True."""
-    import asyncio
-
+async def test_cancel_pending_persist_before_write_starts():
+    """Withdrawing a queued snapshot never cancels the writer or reports durability."""
     mock_redis = MagicMock()
-
-    async def slow_persist(*args, **kwargs):
-        await asyncio.sleep(10)
-
-    mock_redis.set_session_data = slow_persist
+    mock_redis.store_session_data_async = AsyncMock(return_value=True)
 
     mm = MemoManager(session_id="cancel-test", redis_mgr=mock_redis)
 
@@ -163,9 +144,10 @@ async def test_cancel_pending_persist_with_active_task():
     result = mm.cancel_pending_persist()
     assert result is True
 
-    # Task should be cancelled
-    await asyncio.sleep(0.01)  # Let cancellation propagate
-    assert task.cancelled() or task.done()
+    assert not await mm.flush_pending_persist()
+    await task
+    assert not task.cancelled()
+    mock_redis.store_session_data_async.assert_not_awaited()
 
 
 if __name__ == "__main__":

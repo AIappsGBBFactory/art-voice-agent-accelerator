@@ -3,22 +3,20 @@ Session Agent Redis Persistence Round-Trip
 ==========================================
 
 Closes the coverage gap on the *persisted* config path. The endpoint-path test
-(test_agent_builder_endpoint_path.py) stubs ``redis=None`` and the manager test
-(test_session_agent_manager.py) mocks the Redis manager, so neither exercises a
-real write → read-back cycle through ``session_agents.py``.
+(test_agent_builder_endpoint_path.py) also supports local-only sessions; this
+suite exercises actual write/read-back cycles through ``session_agents.py``.
 
 This module drives the actual persistence path that lets a session agent survive
 a process reload and be visible to other workers:
 
     set_session_agent
-        -> _serialize_agent -> _persist_agents_to_redis (corememory + Redis write)
+        -> _serialize_agent -> persist_session_agents_to_redis (awaited write)
     [fresh worker: in-memory cache empty]
-    get_session_agent
-        -> _ensure_session_loaded -> _load_agents_from_redis -> _deserialize_agent
+    await prime_session_definitions -> get_session_agent
+        -> _load_agents_from_redis -> _deserialize_agent
 
 A dict-backed ``FakeRedisManager`` stands in for ``AzureRedisManager`` — it
-implements only the two methods ``MemoManager`` touches on this path
-(``get_session_data`` sync read, ``store_session_data_async`` async write).
+implements asynchronous reads and writes plus a synchronous compatibility read.
 
 The key risk these tests guard: if a field were dropped in ``_serialize_agent``
 / ``_deserialize_agent``, a config saved from the UI would silently fail to
@@ -28,26 +26,28 @@ survive a reload, and nothing else in the suite would catch it.
 from __future__ import annotations
 
 import asyncio
-
-import pytest
+import json
 
 import apps.artagent.backend.src.orchestration.session_agents as sa
+import pytest
 from apps.artagent.backend.registries.agentstore.base import (
     HandoffConfig,
     ModelConfig,
     SpeechConfig,
     UnifiedAgent,
     VoiceConfig,
+    VoiceLiveBYOMConfig,
 )
 from apps.artagent.backend.src.orchestration.session_agents import (
+    AGENTS_KEY_ACTIVE,
     _deserialize_agent,
     _serialize_agent,
     get_session_agent,
     get_session_agents,
     persist_session_agents_to_redis,
+    remove_session_agent_async,
     set_session_agent,
 )
-
 
 # =============================================================================
 # FAKES / HELPERS
@@ -72,6 +72,9 @@ class FakeRedisManager:
     def get_session_data(self, key: str) -> dict:
         return dict(self.store.get(key, {}))
 
+    async def get_session_data_async(self, key: str, *, raise_on_failure=False) -> dict:
+        return self.get_session_data(key)
+
     async def store_session_data_async(self, key: str, data: dict) -> bool:
         self.store[key] = dict(data)
         self.write_count += 1
@@ -92,12 +95,17 @@ def make_rich_agent(name: str = "BankBot") -> UnifiedAgent:
             temperature=0.3,
             top_p=0.8,
             max_tokens=1024,
+            api_version="2025-01-01-preview",
+            model_family="gpt-4",
         ),
         voicelive_model=ModelConfig(
             deployment_id="gpt-realtime",
             temperature=0.6,
             max_tokens=2048,
+            api_version="2025-04-01-preview",
+            model_family="gpt-realtime",
         ),
+        byom=VoiceLiveBYOMConfig.from_dict({"mode": "byom-azure-openai-chat-completion"}),
         voice=VoiceConfig(
             name="en-US-GuyNeural",
             type="azure-standard",
@@ -124,6 +132,7 @@ def make_rich_agent(name: str = "BankBot") -> UnifiedAgent:
         },
         prompt_template="You are {{brand}} assistant.",
         tool_names=[],
+        mcp_servers=["crm-mcp", "policy-mcp"],
         template_vars={"brand": "Contoso"},
         metadata={"cloned_from": "Concierge"},
     )
@@ -165,8 +174,18 @@ def _assert_rich_config_preserved(agent: UnifiedAgent, *, name: str = "BankBot")
     assert agent.cascade_model.deployment_id == "gpt-4o"
     assert agent.cascade_model.temperature == 0.3
     assert agent.cascade_model.max_tokens == 1024
+    assert agent.cascade_model.api_version == "2025-01-01-preview"
+    assert agent.cascade_model.model_family == "gpt-4"
     assert agent.voicelive_model.deployment_id == "gpt-realtime"
     assert agent.voicelive_model.max_tokens == 2048
+    assert agent.voicelive_model.api_version == "2025-04-01-preview"
+    assert agent.voicelive_model.model_family == "gpt-realtime"
+
+    # Voice Live BYOM profile must survive — dropping it reloads the agent as
+    # managed Voice Live and breaks Foundry-hosted (BYOM) model selection.
+    assert agent.byom is not None
+    assert agent.byom.mode == "byom-azure-openai-chat-completion"
+    assert agent.mcp_servers == ["crm-mcp", "policy-mcp"]
 
 
 # =============================================================================
@@ -196,6 +215,7 @@ def _isolate_session_state(session_id):
 
     def _clear():
         sa._session_agents.pop(session_id, None)
+        sa._active_session_agents.pop(session_id, None)
         sa._session_load_times.pop(session_id, None)
 
     _clear()
@@ -203,10 +223,14 @@ def _isolate_session_state(session_id):
     _clear()
 
 
-def _simulate_fresh_worker(session_id: str) -> None:
+async def _simulate_fresh_worker(session_id: str) -> None:
     """Drop the in-memory cache so the next read must come from Redis."""
     sa._session_agents.pop(session_id, None)
+    sa._active_session_agents.pop(session_id, None)
     sa._session_load_times.pop(session_id, None)
+    from apps.artagent.backend.src.orchestration.session_memory import prime_session_definitions
+
+    await prime_session_definitions(session_id)
 
 
 # =============================================================================
@@ -260,7 +284,7 @@ class TestSessionAgentRedisRoundTrip:
     async def test_set_then_fresh_load_preserves_config(self, session_id, fake_redis) -> None:
         agent = make_rich_agent("BankBot")
 
-        set_session_agent(session_id, agent)
+        set_session_agent(session_id, agent, persist=False)
         # Guarantee the durable write (the path FastAPI endpoints await).
         await persist_session_agents_to_redis(session_id)
         await asyncio.sleep(0)  # let any fire-and-forget persist settle
@@ -269,8 +293,8 @@ class TestSessionAgentRedisRoundTrip:
         assert fake_redis.store, "expected agent payload written to Redis"
 
         # A fresh worker has nothing in memory but can see the Redis copy.
-        _simulate_fresh_worker(session_id)
-        assert session_id not in sa._session_agents
+        await _simulate_fresh_worker(session_id)
+        assert session_id in sa._session_agents
 
         loaded = get_session_agent(session_id, "BankBot")
         _assert_rich_config_preserved(loaded, name="BankBot")
@@ -278,9 +302,9 @@ class TestSessionAgentRedisRoundTrip:
     @pytest.mark.asyncio
     @pytest.mark.usefixtures("fake_redis")
     async def test_case_insensitive_lookup_after_reload(self, session_id) -> None:
-        set_session_agent(session_id, make_rich_agent("BankBot"))
+        set_session_agent(session_id, make_rich_agent("BankBot"), persist=False)
         await persist_session_agents_to_redis(session_id)
-        _simulate_fresh_worker(session_id)
+        await _simulate_fresh_worker(session_id)
 
         # find_agent_by_name resolves case-insensitively against Redis-loaded data.
         loaded = get_session_agent(session_id, "bankbot")
@@ -290,10 +314,10 @@ class TestSessionAgentRedisRoundTrip:
     @pytest.mark.asyncio
     @pytest.mark.usefixtures("fake_redis")
     async def test_multiple_agents_survive_reload(self, session_id) -> None:
-        set_session_agent(session_id, make_rich_agent("BankBot"))
-        set_session_agent(session_id, make_rich_agent("FraudBot"))
+        set_session_agent(session_id, make_rich_agent("BankBot"), persist=False)
+        set_session_agent(session_id, make_rich_agent("FraudBot"), persist=False)
         await persist_session_agents_to_redis(session_id)
-        _simulate_fresh_worker(session_id)
+        await _simulate_fresh_worker(session_id)
 
         loaded = get_session_agents(session_id)
         assert set(loaded.keys()) == {"BankBot", "FraudBot"}
@@ -301,18 +325,61 @@ class TestSessionAgentRedisRoundTrip:
         _assert_rich_config_preserved(loaded["FraudBot"], name="FraudBot")
 
     @pytest.mark.asyncio
+    async def test_active_agent_persists_and_controls_unnamed_lookup(
+        self, session_id, fake_redis
+    ) -> None:
+        set_session_agent(session_id, make_rich_agent("BankBot"), set_active=True, persist=False)
+        set_session_agent(session_id, make_rich_agent("FraudBot"), set_active=True, persist=False)
+        await persist_session_agents_to_redis(session_id)
+
+        stored = fake_redis.store[f"session:{session_id}"]
+        corememory = json.loads(stored["corememory"])
+        assert corememory[AGENTS_KEY_ACTIVE] == "FraudBot"
+        assert corememory["active_agent"] == "FraudBot"
+
+        await _simulate_fresh_worker(session_id)
+        loaded = get_session_agent(session_id)
+        assert loaded is not None
+        assert loaded.name == "FraudBot"
+
+    def test_multiple_agents_without_active_do_not_use_insertion_order(self, session_id) -> None:
+        set_session_agent(session_id, make_rich_agent("BankBot"), persist=False)
+        set_session_agent(session_id, make_rich_agent("FraudBot"), persist=False)
+        sa._active_session_agents.pop(session_id, None)
+
+        assert get_session_agent(session_id) is None
+
+    @pytest.mark.asyncio
+    async def test_async_remove_is_case_insensitive_and_durable(
+        self, session_id, fake_redis
+    ) -> None:
+        set_session_agent(session_id, make_rich_agent("BankBot"), set_active=True, persist=False)
+        set_session_agent(session_id, make_rich_agent("FraudBot"), set_active=True, persist=False)
+        await persist_session_agents_to_redis(session_id)
+
+        removed = await remove_session_agent_async(session_id, "bankbot", raise_on_failure=True)
+
+        assert removed is True
+        await _simulate_fresh_worker(session_id)
+        assert get_session_agent(session_id, "BankBot") is None
+        loaded = get_session_agent(session_id, "FraudBot")
+        assert loaded is not None
+        assert loaded.name == "FraudBot"
+        assert fake_redis.write_count >= 2
+
+    @pytest.mark.asyncio
     @pytest.mark.usefixtures("fake_redis")
     async def test_resave_overwrites_persisted_voice(self, session_id) -> None:
         agent = make_rich_agent("BankBot")
-        set_session_agent(session_id, agent)
+        set_session_agent(session_id, agent, persist=False)
         await persist_session_agents_to_redis(session_id)
 
         # Re-tune the voice (as Quick Tune would) and persist again.
         agent.voice.name = "en-US-JennyNeural"
-        set_session_agent(session_id, agent)
+        set_session_agent(session_id, agent, persist=False)
         await persist_session_agents_to_redis(session_id)
 
-        _simulate_fresh_worker(session_id)
+        await _simulate_fresh_worker(session_id)
         loaded = get_session_agent(session_id, "BankBot")
         assert loaded.voice.name == "en-US-JennyNeural"
 
@@ -320,7 +387,7 @@ class TestSessionAgentRedisRoundTrip:
     async def test_no_redis_manager_is_safe(self, session_id) -> None:
         # No fake_redis fixture here → _redis_manager is None.
         agent = make_rich_agent("BankBot")
-        set_session_agent(session_id, agent)  # must not raise
+        set_session_agent(session_id, agent, persist=False)  # must not raise
         await persist_session_agents_to_redis(session_id)  # no-op, must not raise
 
         # In-memory copy is still usable on this worker.

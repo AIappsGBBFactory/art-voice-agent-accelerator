@@ -20,7 +20,7 @@ Threads:
 
 Usage:
     from apps.artagent.backend.voice.speech_cascade import (
-        SpeechCascadeHandler,
+        SpeechSDKThread,
         SpeechEvent,
         SpeechEventType,
         record_stt_recognition,
@@ -31,8 +31,6 @@ Note:
 """
 
 # Orchestrator is lightweight - direct import for evaluation use cases
-from .orchestrator import CascadeOrchestratorAdapter, StateKeys
-
 # Metrics are lightweight - direct import
 from .metrics import (
     record_barge_in,
@@ -41,6 +39,7 @@ from .metrics import (
     record_tts_ttfb,
     record_turn_processing,
 )
+from .orchestrator import CascadeOrchestratorAdapter, StateKeys
 
 # Heavy handler components are lazy-loaded to avoid Speech SDK dependencies
 # when only using orchestrator (e.g., in Jupyter notebooks for evaluation)
@@ -48,7 +47,6 @@ _HANDLER_EXPORTS = {
     "BargeInController",
     "ResponseSender",
     "RouteTurnThread",
-    "SpeechCascadeHandler",
     "SpeechEvent",
     "SpeechEventType",
     "SpeechSDKThread",
@@ -61,13 +59,13 @@ def __getattr__(name: str):
     """Lazy import for handler components."""
     if name in _HANDLER_EXPORTS:
         from . import handler
+
         return getattr(handler, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [
     # Handler components (lazy-loaded)
-    "SpeechCascadeHandler",
     "SpeechEvent",
     "SpeechEventType",
     "ThreadBridge",

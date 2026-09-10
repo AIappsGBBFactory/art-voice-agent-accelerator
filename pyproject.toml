@@ -195,6 +195,16 @@ artagent-server = "apps.artagent.backend.main:main"
 [tool.uv]
 # uv will use [project.optional-dependencies].dev automatically with --extra dev
 
+# Security floors for transitive dependencies flagged by Dependabot advisories.
+# These are constraints (not direct requirements): they only raise the minimum
+# resolved version when the package is already pulled in transitively.
+constraint-dependencies = [
+    # CVE-2026-7246 / GHSA-47fr-3ffg-hgmw (transitive via uvicorn, flask, black). Fixed in 8.3.3.
+    "click>=8.3.3",
+    # CVE-2026-54293 & CVE-2026-12243 (transitive via azure-ai-evaluation dev extra). Fixed in 3.10.0.
+    "nltk>=3.10.0",
+]
+
 [tool.uv.sources]
 # Use default PyPI index
 

@@ -47,6 +47,7 @@ import json
 import time
 import uuid
 from collections import deque
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from utils.ml_logging import get_logger
@@ -66,6 +67,16 @@ if TYPE_CHECKING:
     )
 
 logger = get_logger("src.stateful.state_managment")
+
+
+@dataclass
+class _PendingWrite:
+    sequence: int
+    redis_mgr: AzureRedisManager
+    snapshot: dict[str, str]
+    ttl_seconds: int | None
+    background: bool
+    completion: asyncio.Future[Exception | None]
 
 
 class MemoManager:
@@ -162,7 +173,12 @@ class MemoManager:
         self._is_tts_interrupted: bool = False
         self.latency = LatencyTracker()
         self._redis_manager: AzureRedisManager | None = redis_mgr
-        self._pending_persist_task: asyncio.Task | None = None
+        self._pending_persist_task: asyncio.Task[None] | None = None
+        self._persist_queue: deque[_PendingWrite] = deque()
+        self._active_persist: _PendingWrite | None = None
+        self._persist_sequence = 0
+        self._persist_failures: deque[tuple[int, Exception]] = deque()
+        self._persist_writer_error: RuntimeError | None = None
         self._mcp_manager: MCPSessionManager | None = None
         self._turn_sequence: int = 0  # Track turn segments for tool call boundaries
         now = time.time()
@@ -251,7 +267,9 @@ class MemoManager:
 
         Note:
             The returned dictionary contains JSON strings as values, ready
-            for direct storage in Redis hash fields.
+            for direct storage in Redis hash fields. Both fields are captured
+            without yielding on the owning event loop. State must not be
+            mutated from other threads.
         """
         return {
             self._CORE_KEY: self.corememory.to_json(),
@@ -330,6 +348,24 @@ class MemoManager:
                 mm.chatHistory.from_json(data[cls._HISTORY_KEY])
         return mm
 
+    @classmethod
+    async def from_redis_async(cls, session_id: str, redis_mgr: AzureRedisManager) -> MemoManager:
+        """Restore state without blocking the event loop, retaining the Redis manager.
+
+        Uses the same keys, decoding and missing-field defaults as
+        ``from_redis_with_manager``. Redis read errors, invalid JSON and
+        cancellation propagate; only a genuinely absent hash creates new state.
+        """
+        data = await redis_mgr.get_session_data_async(
+            cls.build_redis_key(session_id), raise_on_failure=True
+        )
+        mm = cls(session_id=session_id, redis_mgr=redis_mgr)
+        if cls._CORE_KEY in data:
+            mm.corememory.from_json(data[cls._CORE_KEY])
+        if cls._HISTORY_KEY in data:
+            mm.chatHistory.from_json(data[cls._HISTORY_KEY])
+        return mm
+
     async def persist(self, redis_mgr: AzureRedisManager | None = None) -> None:
         """
         Persist session state to Redis using stored or provided manager.
@@ -357,8 +393,8 @@ class MemoManager:
             ```
 
         Note:
-            This method automatically selects between async and sync
-            persistence based on the current execution context.
+            For a checked durability boundary, use
+            ``persist_to_redis_async(..., raise_on_failure=True)`` instead.
         """
         mgr = redis_mgr or self._redis_manager
         if not mgr:
@@ -395,12 +431,21 @@ class MemoManager:
 
         Note:
             Use the async version (persist_to_redis_async) in async contexts
-            to avoid blocking the event loop.
+            to avoid blocking the event loop. A synchronous write is rejected
+            while this instance has async persistence outstanding.
         """
+        if self._pending_persist_task and self._pending_persist_task.done():
+            self._check_persist_writer(self._pending_persist_task)
+        if self._persist_writer_error is not None:
+            raise self._persist_writer_error
+        if self._pending_persist_task and not self._pending_persist_task.done():
+            raise RuntimeError("Flush pending persistence before a synchronous write")
         key = self.build_redis_key(self.session_id)
-        redis_mgr.store_session_data(key, self.to_redis_dict())
+        if not redis_mgr.store_session_data(key, self.to_redis_dict()):
+            raise RuntimeError(f"Redis write returned failure for session {self.session_id}")
         if ttl_seconds:
-            redis_mgr.redis_client.expire(key, ttl_seconds)
+            if not redis_mgr.redis_client.expire(key, ttl_seconds):
+                raise RuntimeError(f"Redis expiry returned failure for session {self.session_id}")
         logger.info(
             "session.persist session=%s mode=sync history=[%s] ctx=%d",
             self.session_id,
@@ -409,69 +454,132 @@ class MemoManager:
         )
 
     async def persist_to_redis_async(
-        self, redis_mgr: AzureRedisManager, ttl_seconds: int | None = None,
-        *, raise_on_failure: bool = False,
+        self,
+        redis_mgr: AzureRedisManager,
+        ttl_seconds: int | None = None,
+        *,
+        raise_on_failure: bool = False,
     ) -> bool:
         """
-        Asynchronously persist session state to Redis without blocking.
+        Persist a whole-state snapshot through this instance's ordered writer.
 
-        Stores the current session state to Redis using async operations,
-        preventing blocking of the event loop. Handles cancellation gracefully
-        and logs errors without re-raising to avoid crashing callers (unless
-        ``raise_on_failure`` is True).
+        Direct writes are FIFO barriers and are never coalesced. True means this
+        snapshot's write and requested expiry completed. Failure is logged and
+        returns False, or raises when ``raise_on_failure`` is True. Cancelling
+        the caller stops waiting, not the queued or executor-backed Redis write;
+        ``flush_pending_persist`` can subsequently wait for its outcome.
 
-        Args:
-            redis_mgr (AzureRedisManager): Redis connection manager for persistence
-            ttl_seconds (Optional[int]): Time-to-live in seconds for session data.
-                If None, data persists indefinitely.
-            raise_on_failure (bool): When True, raise on write failure instead of
-                silently returning False. Use this in code paths where the caller
-                **must** know whether persistence succeeded (e.g. scenario creation).
-
-        Returns:
-            bool: True if persistence succeeded, False otherwise.
-
-        Raises:
-            asyncio.CancelledError: Re-raised to allow proper cleanup during
-                task cancellation.
-            RuntimeError: Raised when the Redis write returns a failure
-                indicator **and** ``raise_on_failure`` is True.
-
-        Error Handling:
-            - Cancellation errors are always re-raised for proper task cleanup
-            - When ``raise_on_failure`` is False (default), other exceptions are
-              logged but not re-raised to prevent crashing the calling code
-            - Successful operations log session statistics
+        Ordering requires one MemoManager on one event loop. Independent
+        instances/workers writing the same session are not coordinated.
         """
         try:
-            key = self.build_redis_key(self.session_id)
-            success = await redis_mgr.store_session_data_async(key, self.to_redis_dict())
-            if not success:
-                msg = f"Redis write returned failure for session {self.session_id}"
-                logger.error(msg)
-                if raise_on_failure:
-                    raise RuntimeError(msg)
-                return False
-            if ttl_seconds:
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, redis_mgr.redis_client.expire, key, ttl_seconds)
-            logger.info(
-                "session.persist session=%s mode=async history=[%s] ctx=%d",
-                self.session_id,
-                ", ".join(f"{a}:{len(h)}" for a, h in self.histories.items()),
-                len(self.context),
-            )
-            return True
-        except asyncio.CancelledError:
-            logger.debug(f"persist_to_redis_async cancelled for session {self.session_id}")
-            # Re-raise cancellation to allow proper cleanup
-            raise
+            request = self._enqueue_persist(redis_mgr, ttl_seconds, background=False)
+            error = await asyncio.shield(request.completion)
         except Exception as e:
-            logger.error(f"Error persisting session {self.session_id} to Redis: {e}")
+            logger.error("Error submitting persistence for session %s: %s", self.session_id, e)
             if raise_on_failure:
                 raise
-            # Don't re-raise non-cancellation errors to avoid crashing the caller
             return False
+        if error is not None:
+            if raise_on_failure:
+                raise error
+            return False
+        return True
+
+    def _enqueue_persist(
+        self,
+        redis_mgr: AzureRedisManager,
+        ttl_seconds: int | None,
+        *,
+        background: bool,
+    ) -> _PendingWrite:
+        loop = asyncio.get_running_loop()
+        if (
+            self._pending_persist_task
+            and not self._pending_persist_task.done()
+            and self._pending_persist_task.get_loop() is not loop
+        ):
+            raise RuntimeError("Persistence submissions must use the owning event loop")
+        if self._pending_persist_task and self._pending_persist_task.done():
+            self._check_persist_writer(self._pending_persist_task)
+        if self._persist_writer_error is not None:
+            raise self._persist_writer_error
+        # Serialize both fields before yielding, never from the executor.
+        snapshot = self.to_redis_dict()
+        if background and self._persist_queue:
+            pending = self._persist_queue[-1]
+            if (
+                pending.background
+                and pending.redis_mgr is redis_mgr
+                and pending.ttl_seconds == ttl_seconds
+            ):
+                pending.snapshot = snapshot
+                return pending
+
+        self._persist_sequence += 1
+        request = _PendingWrite(
+            sequence=self._persist_sequence,
+            redis_mgr=redis_mgr,
+            snapshot=snapshot,
+            ttl_seconds=ttl_seconds,
+            background=background,
+            completion=loop.create_future(),
+        )
+        self._persist_queue.append(request)
+        if self._pending_persist_task is None or self._pending_persist_task.done():
+            self._pending_persist_task = asyncio.create_task(
+                self._drain_persist_queue(), name=f"persist_session_{self.session_id}"
+            )
+            self._pending_persist_task.add_done_callback(self._check_persist_writer)
+        return request
+
+    def _check_persist_writer(self, task: asyncio.Task[None]) -> None:
+        if self._persist_writer_error is not None:
+            return
+        if not task.cancelled() and task.exception() is None:
+            return
+        # Forced cancellation (e.g. loop shutdown) cannot retract executor I/O.
+        # Fail closed rather than let a replacement writer overtake that I/O.
+        error = RuntimeError(
+            f"Persistence writer stopped for session {self.session_id}; "
+            "write outcome is unconfirmed and this instance cannot submit further writes"
+        )
+        self._persist_writer_error = error
+        logger.error("%s", error)
+        requests = list(self._persist_queue)
+        if self._active_persist is not None:
+            requests.insert(0, self._active_persist)
+        for request in requests:
+            self._persist_failures.append((request.sequence, error))
+            request.completion.set_result(error)
+        self._persist_queue.clear()
+        self._active_persist = None
+
+    async def _write_snapshot(self, request: _PendingWrite) -> None:
+        key = self.build_redis_key(self.session_id)
+        if not await request.redis_mgr.store_session_data_async(key, request.snapshot):
+            raise RuntimeError(f"Redis write returned failure for session {self.session_id}")
+        if request.ttl_seconds:
+            expired = await asyncio.get_running_loop().run_in_executor(
+                None, request.redis_mgr.redis_client.expire, key, request.ttl_seconds
+            )
+            if not expired:
+                raise RuntimeError(f"Redis expiry returned failure for session {self.session_id}")
+        logger.info("session.persist session=%s mode=async", self.session_id)
+
+    async def _drain_persist_queue(self) -> None:
+        while self._persist_queue:
+            request = self._persist_queue.popleft()
+            self._active_persist = request
+            error = None
+            try:
+                await self._write_snapshot(request)
+            except Exception as exc:
+                error = exc
+                self._persist_failures.append((request.sequence, exc))
+                logger.error("Error persisting session %s to Redis: %s", self.session_id, exc)
+            request.completion.set_result(error)
+            self._active_persist = None
 
     async def persist_background(
         self,
@@ -479,96 +587,93 @@ class MemoManager:
         ttl_seconds: int | None = None,
     ) -> None:
         """
-        Schedule background persistence to Redis without blocking.
+        Capture state now and queue its write without waiting for Redis I/O.
 
-        Creates an asyncio task to persist session state, allowing the
-        calling operation to continue without waiting for Redis I/O. Ideal for
-        hot path operations where latency is critical.
+        Only adjacent, not-started background snapshots with the same Redis
+        manager and TTL coalesce. Active writes and direct barriers are never
+        cancelled or superseded. Missing managers and serialization errors
+        raise at submission; write errors are logged and surfaced by
+        ``flush_pending_persist``.
+        """
+        self.schedule_persist(redis_mgr, ttl_seconds)
 
-        Implements task deduplication: if a previous persist is still in flight,
-        it is cancelled before starting a new one. This prevents queue buildup
-        during rapid state changes.
+    def schedule_persist(
+        self,
+        redis_mgr: AzureRedisManager | None = None,
+        ttl_seconds: int | None = None,
+    ) -> None:
+        """Submit a background snapshot immediately from an owning-loop callback.
 
-        Args:
-            redis_mgr (Optional[AzureRedisManager]): Redis manager to use.
-                If None, uses the stored manager from initialization.
-            ttl_seconds (Optional[int]): Time-to-live in seconds for session data.
-
-        Example:
-            ```python
-            # In hot path - non-blocking
-            await manager.persist_background()  # Returns immediately
-
-            # Traditional blocking approach (avoid in hot path)
-            await manager.persist()  # Waits for Redis I/O
-            ```
-
-        Note:
-            - Background tasks are fire-and-forget with error logging.
-            - Previous pending persists are cancelled to avoid queue buildup.
-            - Use regular persist() when you need to handle persistence errors.
-            - Call cancel_pending_persist() on session end for cleanup.
+        This synchronous submission has the same coalescing/error contract as
+        ``persist_background``. A running event loop is required. Capturing and
+        enqueueing happen before return, so an immediate flush includes this
+        snapshot without needing a separately scheduled submission task.
         """
         mgr = redis_mgr or self._redis_manager
         if not mgr:
-            logger.warning(
-                f"[PERF] No Redis manager available for background persistence of session {self.session_id}"
-            )
-            return
-
-        # Cancel previous persist if still running (deduplication)
-        if self._pending_persist_task and not self._pending_persist_task.done():
-            self._pending_persist_task.cancel()
-            logger.debug(
-                f"[PERF] Cancelled pending persist for session {self.session_id} (superseded)"
-            )
-
-        # Create background task for non-blocking persistence
-        self._pending_persist_task = asyncio.create_task(
-            self._background_persist_task(mgr, ttl_seconds),
-            name=f"persist_session_{self.session_id}",
-        )
-
-    async def _background_persist_task(
-        self, redis_mgr: AzureRedisManager, ttl_seconds: int | None = None
-    ) -> None:
-        """Internal background task for session persistence."""
-        try:
-            await self.persist_to_redis_async(redis_mgr, ttl_seconds)
-        except asyncio.CancelledError:
-            # Expected when superseded by a newer persist request
-            logger.debug(f"[PERF] Background persist cancelled for session {self.session_id}")
-        except Exception as e:
-            logger.error(f"[PERF] Background persistence failed for session {self.session_id}: {e}")
+            raise ValueError("No Redis manager available")
+        self._enqueue_persist(mgr, ttl_seconds, background=True)
 
     def cancel_pending_persist(self) -> bool:
+        """Withdraw only background snapshots whose Redis writes have not started.
+
+        Returns True if any queued snapshot was withdrawn. Active writes and
+        direct awaited writes are left intact. Withdrawal is reported as a
+        failure by the next flush, not mistaken for durability. For session
+        cleanup prefer a final checked persist followed by a checked flush.
         """
-        Cancel any pending background persist task.
-
-        Should be called during session cleanup to ensure no orphaned tasks
-        remain after the session ends. Safe to call even if no task is pending.
-
-        Returns:
-            bool: True if a task was cancelled, False if no task was pending.
-
-        Example:
-            ```python
-            # During session cleanup
-            async def end_session(manager: MemoManager):
-                cancelled = manager.cancel_pending_persist()
-                if cancelled:
-                    logger.info("Cancelled pending persist on session end")
-                # Final sync persist to ensure state is saved
-                await manager.persist_to_redis_async(redis_mgr)
-            ```
-        """
-        if self._pending_persist_task and not self._pending_persist_task.done():
-            self._pending_persist_task.cancel()
-            logger.debug(
-                f"[PERF] Cancelled pending persist for session {self.session_id} (cleanup)"
+        retained: deque[_PendingWrite] = deque()
+        cancelled = False
+        for request in self._persist_queue:
+            if request.background:
+                error = RuntimeError(f"Pending persistence withdrawn for session {self.session_id}")
+                self._persist_failures.append((request.sequence, error))
+                request.completion.set_result(error)
+                cancelled = True
+            else:
+                retained.append(request)
+        self._persist_queue = retained
+        if cancelled:
+            logger.warning(
+                "Pending background persistence withdrawn for session %s", self.session_id
             )
-            return True
-        return False
+        return cancelled
+
+    async def flush_pending_persist(self, *, raise_on_failure: bool = False) -> bool:
+        """Wait for submitted writes and acknowledge their recorded failures.
+
+        Captures a boundary at entry; later submissions need a subsequent
+        flush. A coalesced pending snapshot may include newer state. All writes
+        at the boundary finish before returning False or raising the first
+        failure. Previously completed failures are reported once per flush
+        boundary, including failures already returned to direct callers.
+
+        Cancellation stops only this waiter and does not acknowledge failures.
+        This method does not capture unsaved state or prevent new submissions.
+        Stop producers, await a final checked persist, then flush before
+        releasing Redis or closing the event loop.
+        """
+        if self._pending_persist_task and self._pending_persist_task.done():
+            self._check_persist_writer(self._pending_persist_task)
+        boundary = self._persist_sequence
+        requests = list(self._persist_queue)
+        if self._active_persist is not None:
+            requests.insert(0, self._active_persist)
+        errors = [error for sequence, error in self._persist_failures if sequence <= boundary]
+        for request in requests:
+            error = await asyncio.shield(request.completion)
+            if error is not None:
+                errors.append(error)
+        if self._persist_writer_error is not None:
+            errors.append(self._persist_writer_error)
+        self._persist_failures = deque(
+            (sequence, error) for sequence, error in self._persist_failures if sequence > boundary
+        )
+        if errors:
+            if raise_on_failure:
+                raise errors[0]
+            return False
+        return True
 
     # --- TTS Interrupt ------------------------------------------------
     def is_tts_interrupted(self) -> bool:
@@ -1610,7 +1715,8 @@ class MemoManager:
         """Set a specific context value in both local state and Redis."""
         try:
             self.context[key] = value
-            await self.persist_to_redis_async(redis_mgr)
+            if not await self.persist_to_redis_async(redis_mgr):
+                return False
             logger.debug(f"Set live context value '{key}' = {value} for session {self.session_id}")
             return True
         except Exception as e:

@@ -161,7 +161,7 @@ class CallEventProcessor:
             await self._mark_recording_finished(call_connection_id)
 
         # Create event context
-        context = self._create_event_context(event, call_connection_id, request_state)
+        context = await self._create_event_context(event, call_connection_id, request_state)
 
         # Get handlers for this event type
         handlers = self._handlers.get(event.type, [])
@@ -217,7 +217,7 @@ class CallEventProcessor:
 
         return None
 
-    def _create_event_context(
+    async def _create_event_context(
         self, event: CloudEvent, call_connection_id: str, request_state: Any
     ) -> CallEventContext:
         """
@@ -234,16 +234,9 @@ class CallEventProcessor:
         """
         # Extract dependencies from request state
         memo_manager = None
-        if hasattr(request_state, "redis") and request_state.redis:
-            try:
-                from src.stateful.state_managment import MemoManager
+        from apps.artagent.backend.src.orchestration.session_memory import session_memo
 
-                memo_manager = MemoManager.from_redis(
-                    session_id=call_connection_id, redis_mgr=request_state.redis
-                )
-            except Exception:
-                # Skip memo manager if Redis not available (e.g., in demo)
-                pass
+        memo_manager = await session_memo(call_connection_id, getattr(request_state, "redis", None))
 
         return CallEventContext(
             event=event,

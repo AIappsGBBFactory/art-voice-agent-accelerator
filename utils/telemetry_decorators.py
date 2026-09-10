@@ -997,6 +997,7 @@ class ConversationTurnSpan:
         turn_wall_ms: float | None = None,
         agent_name: str | None = None,
         latency_anchor: str | None = None,
+        model: str | None = None,
     ) -> None:
         """Stamp the complete, structured per-turn latency profile on the
         ``voice.turn.N.total`` span.
@@ -1057,6 +1058,13 @@ class ConversationTurnSpan:
             self.span.set_attribute("turn.latency_anchor", latency_anchor)
         if agent_name:
             self.span.set_attribute("turn.agent_name", agent_name)
+        # The generative model that actually processed this turn (VoiceLive model
+        # bound at connect, or the cascade deployment resolved per turn). Stamped
+        # here so selected-vs-processed model can be validated straight off the
+        # headline turn span, alongside gen_ai.request.model for GenAI-semconv joins.
+        if model:
+            self.span.set_attribute("turn.model", model)
+            self.span.set_attribute("gen_ai.request.model", model)
 
         # Single scannable, structured event carrying the full latency profile.
         summary_attrs: dict[str, Any] = dict(latencies)
@@ -1064,5 +1072,7 @@ class ConversationTurnSpan:
             summary_attrs["turn.latency_anchor"] = latency_anchor
         if agent_name:
             summary_attrs["turn.agent_name"] = agent_name
+        if model:
+            summary_attrs["turn.model"] = model
         self.span.add_event("turn.kpi_summary", attributes=summary_attrs)
 

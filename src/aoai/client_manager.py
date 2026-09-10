@@ -23,6 +23,7 @@ class AoaiClientManager:
         session_manager: Any | None = None,
         factory: Callable[[], Any] | None = None,
         initial_client: Any | None = None,
+        async_factory: Callable[[], Any] | None = None,
     ) -> None:
         self._session_manager = session_manager
         self._factory = factory or create_azure_openai_client
@@ -33,6 +34,32 @@ class AoaiClientManager:
             datetime.now(UTC) if initial_client is not None else None
         )
         self._refresh_count: int = 1 if initial_client is not None else 0
+        self._async_factory = async_factory
+        self._async_client: Any | None = None
+        self._async_lock = asyncio.Lock()
+        self._closed = False
+
+    async def get_async_client(self) -> Any:
+        """Return the application-owned streaming client without changing sync consumers."""
+        async with self._async_lock:
+            if self._closed:
+                raise RuntimeError("Azure OpenAI client manager is closed")
+            if self._async_client is None:
+                factory = self._async_factory
+                if factory is None:
+                    from .client import create_async_azure_openai_client
+
+                    factory = create_async_azure_openai_client
+                self._async_client = factory()
+            return self._async_client
+
+    async def aclose(self) -> None:
+        """Close the async HTTP transport after active voice sessions have stopped."""
+        async with self._async_lock:
+            self._closed = True
+            if self._async_client is not None:
+                await self._async_client.close()
+                self._async_client = None
 
     async def get_client(self, *, session_id: str | None = None) -> Any:
         """Return the cached client, creating it on first request."""

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 import uuid
@@ -109,6 +110,12 @@ class PersistentLatency:
         run_id: str | None = None,
         meta: dict[str, Any] | None = None,
     ) -> StageSample | None:
+        """Record a sample, queuing persistence on-loop or writing synchronously off-loop.
+
+        On an event loop, the snapshot is submitted before this method returns;
+        the session's final flush observes write failures and ensures durability.
+        Submission errors and off-loop persistence failures propagate.
+        """
         rid = run_id or self.current_run_id()
         if not rid:
             logger.warning("[Latency] stop(%s) called but no run_id; creating new run", stage)
@@ -120,11 +127,12 @@ class PersistentLatency:
         end = _now()
         sample = StageSample(stage=stage, start=start, end=end, dur=end - start, meta=meta or {})
         self._append_sample(rid, sample)
-        # persist immediately for live dashboards
         try:
+            asyncio.get_running_loop()
+        except RuntimeError:
             self.cm.persist_to_redis(redis_mgr)
-        except Exception as e:
-            logger.error("Failed to persist latency to Redis: %s", e)
+        else:
+            self.cm.schedule_persist(redis_mgr)
         logger.info("[Latency] %s run=%s: %.3f s", stage, rid, sample.dur)
         return sample
 

@@ -27,36 +27,56 @@ Endpoints:
 
 from __future__ import annotations
 
-import json
 import re
 import time
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
-
 from apps.artagent.backend.registries.agentstore.loader import discover_agents
+from apps.artagent.backend.registries.definitions import (
+    decode_definition,
+    definition_fields,
+    definition_payload,
+)
+from apps.artagent.backend.registries.definitions import (
+    definition_payload as _agent_defaults_to_dict,
+)
+from apps.artagent.backend.registries.definitions import (
+    definition_payload as _handoff_to_dict,
+)
+from apps.artagent.backend.registries.definitions import (
+    definition_payload as _scenario_to_config_payload,
+)
 from apps.artagent.backend.registries.scenariostore.loader import (
     AgentOverride,
+    GenericHandoffConfig,
     HandoffConfig,
     ScenarioConfig,
-    _SCENARIOS_DIR,
     list_scenarios,
     load_scenario,
 )
 from apps.artagent.backend.registries.toolstore.registry import get_tool_definition
+from apps.artagent.backend.src.orchestration.naming import (
+    normalize_agent_name as _normalize_agent_name,
+)
+from apps.artagent.backend.src.orchestration.naming import (
+    normalize_agent_names as _normalize_agent_names,
+)
+from apps.artagent.backend.src.orchestration.naming import (
+    normalize_scenario_name as _normalize_scenario_name,
+)
 from apps.artagent.backend.src.orchestration.session_agents import (
     list_session_agents,
     list_session_agents_by_session,
 )
 from apps.artagent.backend.src.orchestration.session_scenarios import (
     get_session_scenario,
-    get_session_scenarios,
     list_session_scenarios,
     list_session_scenarios_by_session,
-    remove_session_scenario,
+    remove_session_scenario_async,
     set_session_scenario_async,
 )
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field, create_model
 from utils.ml_logging import get_logger
 
 logger = get_logger("v1.scenario_builder")
@@ -69,70 +89,44 @@ router = APIRouter()
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class HandoffConfigSchema(BaseModel):
+class HandoffConfigSchema(
+    create_model("HandoffDefinitionSchema", __base__=BaseModel, **definition_fields(HandoffConfig))
+):
     """Configuration for a handoff route - a directed edge in the agent graph."""
 
     from_agent: str = Field(..., description="Source agent initiating the handoff")
     to_agent: str = Field(..., description="Target agent receiving the handoff")
     tool: str = Field(..., description="Handoff tool name that triggers this route")
-    type: str = Field(
-        default="announced",
-        description="'discrete' (silent) or 'announced' (greet on switch)",
-    )
-    share_context: bool = Field(
-        default=True, description="Whether to pass conversation context"
-    )
-    handoff_condition: str = Field(
-        default="",
-        description="User-defined condition describing when to trigger this handoff. "
-        "This text is injected into the source agent's system prompt.",
-    )
-    context_vars: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Extra context variables to pass to the target agent during handoff.",
-    )
 
 
-class AgentOverrideSchema(BaseModel):
+class AgentOverrideSchema(
+    create_model(
+        "AgentOverrideDefinitionSchema", __base__=BaseModel, **definition_fields(AgentOverride)
+    )
+):
     """Override settings for a specific agent in a scenario."""
 
-    greeting: str | None = Field(default=None, description="Custom greeting override")
-    return_greeting: str | None = Field(
-        default=None, description="Custom return greeting override"
+
+class GenericHandoffConfigSchema(
+    create_model(
+        "GenericHandoffDefinitionSchema",
+        __base__=BaseModel,
+        **definition_fields(GenericHandoffConfig),
     )
-    description: str | None = Field(
-        default=None, description="Custom description override"
-    )
-    template_vars: dict[str, Any] = Field(
-        default_factory=dict, description="Template variable overrides"
-    )
-    voice_name: str | None = Field(default=None, description="Voice name override")
-    voice_rate: str | None = Field(default=None, description="Voice rate override")
+):
+    """Configuration for the shared handoff_to_agent tool."""
 
 
-class DynamicScenarioConfig(BaseModel):
+class DynamicScenarioConfig(
+    create_model(
+        "ScenarioDefinitionSchema", __base__=BaseModel, **definition_fields(ScenarioConfig)
+    )
+):
     """Configuration for creating a dynamic scenario."""
 
-    name: str = Field(
-        ..., min_length=1, max_length=64, description="Scenario display name"
-    )
-    description: str = Field(
-        default="", max_length=512, description="Scenario description"
-    )
-    icon: str = Field(
-        default="🎭", max_length=8, description="Emoji icon for the scenario"
-    )
-    agents: list[str] = Field(
-        default_factory=list,
-        description="List of agent names to include (empty = all agents)",
-    )
-    start_agent: str | None = Field(
-        default=None, description="Starting agent for the scenario"
-    )
-    handoff_type: str = Field(
-        default="announced",
-        description="Default handoff behavior ('announced' or 'discrete')",
-    )
+    name: str = Field(..., min_length=1, max_length=64, description="Scenario display name")
+    description: str = Field(default=ScenarioConfig.description, max_length=512)
+    icon: str = Field(default=ScenarioConfig.icon, max_length=8)
     handoffs: list[HandoffConfigSchema] = Field(
         default_factory=list,
         description="List of handoff configurations (directed edges)",
@@ -140,11 +134,8 @@ class DynamicScenarioConfig(BaseModel):
     agent_defaults: AgentOverrideSchema | None = Field(
         default=None, description="Default overrides applied to all agents"
     )
-    global_template_vars: dict[str, Any] = Field(
-        default_factory=dict, description="Global template variables for all agents"
-    )
-    tools: list[str] = Field(
-        default_factory=list, description="Additional tools to register for scenario"
+    generic_handoff: GenericHandoffConfigSchema | None = Field(
+        default=None, description="Dynamic handoff_to_agent configuration"
     )
 
 
@@ -171,11 +162,13 @@ class ScenarioTemplateInfo(BaseModel):
     handoff_type: str
     handoffs: list[dict[str, Any]]
     global_template_vars: dict[str, Any]
+    generic_handoff: dict[str, Any] = Field(default_factory=dict)
+    agent_defaults: dict[str, Any] | None = None
 
 
 class ToolInfo(BaseModel):
     """Tool information with name and description."""
-    
+
     name: str
     description: str = ""
 
@@ -185,7 +178,9 @@ class AgentInfo(BaseModel):
 
     name: str
     description: str
-    original_name: str | None = None  # Original unmodified agent name for matching (before any display modifications)
+    original_name: str | None = (
+        None  # Original unmodified agent name for matching (before any display modifications)
+    )
     greeting: str | None = None
     return_greeting: str | None = None
     tools: list[str] = []  # Keep for backward compatibility
@@ -204,17 +199,8 @@ class AgentInfo(BaseModel):
     voice: dict[str, Any] | None = None  # Voice/TTS config
 
 
-_JINJA_VAR_RE = re.compile(
-    r"\{\{\s*([a-zA-Z0-9_.]+)(?:\s*\|[^}]*)?\s*\}\}"
-)
+_JINJA_VAR_RE = re.compile(r"\{\{\s*([a-zA-Z0-9_.]+)(?:\s*\|[^}]*)?\s*\}\}")
 _GET_VAR_RE = re.compile(r"([a-zA-Z0-9_.]+)\.get\(['\"]([a-zA-Z0-9_.]+)['\"]\)")
-
-# Import centralized naming utilities
-from apps.artagent.backend.src.orchestration.naming import (
-    normalize_agent_name as _normalize_agent_name,
-    normalize_agent_names as _normalize_agent_names,
-    normalize_scenario_name as _normalize_scenario_name,
-)
 
 
 def extract_prompt_vars(prompt_template: str | None) -> list[str]:
@@ -253,6 +239,8 @@ def extract_model_config(agent: Any) -> dict[str, Any] | None:
     model = getattr(agent, "model", None)
     if model is None:
         return None
+    if hasattr(model, "to_dict"):
+        return model.to_dict()
     if hasattr(model, "__dict__"):
         return {
             "deployment_id": getattr(model, "deployment_id", None),
@@ -267,6 +255,8 @@ def extract_mode_model_config(agent: Any, mode: str) -> dict[str, Any] | None:
     model = getattr(agent, mode, None)
     if model is None:
         return None
+    if hasattr(model, "to_dict"):
+        return model.to_dict()
     if hasattr(model, "__dict__"):
         return {
             "deployment_id": getattr(model, "deployment_id", None),
@@ -281,14 +271,113 @@ def extract_voice_config(agent: Any) -> dict[str, Any] | None:
     voice = getattr(agent, "voice", None)
     if voice is None:
         return None
+    if hasattr(voice, "to_dict"):
+        return voice.to_dict()
     if hasattr(voice, "__dict__"):
         return {
             "voice_name": getattr(voice, "voice_name", None),
-            "display_name": getattr(voice, "display_name", None) or getattr(voice, "voice_name", None),
+            "display_name": getattr(voice, "display_name", None)
+            or getattr(voice, "voice_name", None),
             "provider": getattr(voice, "provider", None),
             "language": getattr(voice, "language", None),
         }
     return None
+
+
+def _generic_handoff_to_dict(config: GenericHandoffConfig | None) -> dict[str, Any]:
+    """Serialize generic handoff settings for API responses and Redis payloads."""
+    return definition_payload(config or GenericHandoffConfig())
+
+
+def _build_agent_defaults(config: DynamicScenarioConfig) -> AgentOverride | None:
+    """Build AgentOverride from the request schema."""
+    if not config.agent_defaults:
+        return None
+    return AgentOverride.from_dict(config.agent_defaults.model_dump())
+
+
+def _build_generic_handoff(
+    config: DynamicScenarioConfig,
+    existing: ScenarioConfig | None = None,
+) -> GenericHandoffConfig:
+    """Build GenericHandoffConfig from the request schema."""
+    if not config.generic_handoff:
+        if existing is not None:
+            return existing.generic_handoff
+        return GenericHandoffConfig(
+            enabled=True,
+            default_type=config.handoff_type,
+            share_context=True,
+            require_client_id=False,
+        )
+    data = config.generic_handoff.model_dump()
+    data["allowed_targets"] = _normalize_agent_names(data["allowed_targets"])
+    return GenericHandoffConfig.from_dict(data)
+
+
+def _build_handoffs(config: DynamicScenarioConfig) -> list[HandoffConfig]:
+    """Build normalized handoff route dataclasses from the request schema."""
+    handoffs: list[HandoffConfig] = []
+    for h in config.handoffs:
+        normalized_from = _normalize_agent_name(h.from_agent)
+        normalized_to = _normalize_agent_name(h.to_agent)
+        handoffs.append(
+            HandoffConfig.from_dict(
+                {
+                    **h.model_dump(),
+                    "from_agent": normalized_from or "",
+                    "to_agent": normalized_to or "",
+                }
+            )
+        )
+    return handoffs
+
+
+def _validate_scenario_references(
+    *,
+    agents: list[str],
+    start_agent: str | None,
+    handoffs: list[HandoffConfig],
+    generic_handoff: GenericHandoffConfig,
+    all_valid_keys: set[str],
+) -> None:
+    """Validate scenario agent references without changing handoff policy."""
+    scenario_keys = {agent.lower() for agent in agents}
+    allowed_scope = scenario_keys or all_valid_keys
+
+    def _invalid(names: list[str]) -> list[str]:
+        return [
+            name
+            for name in names
+            if name and name.lower() not in allowed_scope and name.lower() not in all_valid_keys
+        ]
+
+    if start_agent:
+        if agents and start_agent.lower() not in scenario_keys:
+            raise HTTPException(
+                status_code=400,
+                detail=f"start_agent '{start_agent}' must be in agents list",
+            )
+        if start_agent.lower() not in all_valid_keys:
+            raise HTTPException(
+                status_code=400,
+                detail=f"start_agent '{start_agent}' not found in registry or session agents",
+            )
+
+    route_refs = [name for handoff in handoffs for name in (handoff.from_agent, handoff.to_agent)]
+    invalid_route_refs = _invalid(route_refs)
+    if invalid_route_refs:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid handoff agent references: {invalid_route_refs}",
+        )
+
+    invalid_targets = _invalid(generic_handoff.allowed_targets)
+    if invalid_targets:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid generic_handoff allowed_targets: {invalid_targets}",
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -327,19 +416,10 @@ async def list_scenario_templates() -> dict[str, Any]:
                     agents=scenario.agents,
                     start_agent=scenario.start_agent,
                     handoff_type=scenario.handoff_type,
-                    handoffs=[
-                        {
-                            "from_agent": h.from_agent,
-                            "to_agent": h.to_agent,
-                            "tool": h.tool,
-                            "type": h.type,
-                            "share_context": h.share_context,
-                            "handoff_condition": h.handoff_condition,
-                            "context_vars": h.context_vars or {},
-                        }
-                        for h in scenario.handoffs
-                    ],
+                    handoffs=[_handoff_to_dict(h) for h in scenario.handoffs],
                     global_template_vars=scenario.global_template_vars,
+                    generic_handoff=_generic_handoff_to_dict(scenario.generic_handoff),
+                    agent_defaults=_agent_defaults_to_dict(scenario.agent_defaults),
                 )
             )
 
@@ -380,37 +460,7 @@ async def get_scenario_template(template_id: str) -> dict[str, Any]:
         "status": "success",
         "template": {
             "id": template_id,
-            "name": scenario.name,
-            "description": scenario.description,
-            "icon": scenario.icon,
-            "agents": scenario.agents,
-            "start_agent": scenario.start_agent,
-            "handoff_type": scenario.handoff_type,
-            "handoffs": [
-                {
-                    "from_agent": h.from_agent,
-                    "to_agent": h.to_agent,
-                    "tool": h.tool,
-                    "type": h.type,
-                    "share_context": h.share_context,
-                    "handoff_condition": h.handoff_condition,
-                    "context_vars": h.context_vars or {},
-                }
-                for h in scenario.handoffs
-            ],
-            "global_template_vars": scenario.global_template_vars,
-            "agent_defaults": (
-                {
-                    "greeting": scenario.agent_defaults.greeting,
-                    "return_greeting": scenario.agent_defaults.return_greeting,
-                    "description": scenario.agent_defaults.description,
-                    "template_vars": scenario.agent_defaults.template_vars,
-                    "voice_name": scenario.agent_defaults.voice_name,
-                    "voice_rate": scenario.agent_defaults.voice_rate,
-                }
-                if scenario.agent_defaults
-                else None
-            ),
+            **_scenario_to_config_payload(scenario),
         },
     }
 
@@ -428,9 +478,12 @@ async def list_available_agents(session_id: str | None = None) -> dict[str, Any]
 
     Returns agent information for building scenario orchestration graphs.
     Includes both static agents from YAML files and dynamic session agents.
-    
+
     If session_id is provided, only returns session agents for that specific session.
     """
+    from apps.artagent.backend.src.orchestration.session_memory import prime_session_definitions
+
+    await prime_session_definitions(session_id)
     start = time.time()
 
     def get_tool_details(tool_names: list[str]) -> list[ToolInfo]:
@@ -468,8 +521,7 @@ async def list_available_agents(session_id: str | None = None) -> dict[str, Any]
                 prompt_full=prompt_template,
                 prompt_vars=prompt_vars,
                 handoff_context_vars=handoff_context_vars,
-                is_entry_point=name.lower() == "concierge"
-                or "concierge" in name.lower(),
+                is_entry_point=name.lower() == "concierge" or "concierge" in name.lower(),
                 is_session_agent=False,
                 session_id=None,
                 model=extract_model_config(agent),
@@ -482,27 +534,31 @@ async def list_available_agents(session_id: str | None = None) -> dict[str, Any]
     # Get dynamic session agents - use optimized function if filtering by session
     session_agents_added = 0
     session_agent_names = set()  # Track names of session agents for replacement logic
-    
+
     if session_id:
         # Efficient: only get agents for this specific session
         session_agents_dict = list_session_agents_by_session(session_id)
-        
+
         # First pass: collect session agent names
         session_agent_names = {agent.name for agent in session_agents_dict.values()}
-        
+
         # Remove base agents that will be overridden by session agents
         # Session agents with same name REPLACE base agents, not duplicate them
         agents_list = [a for a in agents_list if a.name not in session_agent_names]
-        
-        for agent_name, agent in session_agents_dict.items():
+
+        for _agent_name, agent in session_agents_dict.items():
             # Session agent replaces base agent - use original name (no suffix)
             display_name = agent.name
-            original_name = agent.name  # Store original name before any modification for frontend matching
+            original_name = (
+                agent.name
+            )  # Store original name before any modification for frontend matching
 
             tool_names = agent.tool_names if hasattr(agent, "tool_names") else []
             prompt_template = getattr(agent, "prompt_template", None)
             prompt_vars = extract_prompt_vars(prompt_template)
-            handoff_context_vars = [var for var in prompt_vars if var.startswith("handoff_context.")]
+            handoff_context_vars = [
+                var for var in prompt_vars if var.startswith("handoff_context.")
+            ]
             prompt_preview = build_prompt_preview(prompt_template)
             agents_list.append(
                 AgentInfo(
@@ -536,11 +592,13 @@ async def list_available_agents(session_id: str | None = None) -> dict[str, Any]
             # Parse the composite key to extract session_id
             parts = composite_key.split(":", 1)
             agent_session_id = parts[0] if len(parts) > 1 else composite_key
-            
+
             # Check if this session agent overrides a base agent
             existing_names = {a.name for a in agents_list}
             agent_name = agent.name
-            original_name = agent.name  # Store original name before any modification for frontend matching
+            original_name = (
+                agent.name
+            )  # Store original name before any modification for frontend matching
 
             # In global view (no session filter), suffix with session ID to show it's an override
             if agent_name in existing_names:
@@ -549,13 +607,16 @@ async def list_available_agents(session_id: str | None = None) -> dict[str, Any]
             tool_names = agent.tool_names if hasattr(agent, "tool_names") else []
             prompt_template = getattr(agent, "prompt_template", None)
             prompt_vars = extract_prompt_vars(prompt_template)
-            handoff_context_vars = [var for var in prompt_vars if var.startswith("handoff_context.")]
+            handoff_context_vars = [
+                var for var in prompt_vars if var.startswith("handoff_context.")
+            ]
             prompt_preview = build_prompt_preview(prompt_template)
             agents_list.append(
                 AgentInfo(
                     name=agent_name,
                     original_name=original_name,
-                    description=agent.description or f"Dynamic agent for session {agent_session_id[:8]}",
+                    description=agent.description
+                    or f"Dynamic agent for session {agent_session_id[:8]}",
                     greeting=agent.greeting,
                     return_greeting=getattr(agent, "return_greeting", None),
                     tools=tool_names,
@@ -605,28 +666,65 @@ async def get_default_config() -> dict[str, Any]:
     # Combine agent names
     agent_names = list(agents_registry.keys())
     # session_agents format: {"{session_id}:{agent_name}": agent}
-    for composite_key, agent in session_agents.items():
+    for _composite_key, agent in session_agents.items():
         if agent.name not in agent_names:
             agent_names.append(agent.name)
 
     return {
         "status": "success",
-        "defaults": {
-            "name": "Custom Scenario",
-            "description": "",
-            "agents": [],  # Empty = all agents
-            "start_agent": agent_names[0] if agent_names else None,
-            "handoff_type": "announced",
-            "handoffs": [],
-            "global_template_vars": {
+        "defaults": DynamicScenarioConfig(
+            name="Custom Scenario",
+            start_agent=agent_names[0] if agent_names else None,
+            global_template_vars={
                 "company_name": "ART Voice Agent",
                 "industry": "general",
             },
-            "agent_defaults": None,
-        },
+        ).model_dump(),
         "available_agents": agent_names,
         "handoff_types": ["announced", "discrete"],
     }
+
+
+def _build_session_scenario(
+    config: DynamicScenarioConfig, session_id: str, *, existing: ScenarioConfig | None = None
+) -> ScenarioConfig:
+    """Apply builder aliases/reference checks over the canonical definition codec."""
+    name = _normalize_scenario_name(config.name)
+    if not name:
+        raise HTTPException(status_code=400, detail="Scenario name is required")
+    agents = _normalize_agent_names(config.agents)
+    start_agent = _normalize_agent_name(config.start_agent)
+    registry = discover_agents()
+    valid_keys = {key.lower() for key in registry} | {
+        key.lower() for key in list_session_agents_by_session(session_id)
+    }
+    invalid_agents = [agent for agent in agents if agent.lower() not in valid_keys]
+    if invalid_agents:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid agents: {invalid_agents}. Available: {list(registry)}",
+        )
+    generic_handoff = _build_generic_handoff(config, existing)
+    handoffs = _build_handoffs(config)
+    _validate_scenario_references(
+        agents=agents,
+        start_agent=start_agent,
+        handoffs=handoffs,
+        generic_handoff=generic_handoff,
+        all_valid_keys=valid_keys,
+    )
+    return decode_definition(
+        ScenarioConfig,
+        {
+            **config.model_dump(),
+            "name": name,
+            "agents": agents,
+            "start_agent": start_agent,
+            "agent_defaults": definition_payload(_build_agent_defaults(config)),
+            "generic_handoff": definition_payload(generic_handoff),
+            "handoffs": definition_payload(handoffs),
+        },
+    )
 
 
 @router.post(
@@ -647,84 +745,11 @@ async def create_dynamic_scenario(
     This scenario will be used instead of the default for this session.
     The configuration is stored in memory and can be modified at runtime.
     """
-    start = time.time()
+    from apps.artagent.backend.src.orchestration.session_memory import prime_session_definitions
 
-    normalized_scenario_name = _normalize_scenario_name(config.name)
-    if not normalized_scenario_name:
-        raise HTTPException(status_code=400, detail="Scenario name is required")
-
-    normalized_agents = _normalize_agent_names(config.agents)
-    normalized_start_agent = _normalize_agent_name(config.start_agent)
-
-    # Validate agents exist (include both template agents and session-scoped custom agents)
-    agents_registry = discover_agents()
-    session_agents = list_session_agents_by_session(session_id)
-    # Build set of valid agent keys (lowercase for case-insensitive matching)
-    # Registry now stores with original casing, so we lowercase for comparison
-    all_valid_keys = {k.lower() for k in agents_registry.keys()} | {k.lower() for k in session_agents.keys()}
-    if normalized_agents:
-        invalid_agents = [a for a in normalized_agents if a.lower() not in all_valid_keys]
-        if invalid_agents:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid agents: {invalid_agents}. Available: {list(agents_registry.keys())}",
-            )
-
-    # Validate start_agent
-    if normalized_start_agent:
-        if normalized_agents and normalized_start_agent not in normalized_agents:
-            raise HTTPException(
-                status_code=400,
-                detail=f"start_agent '{normalized_start_agent}' must be in agents list",
-            )
-        if not normalized_agents and normalized_start_agent.lower() not in all_valid_keys:
-            raise HTTPException(
-                status_code=400,
-                detail=f"start_agent '{normalized_start_agent}' not found in registry or session agents",
-            )
-
-    # Build agent_defaults
-    agent_defaults = None
-    if config.agent_defaults:
-        agent_defaults = AgentOverride(
-            greeting=config.agent_defaults.greeting,
-            return_greeting=config.agent_defaults.return_greeting,
-            description=config.agent_defaults.description,
-            template_vars=config.agent_defaults.template_vars,
-            voice_name=config.agent_defaults.voice_name,
-            voice_rate=config.agent_defaults.voice_rate,
-        )
-
-    # Build handoff configs
-    handoffs: list[HandoffConfig] = []
-    for h in config.handoffs:
-        normalized_from = _normalize_agent_name(h.from_agent)
-        normalized_to = _normalize_agent_name(h.to_agent)
-        handoffs.append(
-            HandoffConfig(
-                from_agent=normalized_from,
-                to_agent=normalized_to,
-                tool=h.tool,
-                type=h.type,
-                share_context=h.share_context,
-                handoff_condition=h.handoff_condition,
-                context_vars=h.context_vars or {},
-            )
-        )
-
-    # Create the scenario
-    scenario = ScenarioConfig(
-        name=normalized_scenario_name,
-        description=config.description,
-        icon=config.icon,
-        agents=normalized_agents,
-        agent_defaults=agent_defaults,
-        global_template_vars=config.global_template_vars,
-        tools=config.tools,
-        start_agent=normalized_start_agent,
-        handoff_type=config.handoff_type,
-        handoffs=handoffs,
-    )
+    await prime_session_definitions(session_id)
+    scenario = _build_session_scenario(config, session_id)
+    normalized_scenario_name = scenario.name
 
     # Store in session (in-memory cache + Redis persistence)
     # Use async version to ensure persistence completes before returning.
@@ -735,7 +760,9 @@ async def create_dynamic_scenario(
     except Exception as e:
         logger.error(
             "Scenario created in memory but Redis persistence failed | session=%s name=%s error=%s",
-            session_id, normalized_scenario_name, e,
+            session_id,
+            normalized_scenario_name,
+            e,
         )
         raise HTTPException(
             status_code=503,
@@ -743,7 +770,7 @@ async def create_dynamic_scenario(
                 f"Scenario '{normalized_scenario_name}' was configured in memory but could not be "
                 "persisted to Redis. It may not survive across requests. Please retry."
             ),
-        )
+        ) from e
 
     logger.info(
         "Dynamic scenario created | session=%s name=%s agents=%d handoffs=%d",
@@ -757,27 +784,7 @@ async def create_dynamic_scenario(
         session_id=session_id,
         scenario_name=normalized_scenario_name,
         status="created",
-        config={
-            "name": normalized_scenario_name,
-            "description": config.description,
-            "icon": config.icon,
-            "agents": normalized_agents,
-            "start_agent": normalized_start_agent,
-            "handoff_type": config.handoff_type,
-            "handoffs": [
-                {
-                    "from_agent": h.from_agent,
-                    "to_agent": h.to_agent,
-                    "tool": h.tool,
-                    "type": h.type,
-                    "share_context": h.share_context,
-                    "handoff_condition": h.handoff_condition,
-                    "context_vars": h.context_vars or {},
-                }
-                for h in handoffs
-            ],
-            "global_template_vars": config.global_template_vars,
-        },
+        config=_scenario_to_config_payload(scenario),
         created_at=time.time(),
     )
 
@@ -794,6 +801,9 @@ async def get_session_scenario_config(
     request: Request,
 ) -> SessionScenarioResponse:
     """Get the dynamic scenario for a session."""
+    from apps.artagent.backend.src.orchestration.session_memory import prime_session_definitions
+
+    await prime_session_definitions(session_id)
     scenario = get_session_scenario(session_id)
 
     if not scenario:
@@ -806,39 +816,7 @@ async def get_session_scenario_config(
         session_id=session_id,
         scenario_name=scenario.name,
         status="active",
-        config={
-            "name": scenario.name,
-            "description": scenario.description,
-            "icon": scenario.icon,
-            "agents": scenario.agents,
-            "start_agent": scenario.start_agent,
-            "handoff_type": scenario.handoff_type,
-            "handoffs": [
-                {
-                    "from_agent": h.from_agent,
-                    "to_agent": h.to_agent,
-                    "tool": h.tool,
-                    "type": h.type,
-                    "share_context": h.share_context,
-                    "handoff_condition": h.handoff_condition,
-                    "context_vars": h.context_vars or {},
-                }
-                for h in scenario.handoffs
-            ],
-            "global_template_vars": scenario.global_template_vars,
-            "agent_defaults": (
-                {
-                    "greeting": scenario.agent_defaults.greeting,
-                    "return_greeting": scenario.agent_defaults.return_greeting,
-                    "description": scenario.agent_defaults.description,
-                    "template_vars": scenario.agent_defaults.template_vars,
-                    "voice_name": scenario.agent_defaults.voice_name,
-                    "voice_rate": scenario.agent_defaults.voice_rate,
-                }
-                if scenario.agent_defaults
-                else None
-            ),
-        },
+        config=_scenario_to_config_payload(scenario),
     )
 
 
@@ -859,88 +837,31 @@ async def update_session_scenario(
 
     Creates a new scenario if one doesn't exist.
     """
-    normalized_scenario_name = _normalize_scenario_name(config.name)
-    if not normalized_scenario_name:
-        raise HTTPException(status_code=400, detail="Scenario name is required")
+    from apps.artagent.backend.src.orchestration.session_memory import prime_session_definitions
 
-    normalized_agents = _normalize_agent_names(config.agents)
-    normalized_start_agent = _normalize_agent_name(config.start_agent)
-
-    # Validate agents exist (include both template agents and session-scoped custom agents)
-    agents_registry = discover_agents()
-    session_agents = list_session_agents_by_session(session_id)
-    # Build set of valid agent keys (lowercase for case-insensitive matching)
-    # Registry now stores with original casing, so we lowercase for comparison
-    all_valid_keys = {k.lower() for k in agents_registry.keys()} | {k.lower() for k in session_agents.keys()}
-    if normalized_agents:
-        invalid_agents = [a for a in normalized_agents if a.lower() not in all_valid_keys]
-        if invalid_agents:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid agents: {invalid_agents}. Available: {list(agents_registry.keys())}",
-            )
-
-    # Validate start_agent
-    if normalized_start_agent:
-        if normalized_agents and normalized_start_agent not in normalized_agents:
-            raise HTTPException(
-                status_code=400,
-                detail=f"start_agent '{normalized_start_agent}' must be in agents list",
-            )
-        if not normalized_agents and normalized_start_agent.lower() not in all_valid_keys:
-            raise HTTPException(
-                status_code=400,
-                detail=f"start_agent '{normalized_start_agent}' not found in registry or session agents",
-            )
-
-    existing = get_session_scenario(session_id)
+    await prime_session_definitions(session_id)
+    existing = get_session_scenario(session_id, _normalize_scenario_name(config.name))
+    scenario = _build_session_scenario(config, session_id, existing=existing)
+    normalized_scenario_name = scenario.name
     created_at = time.time()
 
-    # Build agent_defaults
-    agent_defaults = None
-    if config.agent_defaults:
-        agent_defaults = AgentOverride(
-            greeting=config.agent_defaults.greeting,
-            return_greeting=config.agent_defaults.return_greeting,
-            description=config.agent_defaults.description,
-            template_vars=config.agent_defaults.template_vars,
-            voice_name=config.agent_defaults.voice_name,
-            voice_rate=config.agent_defaults.voice_rate,
-        )
-
-    # Build handoff configs
-    handoffs: list[HandoffConfig] = []
-    for h in config.handoffs:
-        normalized_from = _normalize_agent_name(h.from_agent)
-        normalized_to = _normalize_agent_name(h.to_agent)
-        handoffs.append(
-            HandoffConfig(
-                from_agent=normalized_from,
-                to_agent=normalized_to,
-                tool=h.tool,
-                type=h.type,
-                share_context=h.share_context,
-                handoff_condition=h.handoff_condition,
-                context_vars=h.context_vars or {},
-            )
-        )
-
-    # Create the updated scenario
-    scenario = ScenarioConfig(
-        name=normalized_scenario_name,
-        description=config.description,
-        icon=config.icon,
-        agents=normalized_agents,
-        agent_defaults=agent_defaults,
-        global_template_vars=config.global_template_vars,
-        tools=config.tools,
-        start_agent=normalized_start_agent,
-        handoff_type=config.handoff_type,
-        handoffs=handoffs,
-    )
-
     # Store in session (async to ensure Redis persistence)
-    await set_session_scenario_async(session_id, scenario)
+    try:
+        await set_session_scenario_async(session_id, scenario)
+    except Exception as e:
+        logger.error(
+            "Scenario updated in memory but Redis persistence failed | session=%s name=%s error=%s",
+            session_id,
+            normalized_scenario_name,
+            e,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Scenario '{normalized_scenario_name}' was updated in memory but could not be "
+                "persisted to Redis. It may not survive across requests. Please retry."
+            ),
+        ) from e
 
     logger.info(
         "Dynamic scenario updated | session=%s name=%s agents=%d handoffs=%d",
@@ -954,27 +875,7 @@ async def update_session_scenario(
         session_id=session_id,
         scenario_name=normalized_scenario_name,
         status="updated" if existing else "created",
-        config={
-            "name": normalized_scenario_name,
-            "description": config.description,
-            "icon": config.icon,
-            "agents": normalized_agents,
-            "start_agent": normalized_start_agent,
-            "handoff_type": config.handoff_type,
-            "handoffs": [
-                {
-                    "from_agent": h.from_agent,
-                    "to_agent": h.to_agent,
-                    "tool": h.tool,
-                    "type": h.type,
-                    "share_context": h.share_context,
-                    "handoff_condition": h.handoff_condition,
-                    "context_vars": h.context_vars or {},
-                }
-                for h in handoffs
-            ],
-            "global_template_vars": config.global_template_vars,
-        },
+        config=_scenario_to_config_payload(scenario),
         created_at=created_at,
         modified_at=time.time(),
     )
@@ -991,7 +892,24 @@ async def reset_session_scenario(
     request: Request,
 ) -> dict[str, Any]:
     """Remove the dynamic scenario for a session."""
-    removed = remove_session_scenario(session_id)
+    from apps.artagent.backend.src.orchestration.session_memory import prime_session_definitions
+
+    await prime_session_definitions(session_id)
+    try:
+        removed = await remove_session_scenario_async(session_id, raise_on_failure=True)
+    except Exception as exc:
+        logger.error(
+            "Failed to persist session scenario reset | session=%s error=%s",
+            session_id,
+            exc,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Dynamic scenario for session {session_id} was removed in memory but "
+                "could not be cleared from Redis. Please retry."
+            ),
+        ) from exc
 
     if not removed:
         raise HTTPException(
@@ -1020,23 +938,26 @@ async def set_active_scenario_endpoint(
     request: Request,
 ) -> dict[str, Any]:
     """Set the active scenario for a session.
-    
+
     Uses awaited Redis persistence so the caller can rely on the response
     being fully committed — no stale reads on subsequent GETs.
     """
+    from apps.artagent.backend.src.orchestration.session_memory import prime_session_definitions
+
+    await prime_session_definitions(session_id)
     from apps.artagent.backend.src.orchestration.session_scenarios import (
-        set_active_scenario_async,
-        get_session_scenario,
         _ensure_session_loaded,
+        get_session_scenario,
+        set_active_scenario_async,
     )
-    
+
     normalized_scenario_name = _normalize_scenario_name(scenario_name)
     if not normalized_scenario_name:
         raise HTTPException(status_code=400, detail="scenario_name is required")
 
     activation_candidates = [normalized_scenario_name]
     if normalized_scenario_name.startswith("custom_"):
-        activation_candidates.append(normalized_scenario_name[len("custom_"):])
+        activation_candidates.append(normalized_scenario_name[len("custom_") :])
     else:
         activation_candidates.append(f"custom_{normalized_scenario_name}")
 
@@ -1046,7 +967,7 @@ async def set_active_scenario_endpoint(
         if success:
             normalized_scenario_name = candidate_name
             break
-    
+
     if not success:
         # Retry once after forcing a fresh Redis reload — the scenario may
         # exist in Redis but not in this worker's memory cache.
@@ -1062,12 +983,14 @@ async def set_active_scenario_endpoint(
             status_code=404,
             detail=f"Scenario '{scenario_name}' not found for session '{session_id}'.",
         )
-    
+
     # Get the scenario to return its start_agent
     scenario = get_session_scenario(session_id, normalized_scenario_name)
-    
-    logger.info("Active scenario set | session=%s scenario=%s", session_id, normalized_scenario_name)
-    
+
+    logger.info(
+        "Active scenario set | session=%s scenario=%s", session_id, normalized_scenario_name
+    )
+
     return {
         "status": "success",
         "message": f"Active scenario set to '{normalized_scenario_name}'",
@@ -1103,18 +1026,21 @@ async def apply_template_to_session(
         session_id: The session to apply the template to
         template_id: The template directory name (e.g., 'banking', 'insurance')
     """
+    from apps.artagent.backend.src.orchestration.session_memory import prime_session_definitions
+
+    await prime_session_definitions(session_id)
     # Load the template from disk
     scenario = load_scenario(template_id)
-    
+
     if not scenario:
         raise HTTPException(
             status_code=404,
             detail=f"Template '{template_id}' not found",
         )
-    
+
     # Set the scenario for this session (async to ensure Redis persistence)
     await set_session_scenario_async(session_id, scenario)
-    
+
     logger.info(
         "Industry template applied | session=%s template=%s start_agent=%s agents=%d",
         session_id,
@@ -1122,7 +1048,7 @@ async def apply_template_to_session(
         scenario.start_agent,
         len(scenario.agents),
     )
-    
+
     return {
         "status": "success",
         "message": f"Applied template '{template_id}' to session",
@@ -1151,21 +1077,24 @@ async def list_scenarios_for_session(
 ) -> dict[str, Any]:
     """
     List all scenarios available for a session.
-    
+
     Returns both:
     - Session-custom scenarios (created via Scenario Builder)
     - Built-in scenario templates (from the scenarios directory)
-    
+
     The active_scenario field indicates which scenario is currently selected.
     """
+    from apps.artagent.backend.src.orchestration.session_memory import prime_session_definitions
+
+    await prime_session_definitions(session_id)
     from apps.artagent.backend.src.orchestration.session_scenarios import get_active_scenario_name
-    
+
     session_scenarios = list_session_scenarios_by_session(session_id)
     active_name = get_active_scenario_name(session_id)
-    
+
     # Normalize active_name for case-insensitive comparison
     active_name_lower = (active_name or "").lower()
-    
+
     # Resolve active scenario's start_agent and icon for the frontend
     active_start_agent = None
     active_scenario_icon = None
@@ -1184,20 +1113,11 @@ async def list_scenarios_for_session(
                 "icon": scenario.icon,
                 "agents": scenario.agents,
                 "start_agent": scenario.start_agent,
-                "handoffs": [
-                    {
-                        "from_agent": h.from_agent,
-                        "to_agent": h.to_agent,
-                        "tool": h.tool,
-                        "type": h.type,
-                        "share_context": h.share_context,
-                        "handoff_condition": h.handoff_condition,
-                        "context_vars": h.context_vars or {},
-                    }
-                    for h in scenario.handoffs
-                ],
+                "handoffs": [_handoff_to_dict(h) for h in scenario.handoffs],
                 "handoff_type": scenario.handoff_type,
                 "global_template_vars": scenario.global_template_vars,
+                "generic_handoff": _generic_handoff_to_dict(scenario.generic_handoff),
+                "agent_defaults": _agent_defaults_to_dict(scenario.agent_defaults),
                 "is_active": is_active,
                 "is_custom": False,
             }
@@ -1220,20 +1140,11 @@ async def list_scenarios_for_session(
             "icon": scenario.icon,
             "agents": scenario.agents,
             "start_agent": scenario.start_agent,
-            "handoffs": [
-                {
-                    "from_agent": h.from_agent,
-                    "to_agent": h.to_agent,
-                    "tool": h.tool,
-                    "type": h.type,
-                    "share_context": h.share_context,
-                    "handoff_condition": h.handoff_condition,
-                    "context_vars": h.context_vars or {},
-                }
-                for h in scenario.handoffs
-            ],
+            "handoffs": [_handoff_to_dict(h) for h in scenario.handoffs],
             "handoff_type": scenario.handoff_type,
             "global_template_vars": scenario.global_template_vars,
+            "generic_handoff": _generic_handoff_to_dict(scenario.generic_handoff),
+            "agent_defaults": _agent_defaults_to_dict(scenario.agent_defaults),
             "is_active": is_active,
             "is_custom": True,
         }
@@ -1279,6 +1190,7 @@ async def list_session_scenarios_endpoint() -> dict[str, Any]:
                 "agents": scenario.agents,
                 "start_agent": scenario.start_agent,
                 "handoff_count": len(scenario.handoffs),
+                "generic_handoff": _generic_handoff_to_dict(scenario.generic_handoff),
             }
             for key, scenario in scenarios.items()
         ],
