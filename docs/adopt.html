@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Adopt & Extend — ART Agent Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/syntax.css">
+</head>
+<body>
+
+<header class="site-header">
+  <a href="index.html" class="logo">◆ <span>ART</span> Agent Docs</a>
+  <nav class="header-nav">
+    <a href="index.html">Home</a>
+    <a href="architecture.html">Architecture</a>
+    <a href="guides.html">Guides</a>
+    <a href="adopt.html" class="active">Adopt</a>
+    <a href="agents.html">Agents</a>
+    <a href="quick-tune.html">Quick Tune</a>
+    <a href="api.html">API</a>
+    <a href="certification.html">Certify</a>
+  </nav>
+  <div class="header-actions">
+    <button class="search-trigger" type="button" aria-label="Search docs (Cmd+K)">
+      <span class="search-trigger-icon" aria-hidden="true">⌕</span>
+      <span class="search-trigger-label">Search docs…</span>
+      <span class="search-trigger-kbd">⌘K</span>
+    </button>
+    <a id="legacy-docs-link" class="legacy-link" href="legacy-site/index.html" title="Original mkdocs documentation site">Legacy ↗</a>
+    <a href="https://github.com/Azure-Samples/art-voice-agent-accelerator" class="gh-link" target="_blank" rel="noopener">GitHub ↗</a>
+    <button class="theme-toggle" aria-label="Toggle theme">🌙</button>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <div class="sidebar-section">
+      <h4>On this page</h4>
+      <a href="#top" class="active">Overview</a>
+      <a href="#three-ways">Three Ways to Adopt</a>
+      <a href="#decision-guide">Which One Do I Want?</a>
+      <a href="#extension-points">Extension Points Matrix</a>
+      <a href="#principles">Principles Worth Stealing</a>
+      <a href="#checklist">Minimal-Footprint Checklist</a>
+    </div>
+    <div class="sidebar-section">
+      <h4>Related</h4>
+      <a href="guides.html#swap-provider">Swap a Provider</a>
+      <a href="guides.html#add-channel">Add a Channel</a>
+      <a href="architecture.html">Key Design Decisions</a>
+    </div>
+  </aside>
+
+  <main class="content">
+    <div class="content-inner">
+
+      <h1 id="top">Adopt & Extend</h1>
+      <p class="subtitle">This accelerator is meant to be taken apart. Use it as a running reference, a library of Azure integrations, or a full starting point for your own voice agent — pick the level of commitment that fits your project.</p>
+
+      <div class="callout tip">
+        <p><strong>Framing:</strong> everything below assumes you are <em>not</em> the maintainer of this repo. You're evaluating how much of it to bring into a project of your own, and how to keep your fork or your extracted pieces upgradeable as the accelerator evolves.</p>
+      </div>
+
+      <hr>
+
+      <h2 id="three-ways">Three Ways to Adopt</h2>
+      <p>There is no single "right" way to consume this accelerator — pick based on how much of the real-time voice stack you actually need to own.</p>
+
+      <table>
+        <thead><tr><th>Mode</th><th>What you keep</th><th>What you own</th><th>Best for</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Fork &amp; run</strong></td>
+            <td>Everything — <code>apps/</code>, <code>src/</code>, <code>infra/</code></td>
+            <td>Agent YAML, scenarios, tools, branding, deployment config</td>
+            <td>Teams whose product <em>is</em> a voice agent and want the full pipeline (telephony, orchestrators, UI) day one.</td>
+          </tr>
+          <tr>
+            <td><strong>Library reuse</strong></td>
+            <td><code>src/</code> only (ACS, Speech, AOAI, Redis, Cosmos, pools, VAD)</td>
+            <td>Your own FastAPI app, your own orchestrator loop</td>
+            <td>Teams with an existing backend who just want production-grade Azure integrations without rebuilding client pooling, retry, and auth from scratch.</td>
+          </tr>
+          <tr>
+            <td><strong>Pattern reuse</strong></td>
+            <td>Nothing — no code dependency</td>
+            <td>A re-implementation of the same <em>shape</em>: YAML-declared agents, a centralized tool registry, scenario-based handoff routing</td>
+            <td>Teams on a different stack (Node, .NET, a different cloud) who want the architecture, not the Python.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <hr>
+
+      <h2 id="decision-guide">Which One Do I Want?</h2>
+      <div class="mermaid">
+flowchart TD
+    q1{"Is your product a<br/>real-time voice agent?"}
+    q2{"Do you already have a<br/>backend / orchestration loop?"}
+    q3{"Are you on Python + FastAPI?"}
+
+    fork["Fork &amp; run<br/><small>Full accelerator</small>"]
+    lib["Library reuse<br/><small>Import src/ modules</small>"]
+    pat["Pattern reuse<br/><small>Re-implement the shape</small>"]
+
+    q1 -- "Yes, it's the whole product" --> fork
+    q1 -- "No, it's one feature<br/>of a bigger app" --> q2
+    q2 -- "No" --> fork
+    q2 -- "Yes" --> q3
+    q3 -- "Yes" --> lib
+    q3 -- "No" --> pat
+
+    classDef qNode fill:#F0F7FF,stroke:#0078D4,color:#0A2540
+    classDef aNode fill:#E6FAEA,stroke:#107C10,color:#0B3D0B
+    class q1,q2,q3 qNode
+    class fork,lib,pat aNode
+      </div>
+
+      <div class="callout">
+        <p><strong>Most teams start with "Fork &amp; run" and prune.</strong> It's easier to delete a module (e.g. Genesys support, or the React demo frontend) you don't need than to bolt on connection pooling, barge-in handling, and MemoManager session recovery later under deadline pressure. Trim <code>apps/artagent/backend/voice/genesys/</code> or the entire <code>apps/artagent/frontend/</code> if they're not relevant to your product — both are cleanly separable.</p>
+      </div>
+
+      <hr>
+
+      <h2 id="extension-points">Extension Points Matrix</h2>
+      <p>Whichever mode you pick, these are the seams the codebase was designed to be cut along. Each row is a real interface or factory you can swap without touching the orchestrators.</p>
+
+      <table>
+        <thead><tr><th>Concern</th><th>Where it lives</th><th>How to swap it</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Telephony / channel</strong></td>
+            <td><code>apps/artagent/backend/voice/{genesys,handler.py}</code></td>
+            <td>ACS and Genesys are two independent WebSocket bridges that both call into the same <code>LiveOrchestrator</code> / <code>SpeechCascade</code> core. See <a href="guides.html#add-channel">Add a Channel</a> for the contract a third bridge (e.g. Twilio, Vonage) needs to satisfy.</td>
+          </tr>
+          <tr>
+            <td><strong>Speech-to-text / text-to-speech</strong></td>
+            <td><code>src/speech/speech_recognizer.py</code>, <code>src/speech/text_to_speech.py</code></td>
+            <td>Only used by the SpeechCascade orchestrator (VoiceLive bundles STT/TTS itself). Both are thin wrappers around the Azure Speech SDK behind pooled client managers — replace the SDK calls, keep the pooling/lifecycle contract. See <a href="guides.html#swap-provider">Swap a Provider</a>.</td>
+          </tr>
+          <tr>
+            <td><strong>LLM provider</strong></td>
+            <td><code>src/aoai/client_manager.py</code> (<code>AoaiClientManager</code>)</td>
+            <td>Accepts an injectable <code>factory</code> / <code>async_factory</code> callable at construction — pass a factory that returns any OpenAI-compatible client (Azure OpenAI, OpenAI, or a self-hosted gateway) instead of replacing call sites.</td>
+          </tr>
+          <tr>
+            <td><strong>Orchestration mode</strong></td>
+            <td><code>apps/artagent/backend/voice/{speech_cascade,voicelive}/</code></td>
+            <td>Selected per-call by <code>ACS_STREAMING_MODE</code>. Add a third mode by implementing the same handler contract (<code>on_audio</code>, <code>on_control</code>, session lifecycle) and registering it alongside the existing two.</td>
+          </tr>
+          <tr>
+            <td><strong>Session state</strong></td>
+            <td><code>src/redis/manager.py</code> (<code>MemoManager</code>)</td>
+            <td>Backed by Redis for sub-millisecond reads during a live call. Swap the backing store by re-implementing <code>MemoManager</code>'s get/set/mirror surface — every consumer (orchestrators, agent-builder, handoffs) goes through this one class.</td>
+          </tr>
+          <tr>
+            <td><strong>Persistent storage</strong></td>
+            <td><code>src/cosmosdb/manager.py</code></td>
+            <td>Used for transcripts, post-call analytics, and audit records once a call ends. Swap for any document store by matching the manager's write/query surface — nothing upstream depends on Cosmos-specific query syntax.</td>
+          </tr>
+          <tr>
+            <td><strong>Tools / business logic</strong></td>
+            <td><code>apps/artagent/backend/registries/toolstore/registry.py</code></td>
+            <td>Anything decorated with <code>@register_tool</code> becomes callable by any agent. This is the seam for connecting your own CRM, ticketing system, or internal APIs — see <a href="guides.html#add-tool">Add a Tool</a>.</td>
+          </tr>
+          <tr>
+            <td><strong>Agent behavior &amp; routing</strong></td>
+            <td><code>registries/agentstore/*/agent.yaml</code>, <code>registries/scenariostore/*/orchestration.yaml</code></td>
+            <td>No code changes required — new agents and handoff graphs are pure YAML. See <a href="guides.html#create-agent">Create an Agent</a> and <a href="guides.html#create-scenario">Create a Scenario</a>.</td>
+          </tr>
+          <tr>
+            <td><strong>Observability</strong></td>
+            <td><code>utils/telemetry_config.py</code>, <code>utils/ml_logging.py</code></td>
+            <td>OpenTelemetry-based; point the exporter at any OTLP-compatible backend instead of Application Insights without touching instrumented call sites.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <hr>
+
+      <h2 id="principles">Principles Worth Stealing</h2>
+      <p>Even in "pattern reuse" mode with zero shared code, these design choices (detailed with their full rationale in <a href="architecture.html#design-decisions">Architecture → Key Design Decisions</a>) are the ones worth carrying into your own stack:</p>
+
+      <ul>
+        <li><strong>Declare agents in config, not code.</strong> A YAML file with a system-prompt template and a tool list is reviewable by non-engineers and hot-swappable per session — you don't need a Python subclass per persona.</li>
+        <li><strong>Separate "what an agent can do" from "how agents connect."</strong> Tools and agents are reusable primitives; a scenario is just a routing graph over them. The same agent behaves differently in different scenarios without duplicating its definition.</li>
+        <li><strong>Centralize side-effecting capabilities behind one registry.</strong> Every tool goes through one decorator and one lookup path — no tool is ever defined inline inside an agent, which keeps discovery and auditing tractable as the tool count grows.</li>
+        <li><strong>Pool expensive clients; never construct them per request.</strong> STT, TTS, and LLM clients cost 100-500ms to stand up. In a system with a 1-second turn budget, that's not optional — it's the difference between a usable and unusable product.</li>
+        <li><strong>Keep session state external and cheap to read.</strong> Conversation state lives in Redis, not in-process globals, so any container can pick up any call — this is what makes horizontal scaling and worker restarts safe mid-conversation.</li>
+        <li><strong>Own the orchestration loop; don't hide it behind a generic agent-framework abstraction.</strong> When every millisecond of a turn matters, you need to see and control each stage (VAD → STT → LLM → TTS → playback) directly. See <a href="architecture.html#why-complex">Architecture → Why this complexity?</a> for the full argument.</li>
+      </ul>
+
+      <hr>
+
+      <h2 id="checklist">Minimal-Footprint Checklist</h2>
+      <p>If you're bringing only a slice of this accelerator into an existing project, this is the shortest path that stays coherent:</p>
+
+      <table>
+        <thead><tr><th>Step</th><th>Do this</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>Decide your adoption mode (above) before copying any code — it determines whether you take <code>apps/</code>, just <code>src/</code>, or nothing.</td></tr>
+          <tr><td>2</td><td>If reusing <code>src/</code>: bring the whole module you need (e.g. <code>src/aoai/</code>) rather than individual files — the pooling, retry, and auth-refresh logic is split across a few cooperating classes.</td></tr>
+          <tr><td>3</td><td>Keep the tool-registry pattern even if you drop everything else — it's the cheapest single change that keeps your agent's capabilities auditable as they grow.</td></tr>
+          <tr><td>4</td><td>Budget your own turn latency the same way: measure STT-start → LLM-first-token → TTS-first-chunk separately, and pool anything that crosses a network boundary.</td></tr>
+          <tr><td>5</td><td>Read <a href="architecture.html#design-decisions">Key Design Decisions</a> and the <a href="guides.html#production">Production Deployment checklist</a> before you assume a dev-mode config is safe to ship.</td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout tip">
+        <p><strong>Next:</strong> once you know what you're taking, <a href="guides.html#swap-provider">Swap a Provider</a> and <a href="guides.html#add-channel">Add a Channel</a> in the Guides walk through the two most common customizations step by step.</p>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script src="js/main.js?v=2"></script>
+<script src="js/diagrams.js?v=2"></script>
+<script src="js/search.js?v=2"></script>
+</body>
+</html>
