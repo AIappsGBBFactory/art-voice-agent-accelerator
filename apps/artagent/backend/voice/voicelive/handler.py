@@ -14,13 +14,18 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import numpy as np
+from apps.artagent.backend.registries.agentstore.base import (
+    byom_profile_model_conflict,
+    is_managed_voicelive_model,
+)
 
 # Import agents loader for dynamic handoff_map building
 from apps.artagent.backend.registries.agentstore.loader import (
     build_agent_summaries,
-    build_handoff_map,
     discover_agents,
 )
+from apps.artagent.backend.src.orchestration.session_agents import get_session_agent
+from apps.artagent.backend.src.services.session_loader import load_user_profile_by_email
 from apps.artagent.backend.src.utils.tracing import (
     create_service_dependency_attrs,
     create_service_handler_attrs,
@@ -43,11 +48,18 @@ from apps.artagent.backend.src.ws_helpers.shared_ws import (
 # Import config resolver for scenario-aware agent loading
 from apps.artagent.backend.voice.shared import (
     DEFAULT_START_AGENT,
+    build_effective_registry,
     resolve_from_app_state,
     resolve_orchestrator_config,
 )
-from apps.artagent.backend.src.services.session_loader import load_user_profile_by_email
-from apps.artagent.backend.src.orchestration.session_agents import get_session_agent
+from apps.artagent.backend.voice.shared.close import cancel_and_join, finish_persistence
+from apps.artagent.backend.voice.shared.errors import (
+    VoiceErrorInfo,
+    classify_voice_error,
+    classify_voicelive_server_error,
+    emit_voice_error,
+)
+from apps.artagent.backend.voice.voicelive import session as voicelive_session
 
 # ─────────────────────────────────────────────────────────────────────────────
 # VoiceLive Channel Imports (local to voice_channels)
@@ -102,6 +114,15 @@ tracer = trace.get_tracer(__name__)
 _DTMF_FLUSH_DELAY_SECONDS = 1.5
 _VOICELIVE_WARMUP_WAIT_SECONDS = 0.75
 
+# Models that managed Voice Live (BYOM OFF) can actually serve are defined once in
+# agentstore.base (MANAGED_VOICELIVE_MODELS / is_managed_voicelive_model) so the
+# save-time guard (agent_builder) and this connect-time check can never diverge.
+# Connecting with a model outside that set succeeds at the WebSocket level but the
+# model never produces a response — the agent "stops responding" and the session
+# ends in a ~900s idle timeout. We only WARN (never block) here because the managed
+# catalog grows over time; a warning makes the misconfiguration obvious in the logs
+# without breaking a newly-added-but-unlisted model.
+
 
 @dataclass
 class VoiceLivePreparedConnection:
@@ -116,18 +137,25 @@ class VoiceLivePreparedConnection:
     session_prepared: bool = False
     created_at: float = field(default_factory=time.perf_counter)
     claimed: bool = False
+    _close_task: asyncio.Task | None = field(default=None, init=False, repr=False)
 
     def matches(self, model: str, byom_query: dict[str, str] | None) -> bool:
         return self.model == model and (self.byom_query or None) == (byom_query or None)
 
     def claim(self) -> None:
+        if self._close_task is not None:
+            raise RuntimeError("Cannot claim a closing prepared VoiceLive connection")
         self.claimed = True
 
     async def close(self) -> None:
         if self.claimed:
             return
-        with contextlib.suppress(Exception):
-            await self.connection_cm.__aexit__(None, None, None)
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(
+                self.connection_cm.__aexit__(None, None, None), name="voicelive-prepared-close"
+            )
+        await asyncio.shield(self._close_task)
+
 
 def _resolve_agent_label(agent_name: str | None) -> str | None:
     """Return the agent name as the label (agents define their own display names)."""
@@ -185,46 +213,58 @@ class _SessionMessenger:
     """Bridge VoiceLive events to the session-aware WebSocket manager."""
 
     def __init__(
-        self, websocket: WebSocket, *, background_task_fn: BackgroundTaskFn
+        self,
+        websocket: WebSocket,
+        *,
+        background_task_fn: BackgroundTaskFn,
+        is_acs: bool = True,
     ) -> None:
         self._ws = websocket
         self._background_task_fn = background_task_fn
+        self._is_acs = is_acs
         self._default_sender: str | None = None
         self._missing_session_warned = False
         self._active_turn_id: str | None = None
+        self._active_segment_id: str | None = None
         self._pending_user_turn_id: str | None = None
         self._active_agent_name: str | None = None
         self._active_agent_label: str | None = None
+        self._last_announced_agent: str | None = None
+        self._last_session_contract: dict[str, Any] | None = None
         self._turn_sequence: int = 0  # Track tool call boundaries within a turn
         self._base_turn_id: str | None = None  # Original turn_id before tool calls
-        self._turn_id_advanced: bool = False  # Flag to prevent overwriting advanced turn_id
         # Deduplication: track (turn_id, text_hash) of sent final messages
         self._sent_messages: set[tuple[str, int]] = set()
+        self._user_transcript_text = ""
+        self._user_transcript_sequence = 0
+        self._assistant_segments: dict[str, str] = {}
+        self._assistant_segment_order: list[str] = []
+        self._assistant_sequence = 0
 
     def _ensure_turn_id(self, candidate: str | None, *, allow_generate: bool = True) -> str | None:
-        # If turn_id was advanced (post-tool-call), preserve it and don't overwrite
-        # with the new response_id. This ensures post-tool responses appear as new
-        # messages in the frontend rather than overwriting pre-tool content.
-        if self._turn_id_advanced and self._active_turn_id:
+        # A VoiceLive response_id is not a user-turn ID. Once speech_started has
+        # established the canonical item_id, preserve it across every response
+        # and tool phase belonging to that utterance.
+        if self._active_turn_id:
             return self._active_turn_id
         if candidate:
             self._active_turn_id = candidate
+            self._active_segment_id = candidate
             return candidate
-        if self._active_turn_id:
-            return self._active_turn_id
         if not allow_generate:
             return None
         generated = uuid.uuid4().hex
         self._active_turn_id = generated
+        self._active_segment_id = generated
         return generated
 
     def _release_turn(self, turn_id: str | None) -> None:
         if turn_id and self._active_turn_id == turn_id:
             self._active_turn_id = None
-            self._turn_id_advanced = False
+            self._active_segment_id = None
         elif turn_id is None:
             self._active_turn_id = None
-            self._turn_id_advanced = False
+            self._active_segment_id = None
 
     def advance_turn_for_tool(self) -> str | None:
         """
@@ -239,17 +279,15 @@ class _SessionMessenger:
         if not self._active_turn_id:
             return None
 
-        # Store original turn_id as base if not already set
+        # Store the canonical turn ID as base if not already set.
         if not self._base_turn_id:
             self._base_turn_id = self._active_turn_id
 
-        # Increment sequence and generate new turn_id
+        # Advance only the response segment. The canonical turn ID never changes,
+        # so the UI keeps one assistant response bubble for the whole turn.
         self._turn_sequence += 1
         new_turn_id = f"{self._base_turn_id}_s{self._turn_sequence}"
-        self._active_turn_id = new_turn_id
-        
-        # Mark that turn_id was advanced so _ensure_turn_id won't overwrite it
-        self._turn_id_advanced = True
+        self._active_segment_id = new_turn_id
 
         logger.debug(
             "[TurnAdvance] Advanced turn_id: base=%s, seq=%d, new=%s",
@@ -262,10 +300,15 @@ class _SessionMessenger:
     def reset_turn_sequence(self) -> None:
         """Reset turn sequence tracking for a new user turn."""
         self._turn_sequence = 0
-        self._base_turn_id = None
-        self._turn_id_advanced = False
+        self._base_turn_id = self._active_turn_id
+        self._active_segment_id = self._active_turn_id
         # Clear sent message deduplication cache for new turn
         self._sent_messages.clear()
+        self._user_transcript_text = ""
+        self._user_transcript_sequence = 0
+        self._assistant_segments.clear()
+        self._assistant_segment_order.clear()
+        self._assistant_sequence = 0
 
     def begin_user_turn(self, turn_id: str | None) -> str | None:
         """Initialise a user turn and emit a placeholder streaming message."""
@@ -275,6 +318,7 @@ class _SessionMessenger:
         if self._pending_user_turn_id == turn_id:
             return turn_id
         self._pending_user_turn_id = turn_id
+        self._active_turn_id = turn_id
         # Reset turn sequence for new user turn - post-tool segments start fresh
         self.reset_turn_sequence()
         if not self._can_emit():
@@ -285,6 +329,10 @@ class _SessionMessenger:
             "message": "",
             "content": "",
             "streaming": True,
+            "streaming_type": "stt_partial",
+            "content_mode": "snapshot",
+            "sequence": 0,
+            "is_final": False,
             "turn_id": turn_id,
             "response_id": turn_id,
             "status": "streaming",
@@ -313,10 +361,15 @@ class _SessionMessenger:
 
     def resolve_user_turn_id(self, candidate: str | None) -> str | None:
         """Ensure user turn IDs remain consistent across delta and final events."""
+        if self._pending_user_turn_id:
+            return self._pending_user_turn_id
         if candidate:
             self._pending_user_turn_id = candidate
+            if not self._active_turn_id:
+                self._active_turn_id = candidate
+                self._active_segment_id = candidate
             return candidate
-        return self._pending_user_turn_id
+        return self._active_turn_id
 
     def finish_user_turn(self, turn_id: str | None) -> None:
         resolved = turn_id or self._pending_user_turn_id
@@ -361,6 +414,7 @@ class _SessionMessenger:
                 ),
                 label="agent_change_envelope",
             )
+            self._last_announced_agent = agent_name
             logger.info(
                 "[VoiceLive] Agent change emitted: %s → %s",
                 previous_agent,
@@ -396,10 +450,70 @@ class _SessionMessenger:
             self._missing_session_warned = True
         return False
 
+    async def send_user_partial(
+        self,
+        text_delta: str,
+        *,
+        turn_id: str | None = None,
+        language: str | None = None,
+    ) -> None:
+        """Emit a cumulative VoiceLive input-transcription snapshot."""
+        if not text_delta or not self._can_emit():
+            return
+
+        resolved_turn = self.resolve_user_turn_id(turn_id) or self._ensure_turn_id(None)
+        if not resolved_turn:
+            return
+
+        self._user_transcript_text += text_delta
+        self._user_transcript_sequence += 1
+        payload: dict[str, Any] = {
+            "type": "user",
+            "message": self._user_transcript_text,
+            "content": self._user_transcript_text,
+            "streaming": True,
+            "streaming_type": "stt_partial",
+            "content_mode": "snapshot",
+            "sequence": self._user_transcript_sequence,
+            "is_final": False,
+            "turn_id": resolved_turn,
+            "response_id": resolved_turn,
+            "status": "streaming",
+            "source": "voicelive",
+        }
+        if language:
+            payload["language"] = language
+
+        envelope = make_envelope(
+            etype="event",
+            sender="User",
+            payload=payload,
+            topic="session",
+            session_id=self._session_id,
+            call_id=self._call_id,
+        )
+        self._background_task_fn(
+            send_session_envelope(
+                self._ws,
+                envelope,
+                session_id=self._session_id,
+                conn_id=None,
+                event_label="voicelive_user_transcript_partial",
+                broadcast_only=True,
+            ),
+            label="user_transcript_partial",
+        )
+
     async def send_user_message(self, text: str, *, turn_id: str | None = None) -> None:
         """Forward a user transcript to all session listeners."""
         if not text or not self._can_emit():
             return
+
+        resolved_turn = self.resolve_user_turn_id(turn_id) or self._ensure_turn_id(None)
+        if not resolved_turn:
+            return
+        self._user_transcript_text = text
+        self._user_transcript_sequence += 1
 
         self._background_task_fn(
             send_user_transcript(
@@ -408,11 +522,29 @@ class _SessionMessenger:
                 session_id=self._session_id,
                 conn_id=None,
                 broadcast_only=True,
-                turn_id=turn_id,
+                turn_id=resolved_turn,
                 active_agent=self._active_agent_name,
                 active_agent_label=self._active_agent_label,
+                sequence=self._user_transcript_sequence,
             ),
             label="send_user_transcript",
+        )
+
+    def _current_segment_id(self) -> str:
+        return self._active_segment_id or self._active_turn_id or "response"
+
+    def _set_assistant_segment(self, segment_id: str, text: str, *, append: bool) -> str:
+        if segment_id not in self._assistant_segments:
+            self._assistant_segment_order.append(segment_id)
+            self._assistant_segments[segment_id] = ""
+        if append:
+            self._assistant_segments[segment_id] += text
+        else:
+            self._assistant_segments[segment_id] = text
+        return "\n\n".join(
+            self._assistant_segments[key]
+            for key in self._assistant_segment_order
+            if self._assistant_segments[key]
         )
 
     def _resolve_sender(self, sender: str | None) -> str:
@@ -434,8 +566,9 @@ class _SessionMessenger:
         if not turn_id:
             return
 
-        message_text = text or ""
-        
+        segment_id = self._current_segment_id()
+        message_text = self._set_assistant_segment(segment_id, text or "", append=False)
+
         # Deduplication: prevent sending the same message twice for the same turn_id
         # This can happen when TRANSCRIPT_DONE fires multiple times or events race
         msg_key = (turn_id, hash(message_text))
@@ -447,7 +580,7 @@ class _SessionMessenger:
             )
             return
         self._sent_messages.add(msg_key)
-        
+
         sender_name = self._resolve_sender(sender)
         payload = {
             "type": "assistant",
@@ -455,7 +588,11 @@ class _SessionMessenger:
             "content": message_text,
             "streaming": False,
             "turn_id": turn_id,
+            "segment_id": segment_id,
             "response_id": response_id or turn_id,
+            "content_mode": "final_turn",
+            "sequence": self._assistant_sequence + 1,
+            "is_final": True,
             "status": status or "completed",
             "active_agent": self._active_agent_name,
             "active_agent_label": self._active_agent_label,
@@ -483,6 +620,7 @@ class _SessionMessenger:
             ),
             label="assistant_transcript_envelope",
         )
+        self._assistant_sequence += 1
         # NOTE: Do NOT call _release_turn() here. The turn_id must remain active
         # until advance_turn_for_tool() can use it. The turn will be naturally
         # reset when begin_user_turn() is called for the next user turn.
@@ -502,9 +640,13 @@ class _SessionMessenger:
         if not turn_id:
             return
 
+        segment_id = self._current_segment_id()
+        message_text = self._set_assistant_segment(segment_id, text, append=True)
+        self._assistant_sequence += 1
+
         sender_name = self._resolve_sender(sender)
         envelope = make_assistant_streaming_envelope(
-            text,
+            message_text,
             sender=sender_name,
             session_id=self._session_id,
             call_id=self._call_id,
@@ -513,9 +655,13 @@ class _SessionMessenger:
             envelope["sender"] = self._active_agent_name
 
         payload = envelope.setdefault("payload", {})
-        payload.setdefault("message", text)
+        payload.setdefault("message", message_text)
         payload["turn_id"] = turn_id
+        payload["segment_id"] = segment_id
         payload["response_id"] = response_id or turn_id
+        payload["content_mode"] = "snapshot"
+        payload["sequence"] = self._assistant_sequence
+        payload["is_final"] = False
         payload["status"] = "streaming"
         payload["active_agent"] = self._active_agent_name
         payload["active_agent_label"] = self._active_agent_label
@@ -554,6 +700,7 @@ class _SessionMessenger:
             "content": "",
             "streaming": False,
             "turn_id": turn_id,
+            "segment_id": self._current_segment_id(),
             "response_id": response_id or turn_id,
             "status": "cancelled",
             "sender": self._active_agent_name,
@@ -591,18 +738,40 @@ class _SessionMessenger:
         agent_name: str | None,
         session_obj: Any | None,
         transport: str | None = None,
+        contract: dict[str, Any] | None = None,
     ) -> None:
-        """Broadcast session configuration updates to the UI."""
+        """Broadcast session configuration updates to the UI.
+
+        Keyword Args:
+            agent_name: The agent the session is currently running as.
+            session_obj: The ``session.updated`` echo from the service.
+            transport: Transport label (``acs``, ``browser``...).
+            contract: Result of ``LiveOrchestrator._verify_session_contract()``,
+                i.e. the requested-vs-applied comparison for voice and model
+                plus the local agent/model divergences. Attached verbatim so the
+                UI can show what was asked for next to what is actually running
+                without re-deriving (or string-comparing) anything.
+        """
         if not self._can_emit():
+            return
+        announce_agent = agent_name != self._last_announced_agent
+        serialized_contract = _safe_primitive(contract) if contract else None
+        if not announce_agent and (
+            serialized_contract is None or serialized_contract == self._last_session_contract
+        ):
             return
 
         payload: dict[str, Any] = {
             "event_type": "session_updated",
+            "announce_agent": announce_agent,
             "agent_label": _resolve_agent_label(agent_name),
             "agent_name": agent_name,
             "transport": transport,
             "session": _serialize_session_config(session_obj),
         }
+
+        if serialized_contract:
+            payload["contract"] = serialized_contract
 
         agent_label_display = payload.get("agent_label") or agent_name
         if agent_label_display:
@@ -653,6 +822,8 @@ class _SessionMessenger:
             ),
             label="session_update_envelope",
         )
+        self._last_announced_agent = agent_name
+        self._last_session_contract = serialized_contract
 
     async def send_status_update(
         self,
@@ -712,8 +883,10 @@ class _SessionMessenger:
                     name,  # tool_name
                     call_id,  # call_id
                     args,  # arguments
-                    is_acs=True,
+                    is_acs=self._is_acs,
                     session_id=self._session_id,
+                    turn_id=self._active_turn_id,
+                    segment_id=self._current_segment_id(),
                 ),
                 label=f"tool_start_{name}",
             )
@@ -745,9 +918,11 @@ class _SessionMessenger:
                     name,  # tool_name
                     call_id,  # call_id
                     tool_result,  # result (status is derived from this)
-                    is_acs=True,
+                    is_acs=self._is_acs,
                     session_id=self._session_id,
                     duration_ms=elapsed_ms,
+                    turn_id=self._active_turn_id,
+                    segment_id=self._current_segment_id(),
                 ),
                 label=f"tool_end_{name}",
             )
@@ -786,10 +961,13 @@ class VoiceLiveSDKHandler:
 
         # Track pending background tasks at instance level to avoid memory leaks
         self._pending_background_tasks: set[asyncio.Task] = set()
+        self._warmup_cleanup_tasks: set[asyncio.Task] = set()
 
         # Pass background task function to messenger for tracked task creation
         self._messenger = _SessionMessenger(
-            websocket, background_task_fn=self._background_task
+            websocket,
+            background_task_fn=self._background_task,
+            is_acs=transport == "acs",
         )
         self._transport: VoiceLiveTransport = transport
         self._manual_commit_enabled = transport == "acs"
@@ -804,8 +982,20 @@ class VoiceLiveSDKHandler:
         # Generative model actually bound to the VoiceLive connection (resolved from the
         # start agent's voicelive_model at connect time; falls back to the global setting).
         self._active_model_name: str | None = None
+        # Where the bound model came from: "agent_override" or "settings_default".
+        self._active_model_source: str | None = None
+        # Start agent resolved at connect time, retained for error attribution.
+        self._active_start_agent: str | None = None
+        # Classified startup failure, retained so the endpoint can close the
+        # WebSocket with a meaningful reason instead of a bare disconnect.
+        self._startup_error: VoiceErrorInfo | None = None
         self._event_task: asyncio.Task | None = None
         self._running = False
+        # Resource presence drives partial-start cleanup; the retained task below
+        # gives every stop caller the same completion, rather than a boolean no-op.
+        self._stopping = False
+        self._shutdown_task: asyncio.Task | None = None
+        self._startup_task: asyncio.Task | None = None
         self._shutdown = asyncio.Event()
         self._acs_sample_rate = 16000
         self._active_response_ids: set[str] = set()
@@ -855,16 +1045,6 @@ class VoiceLiveSDKHandler:
         task.add_done_callback(_cleanup_task)
         return task
 
-    def _cancel_all_background_tasks(self) -> int:
-        """Cancel all pending background tasks. Returns count of cancelled tasks."""
-        cancelled = 0
-        for task in list(self._pending_background_tasks):
-            if not task.done():
-                task.cancel()
-                cancelled += 1
-        self._pending_background_tasks.clear()
-        return cancelled
-
     def _get_metadata(self, key: str, default: Any = None) -> Any:
         """Read per-connection metadata from the websocket.state (or default)."""
         return getattr(self.websocket.state, key, default)
@@ -879,9 +1059,7 @@ class VoiceLiveSDKHandler:
     async def _start_turn_span(self) -> None:
         await self._end_active_turn_span()
         transport = (
-            self._transport.value
-            if hasattr(self._transport, "value")
-            else str(self._transport)
+            self._transport.value if hasattr(self._transport, "value") else str(self._transport)
         )
         turn = ConversationTurnSpan(
             call_connection_id=self.call_connection_id,
@@ -924,6 +1102,18 @@ class VoiceLiveSDKHandler:
             self._mark_audio_playback(False, reset_cancel=False)
 
     async def start(self) -> None:
+        """Start once; stop owns any startup still suspended in a provider await."""
+        if self._shutdown_task is not None:
+            raise RuntimeError("Cannot restart a closed VoiceLive handler")
+        if self._startup_task is None:
+            self._startup_task = asyncio.create_task(self._start(), name="voicelive-start")
+        try:
+            await asyncio.shield(self._startup_task)
+        except BaseException:
+            await self.stop()
+            raise
+
+    async def _start(self) -> None:
         """Establish VoiceLive connection and start event processing."""
         if self._running:
             return
@@ -942,6 +1132,12 @@ class VoiceLiveSDKHandler:
         ) as span:
             start_ts = time.perf_counter()
             try:
+                if self._transport == "acs" and self._prepared_connection is None:
+                    self._prepared_connection = await consume_voicelive_call_warmup(
+                        self.websocket.app.state,
+                        call_connection_id=self.call_connection_id,
+                        cleanup_tasks=self._warmup_cleanup_tasks,
+                    )
                 self._settings = get_settings()
                 connection_options = {
                     "max_msg_size": self._settings.ws_max_msg_size,
@@ -962,7 +1158,9 @@ class VoiceLiveSDKHandler:
                 # These are independent and can run concurrently to cut startup time.
                 # ─────────────────────────────────────────────────────────────
 
-                async def _connect_voicelive(connection_model: str, byom_query: dict[str, str] | None = None):
+                async def _connect_voicelive(
+                    connection_model: str, byom_query: dict[str, str] | None = None
+                ):
                     """Establish VoiceLive WebSocket connection.
 
                     NOTE: The VoiceLive SDK fixes the generative model at connect() time;
@@ -996,7 +1194,8 @@ class VoiceLiveSDKHandler:
                     elapsed = (time.perf_counter() - t0) * 1000
                     logger.info(
                         "[VoiceLive Startup] connect_ms=%.1f | session=%s",
-                        elapsed, self.session_id,
+                        elapsed,
+                        self.session_id,
                     )
 
                 async def _resolve_agents_and_scenario():
@@ -1013,7 +1212,10 @@ class VoiceLiveSDKHandler:
                     if not scenario_name:
                         memo_mgr = getattr(self.websocket.state, "cm", None)
                         if memo_mgr and hasattr(memo_mgr, "get_value_from_corememory"):
-                            from apps.artagent.backend.src.orchestration.naming import get_scenario_from_corememory
+                            from apps.artagent.backend.src.orchestration.naming import (
+                                get_scenario_from_corememory,
+                            )
+
                             scenario_name = get_scenario_from_corememory(memo_mgr)
                             if scenario_name:
                                 logger.debug(
@@ -1027,7 +1229,11 @@ class VoiceLiveSDKHandler:
                     if app_state:
                         app_state = getattr(app_state, "state", None)
 
-                    if app_state and hasattr(app_state, "unified_agents") and app_state.unified_agents:
+                    if (
+                        app_state
+                        and hasattr(app_state, "unified_agents")
+                        and app_state.unified_agents
+                    ):
                         agents = app_state.unified_agents
                         orchestrator_config = resolve_orchestrator_config(
                             session_id=self.session_id,
@@ -1037,7 +1243,9 @@ class VoiceLiveSDKHandler:
                             "Using unified agents for VoiceLive | count=%d start_agent=%s scenario=%s session_id=%s",
                             len(agents),
                             orchestrator_config.start_agent if orchestrator_config else "default",
-                            scenario_name or getattr(orchestrator_config, "scenario_name", None) or "(none)",
+                            scenario_name
+                            or getattr(orchestrator_config, "scenario_name", None)
+                            or "(none)",
                             self.session_id or "(none)",
                         )
                         agent_source = "unified"
@@ -1054,28 +1262,25 @@ class VoiceLiveSDKHandler:
                             "Discovered unified agents | count=%d start_agent=%s scenario=%s session_id=%s",
                             len(agents),
                             orchestrator_config.start_agent if orchestrator_config else "default",
-                            scenario_name or getattr(orchestrator_config, "scenario_name", None) or "(none)",
+                            scenario_name
+                            or getattr(orchestrator_config, "scenario_name", None)
+                            or "(none)",
                             self.session_id or "(none)",
                         )
                         agent_source = "discovered"
 
-                    # Merge scenario agents if scenario is active
+                    # Merge scenario overrides + the Quick Tune session agent into a
+                    # connection-ready registry. Shared with the warm-up path so the
+                    # start agent (and therefore the bound model / BYOM profile)
+                    # cannot diverge between them.
+                    session_agent = get_session_agent(self.session_id)
                     if orchestrator_config and orchestrator_config.has_scenario:
-                        if orchestrator_config.agents:
-                            merged_agents = dict(agents)
-                            merged_agents.update(orchestrator_config.agents)
-                            agents = merged_agents
                         logger.info(
                             "Loaded scenario configuration | scenario=%s start_agent=%s",
                             orchestrator_config.scenario_name,
                             orchestrator_config.start_agent,
                         )
-
-                    # Session Agent Check (Agent Builder) - Priority 1
-                    session_agent = get_session_agent(self.session_id)
                     if session_agent:
-                        agents = dict(agents)
-                        agents[session_agent.name] = session_agent
                         logger.info(
                             "Session agent found (Agent Builder) | name=%s voice=%s session_id=%s",
                             session_agent.name,
@@ -1083,14 +1288,16 @@ class VoiceLiveSDKHandler:
                             self.session_id,
                         )
 
-                    # Determine effective start agent
-                    effective_start_agent = DEFAULT_START_AGENT
-                    if session_agent:
-                        effective_start_agent = session_agent.name
-                    elif orchestrator_config and orchestrator_config.start_agent:
-                        effective_start_agent = orchestrator_config.start_agent
-                    elif hasattr(self._settings, "start_agent") and self._settings.start_agent:
-                        effective_start_agent = self._settings.start_agent
+                    agents, effective_start_agent, effective_handoff_map = build_effective_registry(
+                        orchestrator_config,
+                        base_agents=agents,
+                        session_agent=session_agent,
+                        app_state_handoff_map=getattr(app_state, "handoff_map", None),
+                    )
+                    if not session_agent and not getattr(orchestrator_config, "start_agent", None):
+                        effective_start_agent = (
+                            getattr(self._settings, "start_agent", None) or DEFAULT_START_AGENT
+                        )
 
                     # Load user profile (fast in-memory lookup)
                     user_profile = None
@@ -1100,11 +1307,21 @@ class VoiceLiveSDKHandler:
                     elapsed = (time.perf_counter() - t0) * 1000
                     logger.info(
                         "[VoiceLive Startup] resolve_agents_ms=%.1f | agents=%d scenario=%s session=%s",
-                        elapsed, len(agents),
+                        elapsed,
+                        len(agents),
                         getattr(orchestrator_config, "scenario_name", None) or "(none)",
                         self.session_id,
                     )
-                    return agents, orchestrator_config, session_agent, effective_start_agent, user_profile, agent_source, app_state
+                    return (
+                        agents,
+                        orchestrator_config,
+                        session_agent,
+                        effective_start_agent,
+                        effective_handoff_map,
+                        user_profile,
+                        agent_source,
+                        app_state,
+                    )
 
                 # Resolve agents/scenario FIRST so we know which generative model the
                 # start agent requires. The VoiceLive SDK binds the model at connect()
@@ -1115,6 +1332,7 @@ class VoiceLiveSDKHandler:
                     orchestrator_config,
                     session_agent,
                     effective_start_agent,
+                    effective_handoff_map,
                     user_profile,
                     agent_source,
                     app_state,
@@ -1124,6 +1342,7 @@ class VoiceLiveSDKHandler:
                 # falling back to the global setting when the agent has no override.
                 connection_model = self._settings.azure_voicelive_model
                 start_agent_obj = agents.get(effective_start_agent) if agents else None
+                self._active_start_agent = effective_start_agent
                 if start_agent_obj is not None:
                     try:
                         vl_model = start_agent_obj.get_model_for_mode("voicelive")
@@ -1138,15 +1357,25 @@ class VoiceLiveSDKHandler:
                             model_err,
                         )
                 self._active_model_name = connection_model
-                if connection_model != self._settings.azure_voicelive_model:
-                    logger.info(
-                        "[VoiceLive Startup] Using per-agent model override | agent=%s model=%s "
-                        "(settings default=%s) session=%s",
-                        effective_start_agent,
-                        connection_model,
-                        self._settings.azure_voicelive_model,
-                        self.session_id,
-                    )
+                model_source = (
+                    "agent_override"
+                    if connection_model != self._settings.azure_voicelive_model
+                    else "settings_default"
+                )
+                self._active_model_source = model_source
+                # Unconditional model-resolution KPI. VoiceLive binds the generative
+                # model at connect() (it cannot change mid-call), so this single line
+                # confirms exactly which model will process the session and where it
+                # came from — enabling selected-vs-processed model validation.
+                logger.info(
+                    "[VoiceLive Startup] model_resolved | mode=voicelive agent=%s model=%s "
+                    "source=%s settings_default=%s session=%s",
+                    effective_start_agent,
+                    connection_model,
+                    model_source,
+                    self._settings.azure_voicelive_model,
+                    self.session_id,
+                )
 
                 # Resolve per-agent BYOM (Bring Your Own Model) config from the start
                 # agent. Like the model, BYOM is bound at connect() time (it's a
@@ -1159,8 +1388,32 @@ class VoiceLiveSDKHandler:
                     except Exception as byom_err:  # pragma: no cover - defensive
                         logger.warning(
                             "[VoiceLive Startup] Failed to resolve BYOM config for %s | err=%s",
-                            effective_start_agent, byom_err,
+                            effective_start_agent,
+                            byom_err,
                         )
+                if byom_query:
+                    conflict = byom_profile_model_conflict(
+                        byom_query.get("profile"), connection_model
+                    )
+                    if conflict:
+                        # The profile cannot drive this deployment's API. Keeping it
+                        # yields a connected-but-mute session (STT transcribes, the
+                        # LLM leg never answers). Drop the profile so the session
+                        # falls back to managed Voice Live, which can serve the
+                        # model — a degraded-but-working agent beats a dead one, and
+                        # it self-heals sessions already persisted with the bad pair.
+                        logger.warning(
+                            "[VoiceLive Startup] byom_profile_model_conflict | agent=%s "
+                            "profile=%s model=%s session=%s — %s Falling back to managed "
+                            "Voice Live for this connection.",
+                            effective_start_agent,
+                            byom_query.get("profile"),
+                            connection_model,
+                            self.session_id,
+                            conflict,
+                        )
+                        byom_query = None
+
                 if byom_query:
                     logger.info(
                         "[VoiceLive Startup] BYOM enabled | agent=%s profile=%s%s session=%s",
@@ -1171,6 +1424,22 @@ class VoiceLiveSDKHandler:
                             if "foundry-resource-override" in byom_query
                             else ""
                         ),
+                        self.session_id,
+                    )
+                elif not is_managed_voicelive_model(connection_model):
+                    # Managed Voice Live (no BYOM) with a model outside the known
+                    # serveable set: the connection will succeed but the model
+                    # typically never responds, so the agent goes silent until the
+                    # ~900s idle timeout. Surface it loudly instead of silently
+                    # connecting to a dead session (verified via App Insights:
+                    # gpt-5-chat / o3-mini connected but completed 0 turns).
+                    logger.warning(
+                        "[VoiceLive Startup] unsupported_managed_model | agent=%s model=%s "
+                        "is not a known managed Voice Live model — the agent may connect but "
+                        "never respond (idle timeout). Use a supported model or enable BYOM. "
+                        "session=%s",
+                        effective_start_agent,
+                        connection_model,
                         self.session_id,
                     )
 
@@ -1202,12 +1471,21 @@ class VoiceLiveSDKHandler:
                         await prepared.close()
                     await _connect_voicelive(connection_model, byom_query)
 
-
                 # Set span attributes from resolved values
                 span.set_attribute("voicelive.agent_source", agent_source)
                 span.set_attribute("voicelive.agents_count", len(agents))
+                # Model bound to this session (queryable at the session/handler level,
+                # not just the nested voicelive.connect span) so selected-vs-processed
+                # model can be validated per session.
+                span.set_attribute("voicelive.model", connection_model)
+                span.set_attribute("gen_ai.request.model", connection_model)
+                span.set_attribute("voicelive.model_source", model_source)
+                if byom_query:
+                    span.set_attribute("voicelive.byom_profile", byom_query.get("profile", ""))
                 if orchestrator_config and orchestrator_config.has_scenario:
-                    span.set_attribute("voicelive.scenario", orchestrator_config.scenario_name or "")
+                    span.set_attribute(
+                        "voicelive.scenario", orchestrator_config.scenario_name or ""
+                    )
                 if session_agent:
                     span.set_attribute("voicelive.session_agent", session_agent.name)
                 if user_profile:
@@ -1215,17 +1493,6 @@ class VoiceLiveSDKHandler:
                     span.set_attribute(
                         "voicelive.client_id", user_profile.get("client_id", "unknown")
                     )
-
-                # Determine handoff map - prefer from app.state or orchestrator config,
-                # fallback to dynamically building from current agents
-                effective_handoff_map: dict[str, str] = {}
-                if app_state and hasattr(app_state, "handoff_map") and app_state.handoff_map:
-                    effective_handoff_map = app_state.handoff_map
-                elif orchestrator_config and orchestrator_config.handoff_map:
-                    effective_handoff_map = orchestrator_config.handoff_map
-                else:
-                    # Build dynamically from agent declarations (single source of truth)
-                    effective_handoff_map = build_handoff_map(agents)
 
                 # Get MemoManager from websocket state (set by media_handler)
                 memo_manager = getattr(self.websocket.state, "cm", None)
@@ -1243,6 +1510,10 @@ class VoiceLiveSDKHandler:
                     transport=self._transport,
                     model_name=connection_model,
                     memo_manager=memo_manager,
+                    # Hand over the scenario we actually connected with; otherwise the
+                    # orchestrator re-resolves without a scenario name and loses the
+                    # declarative handoff instructions and routing.
+                    orchestrator_config=orchestrator_config,
                 )
                 span.set_attribute("voicelive.start_agent", effective_start_agent)
 
@@ -1334,116 +1605,113 @@ class VoiceLiveSDKHandler:
                 span.set_status(Status(StatusCode.ERROR, str(e)))
                 span.set_attribute("error.type", type(e).__name__)
                 span.set_attribute("error.message", str(e))
-                await self.stop()
+
+                # Surface *before* stop(): a bad model/deployment or credential
+                # here would otherwise close the socket with no explanation.
+                info = classify_voice_error(
+                    e,
+                    source="voicelive",
+                    model=self._active_model_name
+                    or getattr(self._settings, "azure_voicelive_model", None),
+                    agent=self._active_start_agent,
+                )
+                span.set_attribute("error.code", info.code)
+                self._startup_error = info
+                await emit_voice_error(
+                    self.websocket,
+                    info,
+                    session_id=self.session_id,
+                    call_id=self.call_connection_id,
+                )
                 raise
 
     async def stop(self) -> None:
-        """Stop event processing and release VoiceLive resources."""
-        if not self._running:
-            if self._prepared_connection:
-                await self._prepared_connection.close()
-                self._prepared_connection = None
-            return
-
-        with tracer.start_as_current_span(
-            "voicelive_handler.stop",
-            kind=trace.SpanKind.INTERNAL,
-            attributes=create_service_handler_attrs(
-                service_name="VoiceLiveSDKHandler.stop",
-                call_connection_id=self.call_connection_id,
-                session_id=self.session_id,
-            ),
-        ) as stop_span:
-            self._running = False
-            self._shutdown.set()
-
-            # Unregister from scenario update callbacks
-            unregister_voicelive_orchestrator(self.session_id)
-
-            # Persist session state to Redis before stopping
-            try:
-                memo_manager = getattr(self.websocket.state, "cm", None) if self.websocket else None
-                redis_mgr = (
-                    getattr(self.websocket.app.state, "redis", None) if self.websocket else None
-                )
-                if memo_manager and redis_mgr:
-                    # Sync orchestrator state to memo_manager first
-                    if self._orchestrator and hasattr(self._orchestrator, "_sync_to_memo_manager"):
-                        self._orchestrator._sync_to_memo_manager()
-                    await memo_manager.persist_to_redis_async(redis_mgr)
-                    logger.info(
-                        "📦 Session state persisted to Redis | session=%s",
-                        self.session_id,
-                    )
-            except Exception as persist_error:
-                logger.warning(
-                    "Failed to persist session state: %s | session=%s",
-                    persist_error,
-                    self.session_id,
-                )
-
-            # Cleanup DTMFProcessor
-            await self._dtmf_processor.cleanup()
-
-            if self._event_task:
-                self._event_task.cancel()
-                try:
-                    await self._event_task
-                except asyncio.CancelledError:
-                    pass
-                finally:
-                    self._event_task = None
-
-            if self._connection_cm:
-                try:
-                    with tracer.start_as_current_span(
-                        "voicelive.connection.close",
-                        kind=trace.SpanKind.SERVER,
-                        attributes=create_service_dependency_attrs(
-                            source_service="voicelive_handler",
-                            target_service="azure_voicelive",
-                            call_connection_id=self.call_connection_id,
-                            session_id=self.session_id,
-                        ),
-                    ):
-                        await self._connection_cm.__aexit__(None, None, None)
-                except Exception:
-                    logger.exception("Error closing VoiceLive connection")
-                finally:
-                    self._connection_cm = None
-                    self._connection = None
-
-            # Cleanup orchestrator resources (greeting tasks, references)
-            if self._orchestrator:
-                try:
-                    self._orchestrator.cleanup()
-                except Exception:
-                    logger.debug("Failed to cleanup orchestrator", exc_info=True)
-                finally:
-                    self._orchestrator = None
-
-            # Cancel all pending background tasks to prevent memory leaks
-            cancelled_count = self._cancel_all_background_tasks()
-            if cancelled_count > 0:
-                logger.debug(
-                    "Cancelled %d background tasks on stop | session=%s",
-                    cancelled_count,
-                    self.session_id,
-                )
-
-            # Credential is now module-level cached — do NOT close it per session.
-            # Just clear the local reference.
-            self._credential = None
-
-            # Clear messenger reference to break circular refs
-            self._messenger = None
-
-            stop_span.set_status(trace.StatusCode.OK)
-            logger.info(
-                "VoiceLive SDK handler stopped | session=%s call=%s",
-                self.session_id,
-                self.call_connection_id,
+        """Await retained cleanup; all callers observe its same completion/result."""
+        if self._shutdown_task is None:
+            self._shutdown_task = asyncio.create_task(
+                self._close_resources(), name=f"voicelive-close-{self.session_id}"
             )
+        await asyncio.shield(self._shutdown_task)
+
+    async def _close_resources(self) -> None:
+        self._stopping = True
+        self._running = False
+        self._shutdown.set()
+        if self._orchestrator is not None:
+            unregister_voicelive_orchestrator(self.session_id, expected=self._orchestrator)
+        errors: list[Exception] = []
+        try:
+            await cancel_and_join([self._startup_task] if self._startup_task else [])
+        except Exception as exc:
+            errors.append(exc)
+        try:
+            await self._dtmf_processor.cleanup()
+        except Exception as exc:
+            errors.append(exc)
+        try:
+            tasks = set(self._pending_background_tasks)
+            if self._event_task:
+                tasks.add(self._event_task)
+            await cancel_and_join(tasks)
+        except Exception as exc:
+            errors.append(exc)
+        try:
+            if self._orchestrator:
+                await self._orchestrator.cancel_and_join_tasks()
+        except Exception as exc:
+            errors.append(exc)
+        try:
+            await cancel_and_join(self._warmup_cleanup_tasks, cancel=False)
+        except Exception as exc:
+            errors.append(exc)
+        quiesced = not errors
+        memo = getattr(self.websocket.state, "cm", None) if self.websocket else None
+        redis = getattr(self.websocket.app.state, "redis", None) if self.websocket else None
+        try:
+            if quiesced and self._orchestrator:
+                self._orchestrator._sync_to_memo_manager()
+        except Exception as exc:
+            errors.append(exc)
+        try:
+            await finish_persistence(memo, redis, quiesced=quiesced and not errors)
+        except Exception as exc:
+            errors.append(exc)
+        # Sockets are closed even if a producer failed; never erase references
+        # to unacknowledged tasks or native resources and pretend they stopped.
+        if self._connection_cm:
+            try:
+                await self._connection_cm.__aexit__(None, None, None)
+            except Exception as exc:
+                errors.append(exc)
+            else:
+                self._connection_cm = None
+                self._connection = None
+        if self._prepared_connection:
+            try:
+                await self._prepared_connection.close()
+            except Exception as exc:
+                errors.append(exc)
+            else:
+                self._prepared_connection = None
+        from apps.artagent.backend.src.orchestration.session_memory import (
+            release_session_memory,
+        )
+
+        try:
+            await release_session_memory(self.session_id, memo, self.websocket)
+        except Exception as exc:
+            errors.append(exc)
+        if quiesced:
+            if self._orchestrator:
+                self._orchestrator.cleanup()
+                self._orchestrator = None
+            self._event_task = None
+            self._pending_background_tasks.clear()
+            self._warmup_cleanup_tasks.clear()
+            self._credential = None
+            self._messenger = None
+        if errors:
+            raise ExceptionGroup("VoiceLive close failed", errors)
 
     async def handle_audio_data(self, message_data: str) -> None:
         """Forward ACS media payloads to VoiceLive."""
@@ -1753,39 +2021,11 @@ class VoiceLiveSDKHandler:
             transcript_text = getattr(event, "transcript", "") or getattr(event, "delta", "")
             if not transcript_text:
                 return
-            session_id = self._messenger._session_id
-            if not session_id:
-                return
             turn_id = self._messenger.resolve_user_turn_id(self._extract_item_id(event))
-            payload = {
-                "type": "user",
-                "message": "...",
-                "content": transcript_text,
-                "streaming": True,
-                "active_agent": self._messenger._active_agent_name,
-                "active_agent_label": self._messenger._active_agent_label,
-            }
-            if turn_id:
-                payload["turn_id"] = turn_id
-                payload["response_id"] = turn_id
-            envelope = make_envelope(
-                etype="event",
-                sender="User",
-                payload=payload,
-                topic="session",
-                session_id=session_id,
-                call_id=self.call_connection_id,
-            )
-            self._background_task(
-                send_session_envelope(
-                    self.websocket,
-                    envelope,
-                    session_id=session_id,
-                    conn_id=None,
-                    event_label="voicelive_user_transcript_delta",
-                    broadcast_only=True,
-                ),
-                label="voicelive_user_transcript_delta",
+            await self._messenger.send_user_partial(
+                transcript_text,
+                turn_id=turn_id,
+                language=getattr(event, "language", None),
             )
 
         elif etype == ServerEventType.RESPONSE_AUDIO_TRANSCRIPT_DELTA:
@@ -1928,6 +2168,7 @@ class VoiceLiveSDKHandler:
             logger.debug("Failed to send StopAudio", exc_info=True)
 
     async def _send_error(self, event: Any) -> None:
+        """Relay an ``ErrorData`` frame on the raw ACS transport."""
         if not self._websocket_open:
             return
         error_info: dict[str, Any] = {
@@ -1943,6 +2184,12 @@ class VoiceLiveSDKHandler:
             logger.debug("Failed to send error message", exc_info=True)
 
     async def _handle_server_error(self, event: Any) -> None:
+        """Handle a VoiceLive ``error`` server event.
+
+        Benign cancel-race codes are ignored. Everything else stops playback,
+        relays an ``ErrorData`` frame on the ACS transport, and broadcasts a
+        classified session envelope so the operator UI shows the real cause.
+        """
         error_obj = getattr(event, "error", None)
         code = getattr(error_obj, "code", "VoiceLiveError")
         message = getattr(error_obj, "message", "Unknown VoiceLive error")
@@ -1952,11 +2199,14 @@ class VoiceLiveSDKHandler:
         # after the response already finished, so VoiceLive reports there is no
         # active response to cancel. This is NOT a real failure — do not stop
         # audio or surface an error to the UI, or the next turn gets cut off.
-        BENIGN_ERROR_CODES = {
-            "response_cancel_not_active",
-            "response_cancel_no_active_response",
-        }
-        if code in BENIGN_ERROR_CODES:
+        info = classify_voicelive_server_error(
+            code,
+            message,
+            details=details,
+            model=self._active_model_name,
+            agent=self._active_start_agent,
+        )
+        if info is None:
             logger.info(
                 "[VoiceLiveSDK] Ignoring benign cancel-race error | session=%s code=%s",
                 self.session_id,
@@ -1981,6 +2231,12 @@ class VoiceLiveSDKHandler:
 
         await self._send_stop_audio()
         await self._send_error(event)
+        await emit_voice_error(
+            self.websocket,
+            info,
+            session_id=self.session_id,
+            call_id=self.call_connection_id,
+        )
 
     async def _handle_dtmf_tone(self, raw_tone: Any) -> None:
         """Delegate DTMF tone handling to the DTMFProcessor."""
@@ -2054,7 +2310,10 @@ class VoiceLiveSDKHandler:
 
             # Echo user message back to frontend so it appears in the chat UI
             if self._messenger:
-                await self._messenger.send_user_message(text)
+                turn_id = uuid.uuid4().hex
+                self._messenger.begin_user_turn(turn_id)
+                await self._messenger.send_user_message(text, turn_id=turn_id)
+                self._messenger.finish_user_turn(turn_id)
 
             logger.info(
                 "Forwarded user text message (%s chars) | session=%s",
@@ -2465,13 +2724,15 @@ class VoiceLiveSDKHandler:
                 turn_wall_ms=total_turn_duration_ms,
                 agent_name=self._messenger._active_agent_name or "unknown",
                 latency_anchor="vad_end" if self._vad_end_time else "turn_start",
+                model=self._active_model_name,
             )
 
         logger.info(
-            "[VoiceLive] Turn %d complete | agent=%s | ttft=%s ttfb=%s synth=%s "
+            "[VoiceLive] Turn %d complete | agent=%s model=%s | ttft=%s ttfb=%s synth=%s "
             "| turn_wall=%.0fms | session=%s",
             self._turn_number,
             self._messenger._active_agent_name or "unknown",
+            self._active_model_name or "unknown",
             f"{llm_ttft_ms:.0f}ms" if llm_ttft_ms is not None else "N/A",
             f"{tts_ttfb_ms:.0f}ms" if tts_ttfb_ms is not None else "N/A",
             f"{synth_ms:.0f}ms" if synth_ms is not None else "N/A",
@@ -2577,9 +2838,10 @@ async def consume_voicelive_call_warmup(
     app_state: Any,
     *,
     call_connection_id: str | None,
+    cleanup_tasks: set[asyncio.Task],
     timeout_sec: float = _VOICELIVE_WARMUP_WAIT_SECONDS,
 ) -> VoiceLivePreparedConnection | None:
-    """Return a pending warm VoiceLive connection, or None for cold-start fallback."""
+    """Consume warmup; abandoned work remains in the caller's cleanup task set."""
     if not app_state or not call_connection_id:
         return None
 
@@ -2590,24 +2852,38 @@ async def consume_voicelive_call_warmup(
     if not task:
         return None
 
+    def retain_disposal() -> None:
+        async def dispose() -> None:
+            # Retained cleanup: the handler joins it without cancellation.
+            prepared = await task
+            if prepared:
+                await prepared.close()
+
+        disposing = asyncio.create_task(dispose(), name="voicelive-warmup-disposal")
+        cleanup_tasks.add(disposing)
+
+        def observe(done: asyncio.Task) -> None:
+            if not done.cancelled() and done.exception() is not None:
+                logger.error("VoiceLive warmup disposal failed: %s", done.exception())
+
+        disposing.add_done_callback(observe)
+
     try:
         return await asyncio.wait_for(asyncio.shield(task), timeout=timeout_sec)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.debug(
             "VoiceLive warmup not ready after %.0fms | call=%s",
             timeout_sec * 1000,
             call_connection_id,
         )
 
-        async def _close_when_ready(done: asyncio.Task) -> None:
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                prepared = done.result()
-                if prepared:
-                    await prepared.close()
-
-        task.add_done_callback(lambda done: asyncio.create_task(_close_when_ready(done)))
+        retain_disposal()
         return None
+    except asyncio.CancelledError:
+        retain_disposal()
+        raise
     except Exception:
+        cleanup_tasks.add(task)
         logger.debug("VoiceLive warmup consume failed | call=%s", call_connection_id, exc_info=True)
         return None
 
@@ -2658,7 +2934,8 @@ async def _prepare_voicelive_call_warmup(
     try:
         start_agent_obj = agents.get(effective_start_agent) if agents else None
         if start_agent_obj is not None:
-            await start_agent_obj.apply_voicelive_session(
+            await voicelive_session.apply_voicelive_session(
+                start_agent_obj,
                 connection,
                 system_vars=system_vars,
                 say=None,
@@ -2675,7 +2952,7 @@ async def _prepare_voicelive_call_warmup(
             prepared.session_prepared,
         )
         return prepared
-    except Exception:
+    except BaseException:
         await prepared.close()
         raise
 
@@ -2688,6 +2965,9 @@ async def _resolve_voicelive_warmup_config(
     settings: Any,
     user_email: str | None,
 ) -> tuple[dict[str, Any], str, str, dict[str, str] | None, dict[str, Any]]:
+    from apps.artagent.backend.src.orchestration.session_memory import prime_session_definitions
+
+    await prime_session_definitions(session_id)
     if app_state and getattr(app_state, "unified_agents", None):
         agents = app_state.unified_agents
     else:
@@ -2697,23 +2977,17 @@ async def _resolve_voicelive_warmup_config(
         session_id=session_id,
         scenario_name=scenario_name,
     )
-    if orchestrator_config and orchestrator_config.has_scenario and orchestrator_config.agents:
-        merged_agents = dict(agents)
-        merged_agents.update(orchestrator_config.agents)
-        agents = merged_agents
-
     session_agent = get_session_agent(session_id)
-    if session_agent:
-        agents = dict(agents)
-        agents[session_agent.name] = session_agent
-
-    effective_start_agent = DEFAULT_START_AGENT
-    if session_agent:
-        effective_start_agent = session_agent.name
-    elif orchestrator_config and orchestrator_config.start_agent:
-        effective_start_agent = orchestrator_config.start_agent
-    elif getattr(settings, "start_agent", None):
-        effective_start_agent = settings.start_agent
+    # Same merge as the start path — a warm connection is only adopted when its
+    # model and BYOM query match, and both derive from the start agent.
+    agents, effective_start_agent, _ = build_effective_registry(
+        orchestrator_config,
+        base_agents=agents,
+        session_agent=session_agent,
+        app_state_handoff_map=getattr(app_state, "handoff_map", None),
+    )
+    if not session_agent and not getattr(orchestrator_config, "start_agent", None):
+        effective_start_agent = getattr(settings, "start_agent", None) or DEFAULT_START_AGENT
 
     connection_model = settings.azure_voicelive_model
     byom_query: dict[str, str] | None = None

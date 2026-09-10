@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, TypedDict
 
 from apps.artagent.backend.registries.toolstore.registry import register_tool
 from utils.ml_logging import get_logger
+from utils.pii_filter import mask_pii
 
 # Import centralized constants (local import)
 from .constants import (
@@ -210,7 +211,7 @@ async def get_account_routing_info(args: GetAccountRoutingInfoArgs) -> Dict[str,
         
         logger.info(
             "✅ Account info retrieved | client=%s",
-            client_id
+            mask_pii(client_id, prefix="client")
         )
         
         return _json(
@@ -367,7 +368,7 @@ async def get_rollover_options(args: GetRolloverOptionsArgs) -> Dict[str, Any]:
         
         logger.info(
             "📊 Presenting rollover options | client=%s",
-            client_id
+            mask_pii(client_id, prefix="client")
         )
         
         # First check if session profile was injected by orchestrator
@@ -914,7 +915,7 @@ async def schedule_advisor_consultation(args: ScheduleAdvisorConsultationArgs) -
         
         logger.info(
             "📅 Advisor consultation scheduled | client=%s advisor=%s urgency=%s appt=%s",
-            client_id, advisor_type, urgency, appointment_id
+            mask_pii(client_id, prefix="client"), advisor_type, urgency, appointment_id
         )
         
         return _json(

@@ -15,6 +15,7 @@ Implements MCP standard patterns:
 """
 
 import asyncio
+import inspect
 import json
 import os
 import sys
@@ -39,6 +40,18 @@ MCP_PORT = int(os.getenv("MCP_SERVER_PORT", "8080"))
 # Transport mode: "stdio" for local CLI, "streamable-http" for deployed HTTP access
 # Per MCP spec 2025-11-25: https://modelcontextprotocol.io/specification/2025-11-25/basic/transports
 MCP_TRANSPORT: Literal["stdio", "streamable-http"] = os.getenv("MCP_TRANSPORT", "streamable-http")  # type: ignore
+
+# Host/Origin allow-list for the streamable-http transport.
+# FastMCP 3.4.3+ enables Host/Origin protection by default: its
+# HostOriginGuardMiddleware returns "421 Misdirected Request" for any Host header
+# not in its defaults (localhost/127.0.0.1 + the bound server IP). Behind Azure
+# Container Apps the request arrives with the app FQDN as Host (and health probes
+# use pod IPs), none of which are in the defaults, so every ingress request 421s.
+# EasyAuth already authenticates each request, so permissive host matching is safe.
+# Override with MCP_ALLOWED_HOSTS (comma-separated; supports "*" and fnmatch).
+MCP_ALLOWED_HOSTS: list[str] = [
+    h.strip() for h in os.getenv("MCP_ALLOWED_HOSTS", "*").split(",") if h.strip()
+] or ["*"]
 
 # Path to local JSON file (for development fallback)
 LOCAL_DATA_FILE = Path(__file__).parent.parent / "database" / "decline_codes_policy_pack.json"
@@ -708,21 +721,32 @@ async def tools_get_decline_codes_metadata(request: Request) -> Response:
 
 
 async def _list_registered_tools() -> dict[str, Any]:
-    """Return the registered tools using the public FastMCP API.
+    """Return the registered tools keyed by name, across FastMCP versions.
 
-    FastMCP exposes the supported public async ``get_tools()`` accessor. Older
-    releases stored tools on the private ``_tool_manager._tools`` mapping, which
-    was removed in newer versions (causing AttributeError at runtime). Prefer the
-    public API and fall back to the private attribute only when necessary.
+    FastMCP 3.x exposes the public async ``list_tools()`` returning a
+    ``Sequence[Tool]``; FastMCP 2.x exposed ``get_tools()`` returning a
+    ``{name: Tool}`` mapping. Older releases stored tools on the private
+    ``_tool_manager._tools`` mapping. Prefer the newest public API and degrade
+    gracefully so ``/health``, ``/ready`` and ``/tools/list`` keep reporting the
+    real tool set.
     """
-    try:
-        return dict(await mcp.get_tools())
-    except AttributeError:
-        # Fallback for older FastMCP releases without a public get_tools().
-        tool_manager = getattr(mcp, "_tool_manager", None)
-        if tool_manager is not None:
-            return dict(getattr(tool_manager, "_tools", {}))
-        return {}
+    # FastMCP 3.x: list_tools() -> Sequence[Tool]
+    list_tools = getattr(mcp, "list_tools", None)
+    if list_tools is not None:
+        try:
+            tools = await list_tools(run_middleware=False)
+        except TypeError:
+            tools = await list_tools()
+        return {tool.name: tool for tool in tools}
+    # FastMCP 2.x: get_tools() -> {name: Tool}
+    get_tools = getattr(mcp, "get_tools", None)
+    if get_tools is not None:
+        return dict(await get_tools())
+    # Legacy private fallback for very old releases.
+    tool_manager = getattr(mcp, "_tool_manager", None)
+    if tool_manager is not None:
+        return dict(getattr(tool_manager, "_tools", {}))
+    return {}
 
 
 @mcp.custom_route("/health", methods=["GET"])
@@ -779,13 +803,27 @@ async def main() -> None:
         # Streamable HTTP transport: for deployed HTTP access
         # This serves the MCP protocol AND health endpoints on the same port
         logger.info(f"Starting MCP server with streamable-http transport on port {MCP_PORT}...")
-        try:
-            await mcp.run_http_async(
-                transport="streamable-http",
-                host="0.0.0.0",
-                port=MCP_PORT,
-                show_banner=False,
+
+        # FastMCP 3.4.3+ accepts an allowed_hosts allow-list to relax the
+        # default Host/Origin guard (which 421s the Container Apps FQDN). Pass it
+        # only when supported so older FastMCP releases don't raise TypeError.
+        run_kwargs: dict[str, Any] = {
+            "transport": "streamable-http",
+            "host": "0.0.0.0",
+            "port": MCP_PORT,
+            "show_banner": False,
+        }
+        if "allowed_hosts" in inspect.signature(mcp.run_http_async).parameters:
+            run_kwargs["allowed_hosts"] = MCP_ALLOWED_HOSTS
+            logger.info(f"MCP Host/Origin guard allow-list: {MCP_ALLOWED_HOSTS}")
+        else:
+            logger.warning(
+                "Installed FastMCP does not support allowed_hosts; "
+                "Host/Origin guard may 421 requests arriving with the app FQDN"
             )
+
+        try:
+            await mcp.run_http_async(**run_kwargs)
         except Exception as e:
             logger.error(f"MCP HTTP server error: {e}", exc_info=True)
             raise

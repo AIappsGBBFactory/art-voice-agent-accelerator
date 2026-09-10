@@ -230,7 +230,7 @@ async def _sync_app_state_mcp_status(app_state: Any) -> None:
     for name, config in all_servers.items():
         url = config["url"]
         transport = config.get("transport", "streamable-http")
-        headers = config.get("headers", {})
+        headers = await _resolve_server_headers(config)
         
         # Quick health check
         is_healthy, health_data, error = await _check_server_health(
@@ -267,6 +267,25 @@ def _merge_auth_headers(headers: dict[str, str], auth_token: str | None) -> dict
         if "Authorization" not in merged and "authorization" not in merged:
             merged["Authorization"] = f"Bearer {auth_token}"
     return merged
+
+
+async def _resolve_server_headers(config: dict[str, Any]) -> dict[str, str]:
+    """Resolve request headers for a server, acquiring managed-identity auth.
+
+    Env-configured servers carry auth_enabled/app_id but no bearer token, so
+    health probes must acquire one (matching startup registration); otherwise
+    EasyAuth-protected servers are reported "unhealthy" despite working tools.
+    """
+    headers = dict(config.get("headers", {}) or {})
+    if "Authorization" in headers or "authorization" in headers:
+        return headers
+    if config.get("auth_enabled") and config.get("app_id"):
+        from apps.artagent.backend.registries.toolstore.mcp.auth import (
+            get_mcp_auth_headers,
+        )
+
+        headers.update(await get_mcp_auth_headers(config["app_id"]))
+    return headers
 
 
 async def _check_server_health(
@@ -443,7 +462,7 @@ async def list_mcp_servers(request: Request) -> dict[str, Any]:
         url = config["url"]
         timeout = config.get("timeout", MCP_SERVER_TIMEOUT)
         source = config.get("source", "unknown")
-        headers = config.get("headers", {})
+        headers = await _resolve_server_headers(config)
 
         # Check health (with auth headers if configured)
         is_healthy, health_data, error = await _check_server_health(
@@ -529,9 +548,12 @@ async def add_mcp_server(
         server.url, timeout=server.timeout, headers=merged_headers
     )
     if not is_healthy:
+        logger.error(
+            "MCP server health check failed | url=%s error=%s", server.url, error
+        )
         raise HTTPException(
             status_code=503,
-            detail=f"Cannot connect to MCP server at {server.url}: {error}",
+            detail=f"Cannot connect to MCP server at {server.url}.",
         )
 
     # Discover and register tools (with auth headers)
@@ -545,13 +567,13 @@ async def add_mcp_server(
 
     if register_error:
         logger.error(
-            "Connected to MCP server '%s' but failed to register tools: %s",
+            "MCP tool registration failed | server=%s error=%s",
             server.name,
             register_error,
         )
         raise HTTPException(
             status_code=500,
-            detail="Connected to server but failed to register tools",
+            detail="Connected to server but failed to register tools.",
         )
 
     # Store in runtime registry (including headers for tool execution)
@@ -931,7 +953,7 @@ async def oauth_callback(
         logger.error(f"OAuth token exchange request failed: {e}")
         raise HTTPException(
             status_code=502,
-            detail=f"Failed to contact token endpoint: {e}",
+            detail="Failed to contact token endpoint.",
         )
 
     # Store the token with the MCP server config

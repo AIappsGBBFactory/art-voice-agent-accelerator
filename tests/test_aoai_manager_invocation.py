@@ -1,8 +1,7 @@
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from apps.artagent.backend.registries.agentstore.base import ModelConfig
 from src.aoai.manager import AzureOpenAIManager
 
@@ -16,7 +15,7 @@ async def test_generate_response_respects_responses_config():
         enable_tracing=False,
     )
     fake_client = MagicMock()
-    fake_client.responses.create = MagicMock(
+    fake_client.responses.create = AsyncMock(
         return_value=SimpleNamespace(
             id="resp_1",
             model="o4-mini",
@@ -51,7 +50,9 @@ async def test_generate_response_respects_responses_config():
     )
 
     assert response.endpoint_used == "responses"
-    fake_client.responses.create.assert_called_once()
+    assert response.content == "ok"
+    fake_client.responses.create.assert_awaited_once()
+    fake_client.chat.completions.create.assert_not_called()
     called = fake_client.responses.create.call_args.kwargs
     assert called["model"] == "o4-mini"
     assert called["temperature"] == 0.2
@@ -77,7 +78,7 @@ async def test_generate_response_respects_chat_config():
     fake_client.responses.create = MagicMock()
     fake_client.chat = MagicMock()
     fake_client.chat.completions = MagicMock()
-    fake_client.chat.completions.create = MagicMock(
+    fake_client.chat.completions.create = AsyncMock(
         return_value=SimpleNamespace(
             id="chat_1",
             model="gpt-4o",
@@ -108,7 +109,9 @@ async def test_generate_response_respects_chat_config():
     )
 
     assert response.endpoint_used == "chat"
-    fake_client.chat.completions.create.assert_called_once()
+    assert response.content == "ok"
+    fake_client.chat.completions.create.assert_awaited_once()
+    fake_client.responses.create.assert_not_called()
     called = fake_client.chat.completions.create.call_args.kwargs
     assert called["model"] == "gpt-4o"
     assert called["temperature"] == 0.3

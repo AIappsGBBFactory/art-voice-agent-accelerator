@@ -27,6 +27,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 backend_dir = PROJECT_ROOT / "apps" / "artagent" / "backend"
 sys.path.insert(0, str(backend_dir))
 
+from utils.pii_filter import mask_pii
+
 # ============================================================================
 # BOOTSTRAP CONFIGURATION (MUST BE FIRST)
 # ============================================================================
@@ -119,10 +121,9 @@ def display_config_info():
     for key, value in config_vars.items():
         print(f"  {key}: {value}")
 
-    # Optionally show API key if set (masked)
+    # Optionally show API key fingerprint if set (non-reversible pseudonym)
     if api_key:
-        masked_key = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else "***"
-        print(f"  Azure OpenAI API Key: {masked_key}")
+        print(f"  Azure OpenAI API Key: {mask_pii(api_key, prefix='aoai_key')}")
 
     print("\n" + "="*80 + "\n")
 

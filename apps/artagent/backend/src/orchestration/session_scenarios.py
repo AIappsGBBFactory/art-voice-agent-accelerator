@@ -25,6 +25,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from apps.artagent.backend.registries.definitions import definition_payload as _serialize_scenario
 from apps.artagent.backend.src.orchestration.naming import (
     SCENARIO_KEY_ACTIVE,
     SCENARIO_KEY_ALL,
@@ -64,9 +65,7 @@ def set_redis_manager(redis_mgr: Any) -> None:
     logger.debug("Redis manager set for session_scenarios")
 
 
-def register_scenario_update_callback(
-    callback: Callable[[str, ScenarioConfig], bool]
-) -> None:
+def register_scenario_update_callback(callback: Callable[[str, ScenarioConfig], bool]) -> None:
     """
     Register a callback to be invoked when a session scenario is updated.
 
@@ -78,93 +77,35 @@ def register_scenario_update_callback(
 
 
 def _parse_scenario_data(scenario_data: dict) -> ScenarioConfig:
-    """
-    Parse a scenario data dict into a ScenarioConfig object.
-    
-    Helper function to avoid code duplication.
-    """
-    from apps.artagent.backend.registries.scenariostore.loader import (
-        AgentOverride,
-        GenericHandoffConfig,
-        HandoffConfig,
-        ScenarioConfig,
-    )
-    
-    # Parse handoffs
-    handoffs = []
-    for h in scenario_data.get("handoffs", []):
-        context_vars = h.get("context_vars", h.get("handoff_context", {}))
-        if not isinstance(context_vars, dict):
-            context_vars = {}
-        handoffs.append(HandoffConfig(
-            from_agent=h.get("from_agent", ""),
-            to_agent=h.get("to_agent", ""),
-            tool=h.get("tool", ""),
-            type=h.get("type", "announced"),
-            share_context=h.get("share_context", True),
-            handoff_condition=h.get("handoff_condition", ""),
-            context_vars=context_vars,
-        ))
-    
-    # Parse agent_defaults
-    agent_defaults = None
-    agent_defaults_data = scenario_data.get("agent_defaults")
-    if agent_defaults_data:
-        agent_defaults = AgentOverride(
-            greeting=agent_defaults_data.get("greeting"),
-            return_greeting=agent_defaults_data.get("return_greeting"),
-            description=agent_defaults_data.get("description"),
-            template_vars=agent_defaults_data.get("template_vars", {}),
-            voice_name=agent_defaults_data.get("voice_name"),
-            voice_rate=agent_defaults_data.get("voice_rate"),
-        )
-    
-    # Parse generic_handoff
-    generic_handoff_data = scenario_data.get("generic_handoff", {})
-    generic_handoff = GenericHandoffConfig(
-        enabled=generic_handoff_data.get("enabled", False),
-        allowed_targets=generic_handoff_data.get("allowed_targets", []),
-        require_client_id=generic_handoff_data.get("require_client_id", False),
-        default_type=generic_handoff_data.get("default_type", "announced"),
-        share_context=generic_handoff_data.get("share_context", True),
-    )
-    
-    # Create ScenarioConfig with all fields
-    return ScenarioConfig(
-        name=scenario_data.get("name", "custom"),
-        description=scenario_data.get("description", ""),
-        icon=scenario_data.get("icon", "🎭"),
-        agents=scenario_data.get("agents", []),
-        agent_defaults=agent_defaults,
-        global_template_vars=scenario_data.get("global_template_vars", {}),
-        tools=scenario_data.get("tools", []),
-        start_agent=scenario_data.get("start_agent"),
-        handoff_type=scenario_data.get("handoff_type", "announced"),
-        handoffs=handoffs,
-        generic_handoff=generic_handoff,
-    )
+    """Decode persisted records through the same definition contract as YAML."""
+    from apps.artagent.backend.registries.scenariostore.loader import ScenarioConfig
+
+    return ScenarioConfig.from_dict(scenario_data.get("name", "custom"), scenario_data)
 
 
-def _load_scenarios_from_redis(session_id: str) -> dict[str, ScenarioConfig]:
+def _load_scenarios_from_redis(session_id: str, *, memo=None) -> dict[str, ScenarioConfig]:
     """
     Load ALL scenarios for a session from Redis via MemoManager.
-    
+
     Supports both new format (session_scenarios_all) and legacy format (session_scenario_config).
-    
+
     Returns dict of scenario_name -> ScenarioConfig.
     """
-    if not _redis_manager:
+    if memo is None and not _redis_manager:
         return {}
-    
+
     try:
         from src.stateful.state_managment import MemoManager
-        
-        memo = MemoManager.from_redis(session_id, _redis_manager)
-        
+
+        if memo is None:
+            from apps.artagent.backend.src.orchestration.session_memory import live_memo
+
+            memo = live_memo(session_id) or MemoManager.from_redis(session_id, _redis_manager)
+
         # Try new multi-scenario format first
         all_scenarios_data = memo.get_value_from_corememory(SCENARIO_KEY_ALL)
         active_name = memo.get_value_from_corememory(SCENARIO_KEY_ACTIVE)
-        
+
         if all_scenarios_data and isinstance(all_scenarios_data, dict):
             # New format: dict of {scenario_name: scenario_data}
             loaded_scenarios: dict[str, ScenarioConfig] = {}
@@ -174,7 +115,7 @@ def _load_scenarios_from_redis(session_id: str) -> dict[str, ScenarioConfig]:
                     loaded_scenarios[scenario_key(scenario_name)] = scenario
                 except Exception as e:
                     logger.warning("Failed to parse scenario '%s': %s", scenario_name, e)
-            
+
             if loaded_scenarios:
                 # Merge with existing in-memory cache, but let Redis win.
                 # In a multi-worker deployment, Redis is the shared source of
@@ -182,7 +123,7 @@ def _load_scenarios_from_redis(session_id: str) -> dict[str, ScenarioConfig]:
                 existing = _session_scenarios.get(session_id, {})
                 merged = {**existing, **loaded_scenarios}
                 _session_scenarios[session_id] = merged
-                
+
                 # Set active scenario — normalize to lowercase for matching
                 active_key = (active_name or "").lower()
                 if active_key and active_key in merged:
@@ -193,7 +134,7 @@ def _load_scenarios_from_redis(session_id: str) -> dict[str, ScenarioConfig]:
                     cached_active = _active_scenario.get(session_id)
                     if not cached_active or cached_active not in merged:
                         _active_scenario[session_id] = next(iter(merged.keys()))
-                
+
                 logger.info(
                     "Loaded %d scenarios from Redis | session=%s active=%s",
                     len(loaded_scenarios),
@@ -201,30 +142,30 @@ def _load_scenarios_from_redis(session_id: str) -> dict[str, ScenarioConfig]:
                     _active_scenario.get(session_id),
                 )
                 return loaded_scenarios
-        
+
         # Fall back to legacy single-scenario format
         legacy_data = memo.get_value_from_corememory(SCENARIO_KEY_CONFIG)
         if legacy_data:
             scenario = _parse_scenario_data(legacy_data)
             normalized_name = scenario_key(scenario.name)
-            
+
             # Cache in memory
             if session_id not in _session_scenarios:
                 _session_scenarios[session_id] = {}
             _session_scenarios[session_id][normalized_name] = scenario
             _active_scenario[session_id] = normalized_name
-            
+
             logger.info(
                 "Loaded scenario from Redis (legacy format) | session=%s scenario=%s",
                 session_id,
                 normalized_name,
             )
             return {normalized_name: scenario}
-        
+
         return {}
     except Exception as e:
         logger.warning("Failed to load scenarios from Redis: %s", e)
-        return {}
+        raise
 
 
 def _ensure_session_loaded(session_id: str, *, force: bool = False) -> None:
@@ -239,6 +180,15 @@ def _ensure_session_loaded(session_id: str, *, force: bool = False) -> None:
     Merge strategy: Redis data is the base, in-memory data overrides
     (in-memory is considered more recent).
     """
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    else:
+        return
+
     if not force:
         last_load = _session_load_times.get(session_id)
         if last_load is not None and (time.monotonic() - last_load) < _REDIS_LOAD_COOLDOWN_S:
@@ -258,7 +208,9 @@ def _ensure_session_loaded(session_id: str, *, force: bool = False) -> None:
                 _session_scenarios[session_id][key] = sc
 
 
-def get_session_scenario(session_id: str, scenario_name: str | None = None) -> ScenarioConfig | None:
+def get_session_scenario(
+    session_id: str, scenario_name: str | None = None
+) -> ScenarioConfig | None:
     """
     Get dynamic scenario for a session.
 
@@ -303,7 +255,7 @@ def get_session_scenarios(session_id: str) -> dict[str, ScenarioConfig]:
 def get_active_scenario_name(session_id: str) -> str | None:
     """
     Get the name of the currently active scenario for a session.
-    
+
     Falls back to Redis if not found in memory cache.
     """
     active_name = _active_scenario.get(session_id)
@@ -319,87 +271,39 @@ def get_active_scenario_name(session_id: str) -> str | None:
     return _active_scenario.get(session_id) or active_name
 
 
-def _serialize_scenario(scenario: ScenarioConfig) -> dict:
-    """Serialize a ScenarioConfig to a dict for JSON storage."""
-    # Serialize agent_defaults if present
-    agent_defaults_data = None
-    if scenario.agent_defaults:
-        agent_defaults_data = {
-            "greeting": scenario.agent_defaults.greeting,
-            "return_greeting": scenario.agent_defaults.return_greeting,
-            "description": scenario.agent_defaults.description,
-            "template_vars": scenario.agent_defaults.template_vars or {},
-            "voice_name": scenario.agent_defaults.voice_name,
-            "voice_rate": scenario.agent_defaults.voice_rate,
-        }
-    
-    # Serialize generic_handoff config
-    generic_handoff_data = {
-        "enabled": scenario.generic_handoff.enabled,
-        "allowed_targets": scenario.generic_handoff.allowed_targets,
-        "require_client_id": scenario.generic_handoff.require_client_id,
-        "default_type": scenario.generic_handoff.default_type,
-        "share_context": scenario.generic_handoff.share_context,
-    }
-    
-    return {
-        "name": scenario.name,
-        "description": scenario.description,
-        "icon": scenario.icon,
-        "agents": scenario.agents,
-        "agent_defaults": agent_defaults_data,
-        "global_template_vars": scenario.global_template_vars or {},
-        "tools": scenario.tools or [],
-        "start_agent": scenario.start_agent,
-        "handoff_type": scenario.handoff_type,
-        "handoffs": [
-            {
-                "from_agent": h.from_agent,
-                "to_agent": h.to_agent,
-                "tool": h.tool,
-                "type": h.type,
-                "share_context": h.share_context,
-                "handoff_condition": h.handoff_condition,
-                "context_vars": h.context_vars or {},
-            }
-            for h in (scenario.handoffs or [])
-        ],
-        "generic_handoff": generic_handoff_data,
-    }
-
-
 def _persist_scenario_to_redis(session_id: str, scenario: ScenarioConfig) -> None:
     """
     Persist ALL scenarios for a session to Redis via MemoManager.
-    
+
     Stores all scenarios in 'session_scenarios_all' dict, indexed by name.
     Uses asyncio to schedule persistence but logs if it fails.
     """
     if not _redis_manager:
         logger.debug("No Redis manager available, skipping persistence")
         return
-    
+
     try:
         from src.stateful.state_managment import MemoManager
-        
+
         memo = MemoManager.from_redis(session_id, _redis_manager)
-        
+
         # _ensure_session_loaded already merges Redis → in-memory, so we
         # just serialize whatever is in _session_scenarios right now.
         all_scenarios_data = {
             name: _serialize_scenario(sc)
             for name, sc in _session_scenarios.get(session_id, {}).items()
         }
-        
+
         memo.set_corememory(SCENARIO_KEY_ALL, all_scenarios_data)
         memo.set_corememory(SCENARIO_KEY_ACTIVE, scenario_key(scenario.name))
         memo.set_corememory(SCENARIO_KEY_CONFIG, _serialize_scenario(scenario))
-        
+
         if scenario.start_agent:
             memo.set_corememory("active_agent", scenario.start_agent)
-        
+
         # Schedule async persistence with proper error handling
         import asyncio
+
         try:
             loop = asyncio.get_running_loop()
             task = loop.create_task(_persist_async(memo, session_id, scenario.name))
@@ -407,7 +311,7 @@ def _persist_scenario_to_redis(session_id: str, scenario: ScenarioConfig) -> Non
             _session_load_times[session_id] = time.monotonic()
         except RuntimeError:
             logger.debug("No event loop, skipping async Redis persistence")
-        
+
         logger.debug(
             "All scenarios queued for Redis persistence | session=%s count=%d active=%s",
             session_id,
@@ -422,7 +326,9 @@ async def _persist_async(memo, session_id: str, scenario_name: str) -> None:
     """Async helper to persist MemoManager to Redis."""
     try:
         await memo.persist_to_redis_async(_redis_manager)
-        logger.debug("Scenario persisted to Redis | session=%s scenario=%s", session_id, scenario_name)
+        logger.debug(
+            "Scenario persisted to Redis | session=%s scenario=%s", session_id, scenario_name
+        )
     except Exception as e:
         logger.error("Failed to persist scenario to Redis | session=%s error=%s", session_id, e)
         raise
@@ -440,29 +346,54 @@ def _clear_scenario_from_redis(session_id: str) -> None:
     """Clear ALL scenario config from Redis via MemoManager."""
     if not _redis_manager:
         return
-    
+
     try:
         from src.stateful.state_managment import MemoManager
-        
+
         memo = MemoManager.from_redis(session_id, _redis_manager)
         # Clear all scenario-related keys using standardized constants
         memo.set_corememory(SCENARIO_KEY_ALL, None)
         memo.set_corememory(SCENARIO_KEY_CONFIG, None)
         memo.set_corememory(SCENARIO_KEY_ACTIVE, None)
-        
+
         import asyncio
+
         try:
             loop = asyncio.get_running_loop()
             loop.create_task(memo.persist_to_redis_async(_redis_manager))
         except RuntimeError:
             logger.debug("No event loop, skipping async Redis clear")
-        
+
         logger.debug("All scenarios cleared from Redis | session=%s", session_id)
     except Exception as e:
         logger.warning("Failed to clear scenarios from Redis: %s", e)
 
 
-def _activate_scenario_core(session_id: str, scenario_name: str) -> tuple[str, ScenarioConfig] | None:
+async def clear_session_scenarios_from_redis(
+    session_id: str, *, raise_on_failure: bool = False
+) -> None:
+    """Clear persisted scenario state for a session, awaiting Redis."""
+    if not _redis_manager:
+        return
+
+    try:
+        from apps.artagent.backend.src.orchestration.session_memory import session_memo
+
+        memo = await session_memo(session_id, _redis_manager)
+        memo.set_corememory(SCENARIO_KEY_ALL, None)
+        memo.set_corememory(SCENARIO_KEY_CONFIG, None)
+        memo.set_corememory(SCENARIO_KEY_ACTIVE, None)
+        await memo.persist_to_redis_async(_redis_manager, raise_on_failure=raise_on_failure)
+        _session_load_times.pop(session_id, None)
+    except Exception as e:
+        logger.warning("Failed to clear scenarios from Redis (async): %s", e)
+        if raise_on_failure:
+            raise
+
+
+def _activate_scenario_core(
+    session_id: str, scenario_name: str
+) -> tuple[str, ScenarioConfig] | None:
     """Lookup, set active in-memory, notify callback. Returns (key, scenario) or None."""
     # Check in-memory first to avoid a Redis round-trip when the scenario
     # is already cached (common case for single-worker and rapid switches).
@@ -490,9 +421,9 @@ def _activate_scenario_core(session_id: str, scenario_name: str) -> tuple[str, S
 def set_active_scenario(session_id: str, scenario_name: str) -> bool:
     """
     Set the active scenario for a session.
-    
+
     Uses case-insensitive lookup for scenario_name.
-    
+
     Returns True if the scenario exists and was set as active.
     """
     result = _activate_scenario_core(session_id, scenario_name)
@@ -505,11 +436,13 @@ def set_active_scenario(session_id: str, scenario_name: str) -> bool:
     if _redis_manager:
         try:
             from src.stateful.state_managment import MemoManager
+
             memo = MemoManager.from_redis(session_id, _redis_manager)
             memo.set_corememory(SCENARIO_KEY_ACTIVE, actual_key)
             if scenario.start_agent:
                 memo.set_corememory("active_agent", scenario.start_agent)
             import asyncio
+
             try:
                 loop = asyncio.get_running_loop()
                 loop.create_task(memo.persist_to_redis_async(_redis_manager))
@@ -521,7 +454,9 @@ def set_active_scenario(session_id: str, scenario_name: str) -> bool:
 
     logger.info(
         "Active scenario set | session=%s scenario=%s start_agent=%s",
-        session_id, actual_key, scenario.start_agent,
+        session_id,
+        actual_key,
+        scenario.start_agent,
     )
     return True
 
@@ -535,6 +470,9 @@ async def set_active_scenario_async(session_id: str, scenario_name: str) -> bool
 
     Returns True if the scenario exists and was set as active.
     """
+    from apps.artagent.backend.src.orchestration.session_memory import prime_session_definitions
+
+    await prime_session_definitions(session_id)
     result = _activate_scenario_core(session_id, scenario_name)
     if not result:
         return False
@@ -543,57 +481,56 @@ async def set_active_scenario_async(session_id: str, scenario_name: str) -> bool
 
     if _redis_manager:
         try:
-            from src.stateful.state_managment import MemoManager
-            memo = MemoManager.from_redis(session_id, _redis_manager)
+            from apps.artagent.backend.src.orchestration.session_memory import session_memo
+
+            memo = await session_memo(session_id, _redis_manager)
             memo.set_corememory(SCENARIO_KEY_ACTIVE, actual_key)
             if scenario.start_agent:
                 memo.set_corememory("active_agent", scenario.start_agent)
-            await memo.persist_to_redis_async(_redis_manager)
+            await memo.persist_to_redis_async(_redis_manager, raise_on_failure=True)
             # Mark session as fresh — the in-memory state IS Redis state now,
             # so subsequent reads within the cooldown window can skip HGETALL.
             _session_load_times[session_id] = time.monotonic()
         except Exception as e:
             logger.warning("Failed to persist active scenario to Redis: %s", e)
+            raise
 
     logger.info(
         "Active scenario set (async) | session=%s scenario=%s start_agent=%s",
-        session_id, actual_key, scenario.start_agent,
+        session_id,
+        actual_key,
+        scenario.start_agent,
     )
     return True
 
 
-def set_session_scenario(session_id: str, scenario: ScenarioConfig) -> None:
-    """
-    Set dynamic scenario for a session (sync version).
+def _store_session_scenario(session_id: str, scenario: ScenarioConfig) -> bool:
+    """Update the primed definition view and notify native runtime consumers once."""
+    _session_scenarios.setdefault(session_id, {})
 
-    This is the single integration point - it both:
-    1. Stores the scenario in the local cache (by name within the session)
-    2. Sets it as the active scenario
-    3. Notifies the orchestrator adapter (if callback registered)
-    4. Schedules async persistence to Redis
-
-    For guaranteed persistence, use set_session_scenario_async() in async contexts.
-    
-    Scenario names are normalized to lowercase for case-insensitive storage.
-    If a scenario with the same name (case-insensitive) already exists, it is updated.
-    """
-    # Always merge Redis state into memory to prevent losing custom
-    # scenarios that exist in Redis but not in this worker's memory
-    # (e.g., created on another worker or before a restart).
-    _ensure_session_loaded(session_id)
-    
     # Normalize scenario key to lowercase for case-insensitive storage
     normalized_key = scenario_key(scenario.name)
     if not normalized_key:
-        logger.warning("Skipping session scenario set: empty scenario name | session=%s", session_id)
-        return
-    
+        logger.warning(
+            "Skipping session scenario set: empty scenario name | session=%s", session_id
+        )
+        return False
+
     # Remove any existing scenario with different casing (to avoid duplicates)
-    keys_to_remove = [k for k in _session_scenarios[session_id] if k.lower() == normalized_key and k != normalized_key]
+    keys_to_remove = [
+        k
+        for k in _session_scenarios[session_id]
+        if k.lower() == normalized_key and k != normalized_key
+    ]
     for old_key in keys_to_remove:
         del _session_scenarios[session_id][old_key]
-        logger.debug("Removed duplicate scenario key | session=%s old_key=%s new_key=%s", session_id, old_key, normalized_key)
-    
+        logger.debug(
+            "Removed duplicate scenario key | session=%s old_key=%s new_key=%s",
+            session_id,
+            old_key,
+            normalized_key,
+        )
+
     _session_scenarios[session_id][normalized_key] = scenario
     _active_scenario[session_id] = normalized_key
 
@@ -604,9 +541,6 @@ def set_session_scenario(session_id: str, scenario: ScenarioConfig) -> None:
             adapter_updated = _scenario_update_callback(session_id, scenario)
         except Exception as e:
             logger.warning("Failed to update adapter with scenario: %s", e)
-
-    # Persist to Redis for durability (async, fire-and-forget)
-    _persist_scenario_to_redis(session_id, scenario)
 
     logger.info(
         "session.scenario.set session=%s scenario=%s start_agent=%s agents=%d handoffs=%d adapter=%s",
@@ -617,92 +551,55 @@ def set_session_scenario(session_id: str, scenario: ScenarioConfig) -> None:
         len(scenario.handoffs),
         "updated" if adapter_updated else "unchanged",
     )
+    return True
+
+
+def set_session_scenario(session_id: str, scenario: ScenarioConfig) -> None:
+    """Synchronous compatibility entry point; async users must await the async setter."""
+    _ensure_session_loaded(session_id)
+    if _store_session_scenario(session_id, scenario):
+        _persist_scenario_to_redis(session_id, scenario)
 
 
 async def set_session_scenario_async(session_id: str, scenario: ScenarioConfig) -> None:
-    """
-    Set dynamic scenario for a session (async version with guaranteed persistence).
+    """Prime, update and strictly persist the scenario through the current memo."""
+    from apps.artagent.backend.src.orchestration.session_memory import prime_session_definitions
 
-    Use this in async contexts (e.g., FastAPI endpoints) to ensure the scenario
-    is persisted to Redis before returning to the caller.
-
-    This prevents data loss on browser refresh or server restart.
-    
-    Scenario names are normalized to lowercase for case-insensitive storage.
-    If a scenario with the same name (case-insensitive) already exists, it is updated.
-    """
-    # Always merge Redis state into memory to prevent losing custom
-    # scenarios that exist in Redis but not in this worker's memory
-    # (e.g., created on another worker or before a restart).
-    _ensure_session_loaded(session_id)
-    
-    # Normalize scenario key to lowercase for case-insensitive storage
-    normalized_key = scenario_key(scenario.name)
-    if not normalized_key:
-        logger.warning("Skipping async session scenario set: empty scenario name | session=%s", session_id)
-        return
-    
-    # Remove any existing scenario with different casing (to avoid duplicates)
-    keys_to_remove = [k for k in _session_scenarios[session_id] if k.lower() == normalized_key and k != normalized_key]
-    for old_key in keys_to_remove:
-        del _session_scenarios[session_id][old_key]
-        logger.debug("Removed duplicate scenario key | session=%s old_key=%s new_key=%s", session_id, old_key, normalized_key)
-    
-    _session_scenarios[session_id][normalized_key] = scenario
-    _active_scenario[session_id] = normalized_key
-
-    # Notify the orchestrator adapter if callback is registered
-    adapter_updated = False
-    if _scenario_update_callback:
-        try:
-            adapter_updated = _scenario_update_callback(session_id, scenario)
-        except Exception as e:
-            logger.warning("Failed to update adapter with scenario: %s", e)
-
-    # Persist to Redis with await to guarantee completion
-    await _persist_scenario_to_redis_async(session_id, scenario)
-
-    logger.info(
-        "session.scenario.set session=%s mode=async scenario=%s start_agent=%s agents=%d handoffs=%d adapter=%s",
-        session_id,
-        scenario.name,
-        scenario.start_agent,
-        len(scenario.agents),
-        len(scenario.handoffs),
-        "updated" if adapter_updated else "unchanged",
-    )
+    await prime_session_definitions(session_id)
+    if _store_session_scenario(session_id, scenario):
+        await _persist_scenario_to_redis_async(session_id, scenario)
 
 
 async def _persist_scenario_to_redis_async(session_id: str, scenario: ScenarioConfig) -> None:
     """
     Async version of scenario persistence to Redis.
-    
+
     Persists ALL scenarios for the session to ensure no data loss.
     Awaits the persistence to ensure data is written before returning.
     """
     if not _redis_manager:
         logger.debug("No Redis manager available, skipping persistence")
         return
-    
+
     try:
-        from src.stateful.state_managment import MemoManager
-        
-        memo = MemoManager.from_redis(session_id, _redis_manager)
-        
+        from apps.artagent.backend.src.orchestration.session_memory import session_memo
+
+        memo = await session_memo(session_id, _redis_manager)
+
         # _ensure_session_loaded already merges Redis → in-memory, so we
         # just serialize whatever is in _session_scenarios right now.
         all_scenarios_data = {
             name: _serialize_scenario(sc)
             for name, sc in _session_scenarios.get(session_id, {}).items()
         }
-        
+
         memo.set_corememory(SCENARIO_KEY_ALL, all_scenarios_data)
         memo.set_corememory(SCENARIO_KEY_ACTIVE, scenario_key(scenario.name))
         memo.set_corememory(SCENARIO_KEY_CONFIG, _serialize_scenario(scenario))
-        
+
         if scenario.start_agent:
             memo.set_corememory("active_agent", scenario.start_agent)
-        
+
         # Await persistence with raise_on_failure to detect silent Redis
         # write failures.  Without this, store_session_data_async may return
         # False (write failed) yet the caller would never know, leading to
@@ -711,7 +608,7 @@ async def _persist_scenario_to_redis_async(session_id: str, scenario: ScenarioCo
         await memo.persist_to_redis_async(_redis_manager, raise_on_failure=True)
         # Mark session as fresh so reads within the cooldown skip HGETALL.
         _session_load_times[session_id] = time.monotonic()
-        
+
         logger.debug(
             "All scenarios persisted to Redis (async) | session=%s count=%d active=%s",
             session_id,
@@ -723,39 +620,53 @@ async def _persist_scenario_to_redis_async(session_id: str, scenario: ScenarioCo
         raise
 
 
-def remove_session_scenario(session_id: str, scenario_name: str | None = None) -> bool:
+def remove_session_scenario(
+    session_id: str, scenario_name: str | None = None, *, persist: bool = True
+) -> bool:
     """
     Remove dynamic scenario(s) for a session.
-    
+
     Args:
         session_id: The session ID
         scenario_name: Optional scenario name. If not provided, removes ALL scenarios for the session.
-    
+
     Returns:
         True if removed, False if not found.
     """
+    _ensure_session_loaded(session_id, force=True)
+
     if session_id not in _session_scenarios:
         return False
-    
+
     if scenario_name:
         # Remove specific scenario
-        if scenario_name in _session_scenarios[session_id]:
-            del _session_scenarios[session_id][scenario_name]
-            logger.info("Session scenario removed | session=%s scenario=%s", session_id, scenario_name)
-            
+        actual_key, _ = find_scenario_by_name(_session_scenarios[session_id], scenario_name)
+        if actual_key is not None:
+            del _session_scenarios[session_id][actual_key]
+            logger.info("Session scenario removed | session=%s scenario=%s", session_id, actual_key)
+
             # Update active scenario if needed
-            if _active_scenario.get(session_id) == scenario_name:
+            if _active_scenario.get(session_id) == actual_key:
                 remaining = _session_scenarios[session_id]
                 if remaining:
-                    _active_scenario[session_id] = next(iter(remaining.keys()))
+                    _active_scenario[session_id] = sorted(remaining.keys())[0]
                 else:
-                    del _active_scenario[session_id]
+                    _active_scenario.pop(session_id, None)
                     # Clear from Redis when no scenarios remain
-                    _clear_scenario_from_redis(session_id)
-            
+                    if persist:
+                        _clear_scenario_from_redis(session_id)
+
             # Clean up empty session
             if not _session_scenarios[session_id]:
                 del _session_scenarios[session_id]
+            elif persist:
+                active_key = (
+                    _active_scenario.get(session_id)
+                    or sorted(_session_scenarios[session_id].keys())[0]
+                )
+                _active_scenario[session_id] = active_key
+                active_scenario = _session_scenarios[session_id][active_key]
+                _persist_scenario_to_redis(session_id, active_scenario)
             return True
         return False
     else:
@@ -764,15 +675,43 @@ def remove_session_scenario(session_id: str, scenario_name: str | None = None) -
         if session_id in _active_scenario:
             del _active_scenario[session_id]
         # Clear from Redis
-        _clear_scenario_from_redis(session_id)
+        if persist:
+            _clear_scenario_from_redis(session_id)
         logger.info("All session scenarios removed | session=%s", session_id)
         return True
+
+
+async def remove_session_scenario_async(
+    session_id: str,
+    scenario_name: str | None = None,
+    *,
+    raise_on_failure: bool = False,
+) -> bool:
+    """Remove session scenario config and await durable Redis persistence."""
+    from apps.artagent.backend.src.orchestration.session_memory import prime_session_definitions
+
+    await prime_session_definitions(session_id)
+    removed = remove_session_scenario(session_id, scenario_name, persist=False)
+    if not removed:
+        return False
+    if scenario_name and session_id in _session_scenarios:
+        active_key = (
+            _active_scenario.get(session_id) or sorted(_session_scenarios[session_id].keys())[0]
+        )
+        _active_scenario[session_id] = active_key
+        if active_key and active_key in _session_scenarios[session_id]:
+            await _persist_scenario_to_redis_async(
+                session_id, _session_scenarios[session_id][active_key]
+            )
+    else:
+        await clear_session_scenarios_from_redis(session_id, raise_on_failure=raise_on_failure)
+    return True
 
 
 def list_session_scenarios() -> dict[str, ScenarioConfig]:
     """
     Return a flat dict of all session scenarios across all sessions.
-    
+
     Key format: "{session_id}:{scenario_name}" to ensure uniqueness.
     """
     result: dict[str, ScenarioConfig] = {}
@@ -799,13 +738,13 @@ def list_session_scenarios_by_session(session_id: str) -> dict[str, ScenarioConf
         session_id,
         len(scenarios),
     )
-    
+
     # Deduplicate by lowercase name (keep latest)
     deduplicated: dict[str, ScenarioConfig] = {}
     for key, scenario in scenarios.items():
         normalized_key = key.lower()
         deduplicated[normalized_key] = scenario
-    
+
     return deduplicated
 
 
@@ -819,7 +758,9 @@ __all__ = [
     "set_session_scenario_async",
     "set_redis_manager",
     "remove_session_scenario",
+    "remove_session_scenario_async",
     "list_session_scenarios",
     "list_session_scenarios_by_session",
     "register_scenario_update_callback",
+    "clear_session_scenarios_from_redis",
 ]

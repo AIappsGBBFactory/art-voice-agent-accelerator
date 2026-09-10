@@ -23,12 +23,12 @@ Run with: pytest tests/test_voice_handler_threading.py -v
 import asyncio
 import base64
 import threading
+from types import SimpleNamespace
 from typing import Any, Awaitable
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import numpy as np
 import pytest
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Issue 1: stop_stt_timer_for_barge_in method tests
@@ -178,11 +178,11 @@ class TestVoiceLiveBackgroundTasks:
 
         assert hasattr(VoiceLiveSDKHandler, "_background_task")
 
-    def test_handler_has_cancel_all_method(self):
-        """VoiceLiveSDKHandler should have _cancel_all_background_tasks instance method."""
+    def test_handler_has_awaitable_close(self):
+        """The public stop owns background cancellation and completion."""
         from apps.artagent.backend.voice.voicelive.handler import VoiceLiveSDKHandler
 
-        assert hasattr(VoiceLiveSDKHandler, "_cancel_all_background_tasks")
+        assert asyncio.iscoroutinefunction(VoiceLiveSDKHandler.stop)
 
     @pytest.mark.asyncio
     async def test_background_task_is_tracked(self):
@@ -212,8 +212,8 @@ class TestVoiceLiveBackgroundTasks:
         assert task not in handler._pending_background_tasks
 
     @pytest.mark.asyncio
-    async def test_cancel_all_background_tasks(self):
-        """_cancel_all_background_tasks should cancel pending tasks."""
+    async def test_stop_joins_all_background_tasks(self):
+        """Public stop must not finish while a background task is alive."""
         from apps.artagent.backend.voice.voicelive.handler import VoiceLiveSDKHandler
 
         mock_ws = MagicMock()
@@ -230,13 +230,11 @@ class TestVoiceLiveBackgroundTasks:
         task2 = handler._background_task(long_running(), label="task2")
 
         # Cancel all
-        cancelled = handler._cancel_all_background_tasks()
+        mock_ws.state.cm = None
+        mock_ws.app.state.redis = None
+        await handler.stop()
 
-        assert cancelled == 2
         assert len(handler._pending_background_tasks) == 0
-
-        # Give event loop a chance to process cancellations
-        await asyncio.sleep(0.01)
 
         # Tasks should now be cancelled or done
         assert task1.cancelled() or task1.done()
@@ -357,16 +355,18 @@ class TestQueueEvictionThreadSafety:
         assert hasattr(bridge, "_queue_lock")
         assert isinstance(bridge._queue_lock, type(threading.Lock()))
 
-    def test_queue_speech_result_basic(self):
+    @pytest.mark.asyncio
+    async def test_queue_speech_result_basic(self):
         """queue_speech_result should enqueue events correctly."""
         from apps.artagent.backend.voice.speech_cascade.handler import (
-            ThreadBridge,
             SpeechEvent,
             SpeechEventType,
+            ThreadBridge,
         )
 
         bridge = ThreadBridge()
         queue = asyncio.Queue(maxsize=10)
+        bridge.set_main_loop(asyncio.get_running_loop())
 
         event = SpeechEvent(
             event_type=SpeechEventType.FINAL,
@@ -378,16 +378,18 @@ class TestQueueEvictionThreadSafety:
 
         assert queue.qsize() == 1
 
-    def test_queue_partial_dropped_when_full(self):
+    @pytest.mark.asyncio
+    async def test_queue_partial_dropped_when_full(self):
         """PARTIAL events should be dropped when queue is full."""
         from apps.artagent.backend.voice.speech_cascade.handler import (
-            ThreadBridge,
             SpeechEvent,
             SpeechEventType,
+            ThreadBridge,
         )
 
         bridge = ThreadBridge()
         queue = asyncio.Queue(maxsize=1)
+        bridge.set_main_loop(asyncio.get_running_loop())
 
         # Fill queue
         filler = SpeechEvent(
@@ -408,16 +410,18 @@ class TestQueueEvictionThreadSafety:
         # Queue should still have only the original event
         assert queue.qsize() == 1
 
-    def test_queue_eviction_prioritizes_important_events(self):
+    @pytest.mark.asyncio
+    async def test_queue_eviction_prioritizes_important_events(self):
         """Important events should evict PARTIAL events when queue is full."""
         from apps.artagent.backend.voice.speech_cascade.handler import (
-            ThreadBridge,
             SpeechEvent,
             SpeechEventType,
+            ThreadBridge,
         )
 
         bridge = ThreadBridge()
         queue = asyncio.Queue(maxsize=1)
+        bridge.set_main_loop(asyncio.get_running_loop())
 
         # Fill queue with PARTIAL
         partial = SpeechEvent(
@@ -440,16 +444,18 @@ class TestQueueEvictionThreadSafety:
         queued_event = queue.get_nowait()
         assert queued_event.event_type == SpeechEventType.FINAL
 
-    def test_concurrent_queue_access(self):
+    @pytest.mark.asyncio
+    async def test_concurrent_queue_access(self):
         """Multiple threads should safely queue events without corruption."""
         from apps.artagent.backend.voice.speech_cascade.handler import (
-            ThreadBridge,
             SpeechEvent,
             SpeechEventType,
+            ThreadBridge,
         )
 
         bridge = ThreadBridge()
         queue = asyncio.Queue(maxsize=100)
+        bridge.set_main_loop(asyncio.get_running_loop())
         errors = []
 
         def queue_events(thread_id: int):
@@ -473,11 +479,13 @@ class TestQueueEvictionThreadSafety:
 
         # Wait for completion
         for t in threads:
-            t.join()
+            await asyncio.to_thread(t.join)
+        await asyncio.sleep(0)
 
         # No errors should have occurred
         assert len(errors) == 0
         assert queue.qsize() > 0
+        assert queue.qsize() <= 100
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -503,3 +511,115 @@ class TestSessionMessengerIntegration:
         # Should not raise
         messenger = _SessionMessenger(mock_ws, background_task_fn=mock_background_task)
         assert messenger._background_task_fn is mock_background_task
+
+    @pytest.mark.asyncio
+    async def test_voicelive_transcript_and_tool_frames_share_one_turn_id(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Input deltas, final STT, and tools must stay scoped to one user turn."""
+        from apps.artagent.backend.voice.voicelive import handler as voicelive_handler
+        from apps.artagent.backend.voice.voicelive.handler import _SessionMessenger
+
+        ws = MagicMock()
+        ws.state = SimpleNamespace(session_id="session-1", call_connection_id="call-1")
+        emitted: list[dict[str, Any]] = []
+        final_transcripts: list[dict[str, Any]] = []
+
+        async def capture_envelope(_ws, envelope, **_kwargs) -> None:
+            emitted.append(envelope)
+
+        async def capture_final_transcript(_ws, text, **kwargs) -> None:
+            final_transcripts.append({"text": text, **kwargs})
+
+        tool_start = AsyncMock()
+        tool_end = AsyncMock()
+        monkeypatch.setattr(voicelive_handler, "send_session_envelope", capture_envelope)
+        monkeypatch.setattr(voicelive_handler, "send_user_transcript", capture_final_transcript)
+        monkeypatch.setattr(voicelive_handler, "push_tool_start", tool_start)
+        monkeypatch.setattr(voicelive_handler, "push_tool_end", tool_end)
+
+        messenger = _SessionMessenger(
+            ws,
+            background_task_fn=lambda coro, label: asyncio.create_task(coro),
+        )
+        messenger.begin_user_turn("turn-1")
+        await messenger.send_user_partial("hello ", turn_id="provider-item-ignored")
+        await messenger.send_user_partial("there", turn_id="provider-item-ignored")
+        await messenger.send_user_message("hello there", turn_id="provider-item-ignored")
+        await messenger.notify_tool_start(call_id="tool-1", name="lookup", args={})
+        await messenger.notify_tool_end(
+            call_id="tool-1",
+            name="lookup",
+            status="success",
+            elapsed_ms=10,
+            result={"success": True},
+        )
+        await asyncio.sleep(0)
+
+        user_payloads = [
+            frame["payload"] for frame in emitted if frame.get("payload", {}).get("type") == "user"
+        ]
+        assert [payload["turn_id"] for payload in user_payloads] == [
+            "turn-1",
+            "turn-1",
+            "turn-1",
+        ]
+        assert [payload["content"] for payload in user_payloads] == [
+            "",
+            "hello ",
+            "hello there",
+        ]
+        assert final_transcripts == [
+            {
+                "text": "hello there",
+                "session_id": "session-1",
+                "conn_id": None,
+                "broadcast_only": True,
+                "turn_id": "turn-1",
+                "active_agent": None,
+                "active_agent_label": None,
+                "sequence": 3,
+            }
+        ]
+        assert tool_start.await_args.kwargs["turn_id"] == "turn-1"
+        assert tool_end.await_args.kwargs["turn_id"] == "turn-1"
+
+    @pytest.mark.asyncio
+    async def test_voicelive_browser_tool_frames_use_direct_transport(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Browser VoiceLive tools must not be routed as ACS dashboard broadcasts."""
+        from apps.artagent.backend.voice.voicelive import handler as voicelive_handler
+        from apps.artagent.backend.voice.voicelive.handler import _SessionMessenger
+
+        ws = MagicMock()
+        ws.state = SimpleNamespace(session_id="session-browser", conn_id="browser-1")
+        tool_start = AsyncMock()
+        tool_end = AsyncMock()
+        monkeypatch.setattr(voicelive_handler, "push_tool_start", tool_start)
+        monkeypatch.setattr(voicelive_handler, "push_tool_end", tool_end)
+
+        messenger = _SessionMessenger(
+            ws,
+            background_task_fn=lambda coro, label: asyncio.create_task(coro),
+            is_acs=False,
+        )
+        messenger.begin_user_turn("browser-turn-1")
+        await messenger.notify_tool_start(
+            call_id="browser-tool-1",
+            name="lookup_balance",
+            args={},
+        )
+        await messenger.notify_tool_end(
+            call_id="browser-tool-1",
+            name="lookup_balance",
+            status="success",
+            elapsed_ms=10,
+            result={"balance": 42},
+        )
+        await asyncio.sleep(0)
+
+        assert tool_start.await_args.kwargs["is_acs"] is False
+        assert tool_end.await_args.kwargs["is_acs"] is False
+        assert tool_start.await_args.kwargs["turn_id"] == "browser-turn-1"
+        assert tool_end.await_args.kwargs["turn_id"] == "browser-turn-1"

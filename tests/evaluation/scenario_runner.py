@@ -64,36 +64,26 @@ except ImportError:
 # Now safe to import app modules
 # =============================================================================
 
+import asyncio
 import copy
-import time
 import json
+import time
+from contextlib import AsyncExitStack
 from dataclasses import replace
 from typing import Any
 
 import yaml
-
-from tests.evaluation.mocks import MockMemoManager
-from tests.evaluation.recorder import EventRecorder
-from tests.evaluation.demo_user import (
-    create_demo_user,
-    extract_user_context,
-)
-from tests.evaluation.schemas import (
-    FoundryExportConfig,
-    ModelProfile,
-    RunSummary,
-    SessionAgentConfig,
-)
-from tests.evaluation.scorer import MetricsScorer
-from tests.evaluation.wrappers import EvaluationOrchestratorWrapper
 from apps.artagent.backend.registries.agentstore.base import ModelConfig
 from apps.artagent.backend.registries.agentstore.loader import (
     build_handoff_map,
     discover_agents,
 )
+from apps.artagent.backend.registries.scenariostore.loader import (
+    ScenarioConfig,
+)
 from apps.artagent.backend.src.orchestration.session_agents import (
-    set_session_agent,
     remove_session_agent,
+    set_session_agent,
 )
 from apps.artagent.backend.voice.shared.base import OrchestratorContext
 from apps.artagent.backend.voice.shared.config_resolver import (
@@ -103,13 +93,23 @@ from apps.artagent.backend.voice.shared.config_resolver import (
 from apps.artagent.backend.voice.speech_cascade.orchestrator import (
     CascadeOrchestratorAdapter,
 )
-from apps.artagent.backend.registries.scenariostore.loader import (
-    ScenarioConfig,
-    GenericHandoffConfig,
-    HandoffConfig as ScenarioHandoffConfig,
-)
+from src.stateful.state_managment import MemoManager
 from utils.ml_logging import get_logger
 
+from tests.evaluation.demo_user import (
+    create_demo_user,
+    extract_user_context,
+)
+from tests.evaluation.recorder import EventRecorder
+from tests.evaluation.schemas import (
+    FoundryExportConfig,
+    ModelProfile,
+    RunSummary,
+    SessionAgentConfig,
+)
+from tests.evaluation.scorer import MetricsScorer
+from tests.evaluation.validator import ExpectationValidator
+from tests.evaluation.wrappers import EvaluationOrchestratorWrapper
 
 _runtime_bootstrapped = False
 _mcp_initialized = False
@@ -656,7 +656,7 @@ class ScenarioRunner:
             session_id=session_id,
             agents=agents,
             handoff_map=handoff_map,
-            streaming=False,
+            streaming=True,
         )
 
         return adapter, start_agent
@@ -725,7 +725,7 @@ class ScenarioRunner:
             session_id=session_id,
             agents=agents,
             handoff_map=handoff_map,
-            streaming=False,
+            streaming=True,
         )
 
         return adapter, start_agent
@@ -868,28 +868,15 @@ class ScenarioRunner:
             )
             start_agent = agent_list[0] if agent_list else next(iter(filtered_agents.keys()))
 
-        # Build handoff map from session_config handoffs
-        handoff_map: dict[str, str] = {}
-        for h in session_config.handoffs:
-            if h.tool and h.to_agent:
-                handoff_map[h.tool] = h.to_agent
-
-        # Also build from agent declarations (handoff.trigger) for agents in our list
-        for agent_name, agent in filtered_agents.items():
-            if hasattr(agent, "handoff") and hasattr(agent.handoff, "trigger"):
-                trigger = agent.handoff.trigger
-                if trigger and trigger not in handoff_map:
-                    handoff_map[trigger] = agent_name
-
-        # If generic_handoff enabled, ensure handoff_to_agent is available
-        generic_config = session_config.generic_handoff or {}
-        if generic_config.get("enabled", False):
-            # The handoff_to_agent tool handles routing dynamically
-            # We just need to ensure all agents are reachable
-            logger.info(
-                "Generic handoff enabled | allowed_targets=%s",
-                generic_config.get("allowed_targets", "(all)"),
-            )
+        scenario_obj = ScenarioConfig.from_dict(
+            f"eval_{session_id}",
+            {
+                **session_config.model_dump(by_alias=True),
+                "agents": list(filtered_agents),
+                "start_agent": start_agent,
+            },
+        )
+        handoff_map = scenario_obj.build_handoff_map()
 
         logger.info(
             "Creating CascadeOrchestratorAdapter from session_config | "
@@ -904,35 +891,7 @@ class ScenarioRunner:
             session_id=session_id,
             agents=filtered_agents,
             handoff_map=handoff_map,
-            streaming=False,
-        )
-
-        # Build ScenarioConfig from session_config for HandoffService
-        # This enables generic handoffs in evaluation scenarios
-        scenario_handoffs = []
-        for h in session_config.handoffs:
-            scenario_handoffs.append(ScenarioHandoffConfig(
-                from_agent=h.from_agent,
-                to_agent=h.to_agent,
-                tool=h.tool,
-                type=h.type or "announced",
-                share_context=h.share_context if h.share_context is not None else True,
-            ))
-
-        generic_cfg = GenericHandoffConfig(
-            enabled=generic_config.get("enabled", False),
-            allowed_targets=generic_config.get("allowed_targets", []),
-            default_type=generic_config.get("default_type", "announced"),
-            share_context=generic_config.get("share_context", True),
-        )
-
-        scenario_obj = ScenarioConfig(
-            name=f"eval_{session_id}",
-            agents=list(filtered_agents.keys()),
-            start_agent=start_agent,
-            handoff_type=session_config.handoff_type or "announced",
-            handoffs=scenario_handoffs,
-            generic_handoff=generic_cfg,
+            streaming=True,
         )
 
         # Inject cached config so HandoffService uses our scenario
@@ -945,6 +904,32 @@ class ScenarioRunner:
         )
 
         return adapter, start_agent
+
+    def _resolve_expectation_placeholders(self, demo_email: str | None) -> None:
+        """Substitute ${demo_user.email}/${email} in turn expectations in place.
+
+        Downstream validation (custom_assertions, should_mention) compares
+        against concrete values, so the placeholders must be resolved to the
+        effective demo email (env override wins) before the gate runs. Mirrors
+        the substitution run-eval-stream.py performs for the streaming view.
+        """
+        if not demo_email:
+            return
+
+        def _sub(obj: Any) -> Any:
+            if isinstance(obj, str):
+                return obj.replace("${demo_user.email}", demo_email).replace(
+                    "${email}", demo_email
+                )
+            if isinstance(obj, dict):
+                return {k: _sub(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [_sub(v) for v in obj]
+            return obj
+
+        for turn in self.scenario.get("turns", []):
+            if isinstance(turn, dict) and turn.get("expectations"):
+                turn["expectations"] = _sub(turn["expectations"])
 
     async def run(self) -> RunSummary:
         """
@@ -960,7 +945,7 @@ class ScenarioRunner:
         """
         # Ensure MCP servers are initialized for tool availability
         await _ensure_mcp_initialized()
-        
+
         scenario_name = self.scenario["scenario_name"]
         scenario_template = self.scenario.get("scenario_template")
         session_config_data = self.scenario.get("session_config")
@@ -968,12 +953,14 @@ class ScenarioRunner:
 
         logger.info(f"Running scenario: {scenario_name}")
 
-        # Create mock dependencies
+        # Headless evaluations use the production memory contract in local-only mode.
         session_id = self.scenario.get("metadata", {}).get("session_id", f"eval_{scenario_name}")
-        context_vars = self.scenario.get("metadata", {}).get("context", {})
-        memo_manager = MockMemoManager(session_id, context_vars)
+        context_vars = dict(self.scenario.get("metadata", {}).get("context", {}))
+        memo_manager = MemoManager(session_id=session_id)
+        for key, value in context_vars.items():
+            memo_manager.set_corememory(key, value)
         if scenario_template:
-            memo_manager.set_value_in_corememory("scenario_name", scenario_template)
+            memo_manager.set_corememory("scenario_name", scenario_template)
 
         # ═══════════════════════════════════════════════════════════════════════
         # Create demo user if configured
@@ -982,15 +969,20 @@ class ScenarioRunner:
         # ═══════════════════════════════════════════════════════════════════════
         demo_user_config = self.scenario.get("demo_user")
         demo_user_data = None
-        
+
         if demo_user_config:
             # Check for email override from environment (set by CLI)
             email_override = os.environ.get("EVAL_EMAIL_OVERRIDE")
             demo_email = email_override or demo_user_config.get("email", "sarah.johnson@example.com")
-            
+
             if email_override:
                 logger.info(f"📧 Email override active: {email_override}")
-            
+
+            # Resolve ${demo_user.email}/${email} placeholders in turn
+            # expectations so custom_assertions / should_mention validate against
+            # the real recipient rather than the literal placeholder string.
+            self._resolve_expectation_placeholders(demo_email)
+
             logger.info(f"Creating demo user: {demo_user_config.get('full_name', 'unknown')} (email={demo_email})")
             demo_user_data = await create_demo_user(
                 full_name=demo_user_config.get("full_name", "Sarah Johnson"),
@@ -1004,17 +996,17 @@ class ScenarioRunner:
                 insurance_company_name=demo_user_config.get("insurance_company_name"),
                 test_scenario=demo_user_config.get("test_scenario"),
             )
-            
+
             if demo_user_data:
                 # Extract context for tools and inject into memo_manager
                 demo_context = extract_user_context(demo_user_data)
                 for key, value in demo_context.items():
-                    memo_manager.set_value_in_corememory(key, value)
+                    memo_manager.set_corememory(key, value)
                     context_vars[key] = value
-                
+
                 # Store the full demo user response for reference
-                memo_manager.set_value_in_corememory("demo_user_response", demo_user_data)
-                
+                memo_manager.set_corememory("demo_user_response", demo_user_data)
+
                 # CRITICAL: Store session_profile and client_id for orchestrator injection
                 # The orchestrator injects _session_profile and _client_id into tool args
                 profile = demo_user_data.get("profile", {})
@@ -1029,15 +1021,15 @@ class ScenarioRunner:
                             "claims": demo_user_data.get("claims"),
                         },
                     }
-                    memo_manager.set_value_in_corememory("session_profile", session_profile)
-                    memo_manager.set_value_in_corememory("client_id", profile.get("client_id"))
-                    memo_manager.set_value_in_corememory("caller_name", profile.get("full_name"))
+                    memo_manager.set_corememory("session_profile", session_profile)
+                    memo_manager.set_corememory("client_id", profile.get("client_id"))
+                    memo_manager.set_corememory("caller_name", profile.get("full_name"))
                     # Also store customer_intelligence for profile-aware tools
                     if profile.get("customer_intelligence"):
-                        memo_manager.set_value_in_corememory(
+                        memo_manager.set_corememory(
                             "customer_intelligence", profile["customer_intelligence"]
                         )
-                
+
                 # Log key identifiers for debugging
                 txn_count = len(demo_user_data.get("transactions", []))
                 logger.info(
@@ -1080,7 +1072,7 @@ class ScenarioRunner:
                 agent_overrides,
             )
             # Store session_config name for context
-            memo_manager.set_value_in_corememory("session_config", True)
+            memo_manager.set_corememory("session_config", True)
         else:
             # Existing: Use scenario_template or legacy approach
             orchestrator, start_agent = self._create_orchestrator_with_overrides(
@@ -1100,45 +1092,71 @@ class ScenarioRunner:
             recorder=recorder,
         )
 
-        # Run turns
-        for turn_data in self.scenario["turns"]:
-            turn_id = turn_data["turn_id"]
-            user_input = turn_data["user_input"]
-            turn_expectations = turn_data.get("expectations", {})
-            expected_tools = turn_expectations.get("tools_called", [])
+        async with AsyncExitStack() as resources:
+            resources.callback(remove_session_agent, session_id)
+            if not use_mock:
+                from openai import OpenAIError
+                from src.aoai.client import create_async_azure_openai_client
 
-            logger.info(f"Turn {turn_id}: {user_input[:50]}...")
+                if orchestrator.async_client is None:
+                    client = await resources.enter_async_context(create_async_azure_openai_client())
+                    orchestrator.async_client = client
+                    resources.callback(setattr, orchestrator, "async_client", None)
 
-            # Build context with memo_manager
-            context = OrchestratorContext(
-                session_id=session_id,
-                user_text=user_input,
-                turn_id=turn_id,
-                conversation_history=memo_manager.get_history(agent_name),
-                metadata={
-                    "memo_manager": memo_manager,
-                    "scenario_name": scenario_name,
-                    "scenario_template": scenario_template,
-                    "model_override": model_override,
-                    "run_id": f"{scenario_name}:{turn_id}",
-                    "turn_id": turn_id,
-                    "expected_tools": expected_tools,
-                    **context_vars,
-                },
-            )
+                # Warm the same async transport used by every measured turn.
+                # Reuse native model parameter policy; no tools or history are
+                # involved in this one-token readiness request.
+                model = orchestrator.current_agent_config.get_model_for_mode("cascade")
+                warm_params = orchestrator._prepare_streaming_params(
+                    replace(model, max_tokens=1, max_completion_tokens=1),
+                    model.deployment_id,
+                    [{"role": "user", "content": "hi"}],
+                    [],
+                )
+                warm_params["stream"] = False
+                warm_params.pop("stream_options", None)
+                try:
+                    await asyncio.wait_for(
+                        orchestrator.async_client.chat.completions.create(**warm_params),
+                        timeout=10.0,
+                    )
+                    logger.info("AOAI session async connection warmed")
+                except (OpenAIError, TimeoutError) as exc:
+                    logger.warning("AOAI warmup failed; measurements may be cold: %s", exc)
 
-            # Run turn (this will be recorded automatically)
-            result = await eval_orchestrator.process_turn(context)
+            for turn_data in self.scenario["turns"]:
+                turn_id = turn_data["turn_id"]
+                user_input = turn_data["user_input"]
+                turn_expectations = turn_data.get("expectations", {})
+                expected_tools = turn_expectations.get("tools_called", [])
+                active_agent = orchestrator._active_agent
 
-            # Update mock history if we aren't using the real orchestrator
-            if use_mock:
-                memo_manager.append_to_history(agent_name, "user", user_input)
-                memo_manager.append_to_history(agent_name, "assistant", result.response_text)
+                logger.info(f"Turn {turn_id}: {user_input[:50]}...")
 
-            logger.info(f"Turn {turn_id} complete: {len(result.response_text)} chars")
+                context = OrchestratorContext(
+                    session_id=session_id,
+                    user_text=user_input,
+                    turn_id=turn_id,
+                    conversation_history=memo_manager.get_history(active_agent),
+                    metadata={
+                        "memo_manager": memo_manager,
+                        "scenario_name": scenario_name,
+                        "scenario_template": scenario_template,
+                        "model_override": model_override,
+                        "run_id": f"{scenario_name}:{turn_id}",
+                        "turn_id": turn_id,
+                        "expected_tools": expected_tools,
+                        **context_vars,
+                    },
+                )
 
-        # Clean up session agents after run
-        remove_session_agent(session_id)
+                result = await eval_orchestrator.process_turn(context)
+
+                if use_mock:
+                    memo_manager.append_to_history(active_agent, "user", user_input)
+                    memo_manager.append_to_history(active_agent, "assistant", result.response_text)
+
+                logger.info(f"Turn {turn_id} complete: {len(result.response_text)} chars")
 
         # Score the results
         scorer = MetricsScorer()
@@ -1149,6 +1167,55 @@ class ScenarioRunner:
             scenario_name=scenario_name,
             expectations=self.scenario,
         )
+
+        # Latency gate: enforce the responsiveness expectations (max_ttft_ms,
+        # max_latency_ms, max_tts_first_chunk_ms) so latency regressions fail the
+        # run. Only scenarios that DEFINE a latency cap are gated — others keep
+        # pass_fail=None (unchanged behavior).
+        #
+        # Strict gate (EVAL_STRICT_GATE=1, set by the live-eval CI job): widen
+        # the gate to ALL validation checks — required/forbidden tools, handoffs,
+        # response constraints, should_mention and custom_assertions — so
+        # functional regressions (e.g. the decline-email recipient) also fail CI.
+        _LATENCY_CHECKS = {"max_ttft_ms", "max_latency_ms", "max_tts_first_chunk_ms"}
+        all_checks = [
+            c
+            for r in ExpectationValidator().validate_run(events, self.scenario)
+            for c in r.checks
+        ]
+        latency_checks = [c for c in all_checks if c.check_name in _LATENCY_CHECKS]
+
+        strict_gate = os.environ.get("EVAL_STRICT_GATE", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+
+        if strict_gate and all_checks:
+            summary.pass_fail = all(c.passed for c in all_checks)
+            failed = [
+                f"{c.turn_id}:{c.check_name}" for c in all_checks if not c.passed
+            ]
+            if failed:
+                logger.warning("🔒 Strict gate FAILED | %s", "; ".join(failed))
+            else:
+                logger.info(
+                    "🔒 Strict gate passed | %d check(s)", len(all_checks)
+                )
+        elif latency_checks:
+            summary.pass_fail = all(c.passed for c in latency_checks)
+            failed = [
+                f"{c.turn_id}:{c.check_name} {float(c.actual):.0f}ms>{c.expected}ms"
+                for c in latency_checks
+                if not c.passed
+            ]
+            if failed:
+                logger.warning("⏱️  Latency gate FAILED | %s", "; ".join(failed))
+            else:
+                logger.info(
+                    "⏱️  Latency gate passed | %d check(s)", len(latency_checks)
+                )
 
         # Save summary
         summary_path = self.output_dir / run_id / "summary.json"

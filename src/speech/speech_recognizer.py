@@ -1157,61 +1157,28 @@ class StreamingSpeechRecognizerFromBytes:
             )
 
     def stop(self) -> None:
-        """
-        Stop continuous speech recognition with graceful cleanup and tracing.
+        """Stop recognition and wait for native Speech SDK acknowledgement.
 
-        Terminates the active speech recognition session asynchronously without
-        blocking the calling thread. Properly finalizes OpenTelemetry tracing
-        spans and ensures clean shutdown of Speech SDK resources.
-
-        Cleanup Process:
-            1. Add stop event to session span for tracking
-            2. Initiate asynchronous recognition termination
-            3. Finalize session span with success status
-            4. Clean up tracing resources
-
-        Behavior:
-            - Non-blocking operation for responsive applications
-            - Graceful termination of recognition processing
-            - Proper span finalization for complete traces
-            - Safe to call multiple times (idempotent)
-
-        Example:
-            ```python
-            # Start recognition
-            recognizer.start()
-
-            # Process audio...
-            for chunk in audio_stream:
-                recognizer.write_bytes(chunk)
-
-            # Stop when done
-            recognizer.stop()
-            recognizer.close_stream()  # Complete cleanup
-            ```
-
-        Tracing:
-            - Adds "speech_recognition_stopping" event
-            - Adds "speech_recognition_stopped" event
-            - Sets span status to OK for successful completion
-            - Ends session span to complete the trace
-
-        Note:
-            This method initiates shutdown but does not wait for completion.
-            The Speech SDK handles final processing asynchronously. Call
-            close_stream() after stop() for complete resource cleanup.
+        This is a blocking provider operation, just like ``start()``. Async
+        callers must run it in owned worker work and bound their wait without
+        treating a timeout as successful termination. The SDK ResultFuture
+        exposes only ``get()`` (no timeout argument). A failed acknowledgement
+        propagates; the recognizer must not be returned to a pool on failure.
         """
         if self.speech_recognizer:
-            # Add event to session span before stopping
             if self._session_span:
                 self._session_span.add_event("speech_recognition_stopping")
 
-            # Stop recognition asynchronously without blocking
-            future = self.speech_recognizer.stop_continuous_recognition_async()
-            logger.debug("🛑 Speech recognition stop initiated asynchronously (non-blocking)")
+            try:
+                self.speech_recognizer.stop_continuous_recognition_async().get()
+            except Exception as exc:
+                logger.error("Speech recognition stop acknowledgement failed: %s", exc)
+                if self._session_span:
+                    self._session_span.set_status(Status(StatusCode.ERROR, str(exc)))
+                raise
+
             logger.info("Recognition stopped.")
 
-            # Finish session span if it's still active
             if self._session_span:
                 self._session_span.add_event("speech_recognition_stopped")
                 self._session_span.set_status(Status(StatusCode.OK))

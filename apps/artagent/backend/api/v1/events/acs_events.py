@@ -782,7 +782,7 @@ class CallEventHandlers:
             # Normalize and process tone
             normalized_tone = CallEventHandlers._normalize_tone(tone)
             if normalized_tone and context.memo_manager:
-                CallEventHandlers._update_dtmf_sequence(context, normalized_tone, sequence_id)
+                await CallEventHandlers._update_dtmf_sequence(context, normalized_tone, sequence_id)
 
     @staticmethod
     async def handle_play_completed(context: CallEventContext) -> None:
@@ -1032,7 +1032,7 @@ class CallEventHandlers:
         )
 
     @staticmethod
-    def _update_dtmf_sequence(
+    async def _update_dtmf_sequence(
         context: CallEventContext, tone: str, sequence_id: int | None
     ) -> None:
         """
@@ -1054,13 +1054,15 @@ class CallEventHandlers:
         if tone == "#":
             # End sequence - validate
             if current_sequence:
-                CallEventHandlers._validate_sequence(context, current_sequence)
+                await CallEventHandlers._validate_sequence(context, current_sequence)
             return
         elif tone == "*":
             # Clear sequence
             context.memo_manager.update_context("dtmf_sequence", "")
             if context.redis_mgr:
-                context.memo_manager.persist_to_redis(context.redis_mgr)
+                await context.memo_manager.persist_to_redis_async(
+                    context.redis_mgr, raise_on_failure=True
+                )
             logger.info(f"🔢 DTMF sequence cleared for {context.call_connection_id}")
             return
 
@@ -1082,12 +1084,14 @@ class CallEventHandlers:
         # Update context
         context.memo_manager.update_context("dtmf_sequence", new_sequence)
         if context.redis_mgr:
-            context.memo_manager.persist_to_redis(context.redis_mgr)
+            await context.memo_manager.persist_to_redis_async(
+                context.redis_mgr, raise_on_failure=True
+            )
 
         logger.info(f"🔢 DTMF sequence updated: {new_sequence}")
 
     @staticmethod
-    def _validate_sequence(context: CallEventContext, sequence: str) -> None:
+    async def _validate_sequence(context: CallEventContext, sequence: str) -> None:
         """
         Validate DTMF sequence.
 
@@ -1108,7 +1112,9 @@ class CallEventHandlers:
         context.memo_manager.update_context("entered_pin", sequence if is_valid else None)
 
         if context.redis_mgr:
-            context.memo_manager.persist_to_redis(context.redis_mgr)
+            await context.memo_manager.persist_to_redis_async(
+                context.redis_mgr, raise_on_failure=True
+            )
 
         logger.info(f"🔢 DTMF sequence {'validated' if is_valid else 'rejected'}: {sequence}")
 

@@ -345,14 +345,21 @@ def set_span_correlation_attributes(
     if not span or not span.is_recording():
         return
 
-    # Standard correlation attributes
+    # Standard correlation attributes.
+    # App Insights mapping (kept in sync with utils.session_context):
+    #   - ai.session.id groups telemetry into a single visit/call.
+    #   - ai.user.id is the anonymous bucket (session-scoped) when no
+    #     authenticated identity is available on this code path.
+    session_key = session_id or call_connection_id
+    if session_key:
+        span.set_attribute("ai.session.id", session_key)  # Application Insights standard
+
     if call_connection_id:
         span.set_attribute("call.connection.id", call_connection_id)
-        span.set_attribute("ai.session.id", call_connection_id)  # Application Insights standard
 
     if session_id:
         span.set_attribute("session.id", session_id)
-        span.set_attribute("ai.user.id", session_id)  # Application Insights standard
+        span.set_attribute("ai.user.id", session_id)  # anonymous user bucket
 
     if agent_name:
         span.set_attribute("agent.name", agent_name)

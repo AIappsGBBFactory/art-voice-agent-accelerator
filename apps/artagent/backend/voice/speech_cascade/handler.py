@@ -1,37 +1,11 @@
 """
-Speech Cascade Handler - Three-Thread Architecture
-===================================================
+Speech Cascade Runtime Components
+=================================
 
-Generic speech processing handler implementing the three-thread architecture
-for low-latency voice interactions. This handler is protocol-agnostic and
-can be composed with different transport handlers (ACS, VoiceLive, Websocket, etc.).
-
-🧵 Thread 1: Speech SDK Thread (Never Blocks)
-- Continuous audio recognition
-- Immediate barge-in detection via on_partial callbacks
-- Cross-thread communication via run_coroutine_threadsafe
-
-🧵 Thread 2: Route Turn Thread (Blocks on Queue Only)
-- AI processing and response generation
-- Orchestrator delegation for TTS and playback
-- Queue-based serialization of conversation turns
-
-🧵 Thread 3: Main Event Loop (Never Blocks)
-- Task cancellation for barge-in scenarios
-- Non-blocking coordination with transport layer
-
-Architecture:
-    Transport Handler (ACS/VoiceLive/Websocket)
-           │
-           ▼
-    SpeechCascadeHandler
-           │
-    ┌──────┼──────┐
-    │      │      │
-    ▼      ▼      ▼
-  Speech  Route   Main
-   SDK    Turn   Event
-  Thread  Thread  Loop
+Speech SDK callbacks feed a bounded thread-safe inbox. Its owning asyncio loop
+alone mutates speech queues and serializes turns. Barge-in callbacks are tracked
+tasks on that loop. The historical SpeechSDKThread and RouteTurnThread names
+remain import-compatible; neither creates a Python recognition/turn thread.
 """
 
 from __future__ import annotations
@@ -40,13 +14,15 @@ import asyncio
 import os
 import threading
 import time
+import uuid
 import weakref
+from collections import deque
 from collections.abc import Awaitable, Callable
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol
 
+from apps.artagent.backend.voice.shared.close import cancel_and_join
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 from src.speech.speech_recognizer import StreamingSpeechRecognizerFromBytes
@@ -60,8 +36,36 @@ if TYPE_CHECKING:
 logger = get_logger("v1.handlers.speech_cascade_handler")
 tracer = trace.get_tracer(__name__)
 
-# Thread pool for cleanup operations
-_handlers_cleanup_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="handler-cleanup")
+
+def _cancellation_text(error: Any) -> str:
+    """Reduce a Speech SDK cancellation callback argument to readable text.
+
+    The SDK invokes cancel callbacks with a ``SpeechRecognitionCanceledEventArgs``
+    rather than a string, so the useful cause is nested under
+    ``result.cancellation_details.error_details``. Returning plain text here keeps
+    every downstream consumer (logging, classification, the UI envelope) working
+    with a single, predictable type.
+    """
+    if error is None:
+        return ""
+    if isinstance(error, str):
+        return error
+
+    parts: list[str] = []
+    details = getattr(getattr(error, "result", None), "cancellation_details", None)
+    details = details or getattr(error, "cancellation_details", None)
+    if details is not None:
+        for attr in ("reason", "error_code", "error_details"):
+            value = getattr(details, attr, None)
+            if value is not None and str(value) not in parts:
+                parts.append(str(value))
+    if parts:
+        return " | ".join(parts)
+
+    try:
+        return str(error)
+    except Exception:  # pragma: no cover - defensive
+        return repr(type(error).__name__)
 
 
 class SpeechEventType(Enum):
@@ -87,6 +91,10 @@ class SpeechEvent:
     speaker_id: str | None = None
     confidence: float | None = None
     timestamp: float | None = field(default_factory=time.time)
+    # Canonical ID shared by this utterance's partial/final transcript, assistant
+    # response, and any tool calls. It is allocated on the first STT partial.
+    turn_id: str | None = None
+    sequence: int | None = None
     # Wall-clock time (time.time) of the first partial for this utterance, i.e.
     # when the user started speaking. Used to draw a real STT recognition span.
     recognition_start_ts: float | None = None
@@ -154,8 +162,15 @@ class ThreadBridge:
         # turn); the turn's finally block also disarms it.
         self._turn_guard = threading.Event()
         self._turn_guard_deadline: float = 0.0
-        # Lock for atomic queue eviction operations
+        # Only the bounded SDK inbox is shared across threads. asyncio queues
+        # and tasks belong exclusively to main_loop.
         self._queue_lock = threading.Lock()
+        self._pending: deque[tuple[asyncio.Queue, SpeechEvent]] = deque()
+        self._drain_scheduled = False
+        self._closed = False
+        self._tasks: set[asyncio.Task] = set()
+        self._callbacks: deque[tuple[Callable, tuple[Any, ...]]] = deque()
+        self._callbacks_scheduled = False
         # perf_counter timestamp of the most recent barge-in detection, used to
         # measure how long barge-in takes to take effect (detection -> TTS stop).
         self.last_barge_in_detected_ts: float | None = None
@@ -253,104 +268,135 @@ class ThreadBridge:
             logger.warning(f"[{self.connection_id}] No main loop for barge-in scheduling")
             return
 
-        try:
-            asyncio.run_coroutine_threadsafe(handler_func(), self.main_loop)
-        except Exception as e:
-            logger.error(f"[{self.connection_id}] Failed to schedule barge-in: {e}")
+        self.schedule_callback(handler_func)
 
-    def queue_speech_result(self, speech_queue: asyncio.Queue, event: SpeechEvent) -> None:
-        """
-        Queue speech recognition result for Route Turn Thread processing.
+    def schedule_callback(self, callback: Callable, *args: Any) -> None:
+        """Transfer an SDK callback to a tracked task on the owning loop."""
+        loop = self.main_loop
+        if self._closed or loop is None or loop.is_closed():
+            return
+        with self._queue_lock:
+            if self._closed:
+                return
+            if len(self._callbacks) >= 50:
+                logger.warning("[%s] Speech callback inbox full", self.connection_id)
+                return
+            self._callbacks.append((callback, args))
+            if not self._callbacks_scheduled:
+                self._callbacks_scheduled = True
+                loop.call_soon_threadsafe(self._drain_callbacks)
 
-        Thread-safe implementation that uses locking to prevent race conditions
-        during queue eviction operations.
+    def _drain_callbacks(self) -> None:
+        with self._queue_lock:
+            callbacks = list(self._callbacks)
+            self._callbacks.clear()
+            self._callbacks_scheduled = False
+        for callback, args in callbacks:
+            self._start_callback(callback, args)
 
-        Args:
-            speech_queue: Async queue for speech event transfer between threads.
-            event: Speech recognition event containing transcription results.
+    def _start_callback(self, callback: Callable, args: tuple[Any, ...]) -> None:
+        if self._closed:
+            return
+        if len(self._tasks) >= 50:
+            logger.warning("[%s] Speech callback capacity reached", self.connection_id)
+            return
+        task = asyncio.create_task(callback(*args))
+        self._tasks.add(task)
+        task.add_done_callback(self._callback_done)
+
+    def _callback_done(self, task: asyncio.Task) -> None:
+        self._tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            logger.error("[%s] Speech callback failed: %s", self.connection_id, task.exception())
+
+    async def close(self) -> None:
+        """Reject late SDK callbacks and await every owned callback task."""
+        with self._queue_lock:
+            self._closed = True
+            self._pending.clear()
+            self._callbacks.clear()
+        tasks = [task for task in self._tasks if task is not asyncio.current_task()]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    def queue_speech_result(self, speech_queue: asyncio.Queue, event: SpeechEvent) -> bool:
+        """Submit without blocking; evict a partial or reject the newest event.
+
+        SDK callbacks first enter a bounded inbox with at most one scheduled
+        drain. All asyncio.Queue mutations, including eviction, run on main_loop.
+        Full queues never create blocking puts or unbounded pending put tasks.
         """
         if not isinstance(event, SpeechEvent):
             logger.error(f"[{self.connection_id}] Non-SpeechEvent enqueued: {type(event).__name__}")
-            return
-
+            return False
+        loop = self.main_loop
+        if self._closed or loop is None or loop.is_closed():
+            logger.warning("[%s] Speech event rejected: bridge is not live", self.connection_id)
+            return False
         try:
-            speech_queue.put_nowait(event)
-            if event.event_type != SpeechEventType.PARTIAL:
-                logger.info(
-                    f"[{self.connection_id}] Enqueued speech event type={event.event_type.value} qsize={speech_queue.qsize()}"
+            on_loop = asyncio.get_running_loop() is loop
+        except RuntimeError:
+            on_loop = False
+        if on_loop:
+            self._drain_pending()
+            return self._enqueue_on_loop(speech_queue, event)
+
+        with self._queue_lock:
+            if self._closed:
+                return False
+            if len(self._pending) >= (speech_queue.maxsize or 50):
+                partial_index = next(
+                    (
+                        i
+                        for i, (_, old) in enumerate(self._pending)
+                        if old.event_type == SpeechEventType.PARTIAL
+                    ),
+                    None,
                 )
-        except asyncio.QueueFull:
-            # Only evict PARTIAL (interim) transcriptions - never drop TTS responses
-            if event.event_type == SpeechEventType.PARTIAL:
-                logger.debug(f"[{self.connection_id}] Queue full, dropping PARTIAL event")
-                return
-
-            # For important events (TTS, FINAL, etc.), try to evict PARTIAL events
-            # Use lock to make eviction atomic and prevent race conditions
-            with self._queue_lock:
-                evicted = False
-                try:
-                    # Drain queue while holding lock to prevent concurrent modifications
-                    temp_events = []
-                    while not speech_queue.empty():
-                        try:
-                            old_event = speech_queue.get_nowait()
-                            if not evicted and old_event.event_type == SpeechEventType.PARTIAL:
-                                evicted = True
-                                logger.debug(
-                                    f"[{self.connection_id}] Evicted PARTIAL to make room for {event.event_type.value}"
-                                )
-                            else:
-                                temp_events.append(old_event)
-                        except asyncio.QueueEmpty:
-                            break
-
-                    # Restore non-evicted events in original order
-                    for e in temp_events:
-                        try:
-                            speech_queue.put_nowait(e)
-                        except asyncio.QueueFull:
-                            logger.error(
-                                f"[{self.connection_id}] Lost event during eviction restore: {e.event_type.value}"
-                            )
-                            break
-                except Exception as exc:
-                    logger.debug(f"[{self.connection_id}] Queue eviction error: {exc}")
-
-                # Now try to add the important event (still under lock)
-                try:
-                    speech_queue.put_nowait(event)
-                    logger.info(
-                        f"[{self.connection_id}] Enqueued {event.event_type.value} after eviction"
+                if event.event_type == SpeechEventType.PARTIAL or partial_index is None:
+                    logger.warning(
+                        "[%s] SDK inbox full; rejecting %s",
+                        self.connection_id,
+                        event.event_type.value,
                     )
-                except asyncio.QueueFull:
-                    # For TTS_RESPONSE, use blocking put - must not drop
-                    if event.event_type == SpeechEventType.TTS_RESPONSE:
-                        logger.warning(
-                            f"[{self.connection_id}] Queue full for TTS, using blocking put"
-                        )
-                        if self.main_loop and not self.main_loop.is_closed():
-                            try:
-                                future = asyncio.run_coroutine_threadsafe(
-                                    speech_queue.put(event), self.main_loop
-                                )
-                                future.result(timeout=5.0)  # Wait up to 5s for queue space
-                            except Exception as e:
-                                logger.error(f"[{self.connection_id}] Failed to queue TTS: {e}")
-                    else:
-                        logger.error(
-                            f"[{self.connection_id}] Queue still full after eviction; dropping {event.event_type.value}"
-                        )
-        except Exception:
-            # Fallback to run_coroutine_threadsafe
-            if self.main_loop and not self.main_loop.is_closed():
-                try:
-                    future = asyncio.run_coroutine_threadsafe(
-                        speech_queue.put(event), self.main_loop
-                    )
-                    future.result(timeout=0.1)
-                except Exception as e:
-                    logger.error(f"[{self.connection_id}] Failed to queue speech: {e}")
+                    return False
+                del self._pending[partial_index]
+            self._pending.append((speech_queue, event))
+            if not self._drain_scheduled:
+                self._drain_scheduled = True
+                loop.call_soon_threadsafe(self._drain_pending)
+        return True
+
+    def _drain_pending(self) -> None:
+        with self._queue_lock:
+            pending = list(self._pending)
+            self._pending.clear()
+            self._drain_scheduled = False
+        if not self._closed:
+            for queue, event in pending:
+                self._enqueue_on_loop(queue, event)
+
+    def _enqueue_on_loop(self, queue: asyncio.Queue, event: SpeechEvent) -> bool:
+        if queue.full() and event.event_type != SpeechEventType.PARTIAL:
+            retained = []
+            evicted = False
+            while not queue.empty():
+                old = queue.get_nowait()
+                queue.task_done()
+                if not evicted and old.event_type == SpeechEventType.PARTIAL:
+                    evicted = True
+                else:
+                    retained.append(old)
+            for old in retained:
+                queue.put_nowait(old)
+        if queue.full():
+            logger.warning(
+                "[%s] Speech queue full; rejecting %s", self.connection_id, event.event_type.value
+            )
+            return False
+        queue.put_nowait(event)
+        return True
 
 
 class SpeechSDKThread:
@@ -358,7 +404,7 @@ class SpeechSDKThread:
     Speech SDK Thread Manager - handles continuous audio recognition.
 
     Key Characteristics:
-    - Runs in dedicated background thread
+    - Recognition runs on SDK-owned threads
     - Immediate callback execution (< 10ms)
     - Cross-thread communication via ThreadBridge
     - Never blocks on queue operations
@@ -372,7 +418,7 @@ class SpeechSDKThread:
         barge_in_handler: Callable,
         speech_queue: asyncio.Queue,
         *,
-        on_partial_transcript: Callable[[str, str, str | None], None] | None = None,
+        on_partial_transcript: Callable[[str, str, str | None, str, int], None] | None = None,
     ):
         """
         Initialize Speech SDK Thread.
@@ -398,9 +444,15 @@ class SpeechSDKThread:
         self.recognizer_started = False
         self.stop_event = threading.Event()
         self._stopped = False
+        self._stop_lock = threading.Lock()
+        self._stop_complete = False
+        self._stop_error: Exception | None = None
+        self._stop_task: asyncio.Task | None = None
         # Wall-clock time of the first partial of the current utterance (user
         # started speaking). Reset after each final. Drives the STT span.
         self._utterance_start_ts: float | None = None
+        self._utterance_turn_id: str | None = None
+        self._utterance_sequence = 0
 
         self._setup_callbacks()
         self._pre_initialize_recognizer()
@@ -429,22 +481,25 @@ class SpeechSDKThread:
         """Configure speech recognition callbacks."""
 
         def on_partial(text: str, lang: str, speaker_id: str | None = None):
+            if self._stopped:
+                return
             logger.info(
                 f"[{self._conn_short}] Partial speech: '{text}' ({lang}) len={len(text.strip())}"
             )
+            # Ignore all trailing hypotheses while the just-finalized turn is
+            # waiting for first audio. Do this before allocating the next turn ID
+            # so late SDK callbacks cannot contaminate the following utterance.
+            if self.thread_bridge.turn_guard_active:
+                logger.debug(f"[{self._conn_short}] Partial ignored (pre-speech turn guard)")
+                return
+
             # Stamp the start of this utterance (user started speaking) on the
             # first partial so we can draw an accurate STT recognition span.
             if self._utterance_start_ts is None:
                 self._utterance_start_ts = time.time()
+            if self._utterance_turn_id is None:
+                self._utterance_turn_id = uuid.uuid4().hex
             if len(text.strip()) > 3:
-                # While a turn is mid-flight and the agent has not started
-                # speaking yet, this partial is the trailing tail of the utterance
-                # that produced the turn. Acting on it would cancel that very turn
-                # and signal the UI to drop the response audio, so skip it (no
-                # barge-in, no partial envelope) until the agent speaks.
-                if self.thread_bridge.turn_guard_active:
-                    logger.debug(f"[{self._conn_short}] Partial ignored (pre-speech turn guard)")
-                    return
                 try:
                     self.thread_bridge.schedule_barge_in(self.barge_in_handler)
                 except Exception as e:
@@ -452,17 +507,27 @@ class SpeechSDKThread:
 
                 if self.on_partial_transcript:
                     try:
-                        self.on_partial_transcript(text.strip(), lang, speaker_id)
+                        self._utterance_sequence += 1
+                        self.on_partial_transcript(
+                            text.strip(),
+                            lang,
+                            speaker_id,
+                            self._utterance_turn_id,
+                            self._utterance_sequence,
+                        )
                     except Exception as e:
                         logger.debug(f"[{self._conn_short}] Partial transcript callback error: {e}")
 
         def on_final(text: str, lang: str, speaker_id: str | None = None):
+            if self._stopped:
+                return
             logger.debug(
                 f"[{self._conn_short}] Final speech: '{text}' ({lang}) len={len(text.strip())}"
             )
 
             if len(text.strip()) > 1:
                 logger.info(f"[{self._conn_short}] Speech: '{text}' ({lang})")
+                turn_id = self._utterance_turn_id or uuid.uuid4().hex
                 # Arm the pre-speech guard at finalization so trailing partials of
                 # this utterance cannot cancel the turn it is about to spawn.
                 self.thread_bridge.arm_turn_guard()
@@ -471,16 +536,26 @@ class SpeechSDKThread:
                     text=text,
                     language=lang,
                     speaker_id=speaker_id,
+                    turn_id=turn_id,
+                    sequence=self._utterance_sequence + 1,
                     recognition_start_ts=self._utterance_start_ts,
                     recognition_end_perf=time.perf_counter(),
                 )
                 self.thread_bridge.queue_speech_result(self.speech_queue, event)
             # Reset utterance start for the next utterance.
             self._utterance_start_ts = None
+            self._utterance_turn_id = None
+            self._utterance_sequence = 0
 
-        def on_error(error: str):
-            logger.error(f"[{self._conn_short}] Speech error: {error}")
-            error_event = SpeechEvent(event_type=SpeechEventType.ERROR, text=error)
+        def on_error(error: Any):
+            if self._stopped:
+                return
+            # The Speech SDK invokes cancel callbacks with a
+            # SpeechRecognitionCanceledEventArgs, not a string, so pull the
+            # human-readable cause out before it travels any further.
+            detail = _cancellation_text(error)
+            logger.error(f"[{self._conn_short}] Speech error: {detail}")
+            error_event = SpeechEvent(event_type=SpeechEventType.ERROR, text=detail)
             self.thread_bridge.queue_speech_result(self.speech_queue, error_event)
 
         try:
@@ -493,26 +568,12 @@ class SpeechSDKThread:
             raise
 
     def prepare_thread(self) -> None:
-        """Prepare the speech recognition thread."""
-        if self.thread_running:
-            return
-
-        def recognition_thread():
-            try:
-                self.thread_running = True
-                while self.thread_running and not self.stop_event.is_set():
-                    self.stop_event.wait(0.1)
-            except Exception as e:
-                logger.error(f"[{self._conn_short}] Speech thread error: {e}")
-            finally:
-                self.thread_running = False
-
-        self.thread_obj = threading.Thread(target=recognition_thread, daemon=True)
-        self.thread_obj.start()
+        """Compatibility hook; recognition already runs on Speech SDK threads."""
+        self.thread_running = not self._stopped
 
     def start_recognizer(self) -> None:
         """Start the speech recognizer."""
-        if self.recognizer_started or not self.thread_running:
+        if self.recognizer_started or self._stopped:
             return
 
         try:
@@ -521,6 +582,7 @@ class SpeechSDKThread:
             )
             self.recognizer.start()
             self.recognizer_started = True
+            self.thread_running = True
             logger.info(f"[{self._conn_short}] Speech recognizer started")
         except Exception as e:
             logger.error(f"[{self._conn_short}] Failed to start recognizer: {e}")
@@ -553,47 +615,55 @@ class SpeechSDKThread:
                 logger.debug(f"[{self._conn_short}] Error finalizing utterance: {e}")
 
     def stop(self) -> None:
-        """Stop speech recognition and thread."""
-        if self._stopped:
-            return
-
-        try:
-            logger.info(f"[{self._conn_short}] Stopping speech SDK thread")
-            self._stopped = True
-            self.thread_running = False
-            self.recognizer_started = False
-            self.stop_event.set()
-
-            if self.recognizer:
-                try:
+        """Stop SDK recognition; propagate failure so its lease is not reused."""
+        self._stopped = True
+        self.thread_running = False
+        self.recognizer_started = False
+        self.stop_event.set()
+        with self._stop_lock:
+            if self._stop_error is not None:
+                raise self._stop_error
+            if self._stop_complete:
+                return
+            try:
+                if self.recognizer:
                     self.recognizer.stop()
-                except Exception as e:
-                    logger.error(f"[{self._conn_short}] Error stopping recognizer: {e}")
+            except Exception as exc:
+                self._stop_error = exc
+                logger.error("[%s] Error stopping recognizer: %s", self._conn_short, exc)
+                raise
+            self._stop_complete = True
+            logger.info("[%s] Speech SDK recognition stopped", self._conn_short)
 
-            if self.thread_obj and self.thread_obj.is_alive():
-                self.thread_obj.join(timeout=2.0)
-                if self.thread_obj.is_alive():
-                    logger.warning(
-                        f"[{self._conn_short}] Recognition thread did not stop within timeout"
-                    )
+    async def stop_async(self, *, timeout_sec: float = 10.0) -> None:
+        """Await native stop in owned worker work, withholding the lease on timeout.
 
-            logger.info(f"[{self._conn_short}] Speech SDK thread stopped")
-
-        except Exception as e:
-            logger.error(f"[{self._conn_short}] Error during speech SDK thread stop: {e}")
-
-
-def _background_task(coro: Awaitable[Any], *, label: str) -> None:
-    """Create a background task with logging."""
-    task = asyncio.create_task(coro)
-
-    def _log_outcome(t: asyncio.Task) -> None:
+        Keep the task alive if the caller is cancelled or its deadline expires:
+        cancelling an executor Future cannot terminate a native SDK operation.
+        Repeat callers await the same operation, including any recorded failure.
+        """
+        if self._stop_task is None:
+            self._stop_task = asyncio.create_task(
+                asyncio.to_thread(self.stop), name=f"cascade-stt-stop-{self._conn_short}"
+            )
+            self._stop_task.add_done_callback(self._observe_stop_result)
         try:
-            t.result()
-        except Exception:
-            logger.debug("Background task '%s' failed", label, exc_info=True)
+            await asyncio.wait_for(asyncio.shield(self._stop_task), timeout=timeout_sec)
+        except TimeoutError:
+            logger.error(
+                "[%s] Speech stop acknowledgement timed out after %.1fs; lease withheld",
+                self._conn_short,
+                timeout_sec,
+            )
+            raise
 
-    task.add_done_callback(_log_outcome)
+    def _observe_stop_result(self, task: asyncio.Task) -> None:
+        if not task.cancelled() and task.exception() is not None:
+            logger.error(
+                "[%s] Native speech stop failed; lease remains withheld: %s",
+                self._conn_short,
+                task.exception(),
+            )
 
 
 class RouteTurnThread:
@@ -619,9 +689,10 @@ class RouteTurnThread:
         transcript_emitter: TranscriptEmitter | None = None,
         on_greeting: Callable[[SpeechEvent], Awaitable[None]] | None = None,
         on_announcement: Callable[[SpeechEvent], Awaitable[None]] | None = None,
-        on_user_transcript: Callable[[str], Awaitable[None]] | None = None,
+        on_user_transcript: Callable[[str, str | None, int | None], Awaitable[None]] | None = None,
         on_tts_request: Callable[[str, SpeechEventType], Awaitable[None]] | None = None,
         thread_bridge: "ThreadBridge | None" = None,
+        on_error: Callable[[str], Awaitable[None]] | None = None,
     ):
         """
         Initialize Route Turn Thread.
@@ -638,6 +709,9 @@ class RouteTurnThread:
             on_user_transcript: Callback for final user transcripts (emitted to transport).
             on_tts_request: Callback for TTS playback requests. Signature:
                 (text, event_type, *, voice_name, voice_style, voice_rate) -> None
+            thread_bridge: Shared cross-thread bridge.
+            on_error: Callback invoked with the raw speech error text so the
+                transport layer can classify it and surface it to the client.
         """
         self.connection_id = connection_id
         self._conn_short = connection_id[-8:] if connection_id else "unknown"
@@ -650,12 +724,14 @@ class RouteTurnThread:
         self.on_announcement = on_announcement
         self.on_user_transcript = on_user_transcript
         self.on_tts_request = on_tts_request
+        self.on_error = on_error
         # Shared cross-thread bridge; used to disarm the pre-speech turn guard
         # once the agent starts speaking / the turn ends.
         self.thread_bridge = thread_bridge
 
         self.processing_task: asyncio.Task | None = None
         self.current_response_task: asyncio.Task | None = None
+        self._stop_task: asyncio.Task | None = None
         self.running = False
         self._stopped = False
 
@@ -669,6 +745,8 @@ class RouteTurnThread:
 
     async def start(self) -> None:
         """Start the route turn processing loop."""
+        if self._stopped:
+            raise RuntimeError("Cannot restart a stopped route worker")
         if self.running:
             return
 
@@ -734,8 +812,20 @@ class RouteTurnThread:
                             )
                     elif speech_event.event_type == SpeechEventType.ERROR:
                         logger.error(f"[{self._conn_short}] Speech error: {speech_event.text}")
+                        if self.on_error:
+                            try:
+                                await self.on_error(speech_event.text or "")
+                            except Exception:
+                                logger.debug(
+                                    f"[{self._conn_short}] Failed to surface speech error",
+                                    exc_info=True,
+                                )
                 except asyncio.CancelledError:
+                    if not self.running or asyncio.current_task().cancelling():
+                        raise
                     continue  # Barge-in cancellation
+                finally:
+                    self.speech_queue.task_done()
             except TimeoutError:
                 continue
             except Exception as e:
@@ -763,6 +853,7 @@ class RouteTurnThread:
         """
         # Increment turn counter
         self._turn_number += 1
+        event.turn_id = event.turn_id or uuid.uuid4().hex
 
         # Capture recognition-end (perf clock) so the orchestrator KPI summary
         # can anchor TTFT/TTFB at the moment the user stopped speaking.
@@ -824,10 +915,19 @@ class RouteTurnThread:
                         logger.error(f"[{self._conn_short}] No memory manager available")
                         return
 
+                    # Make the STT-allocated ID available to route_turn without
+                    # changing the long-standing orchestrator callable signature.
+                    # The queue serializes turns, so this value is session-safe.
+                    self.memory_manager.set_corememory("current_turn_id", event.turn_id)
+
                     # Emit user transcript via callback (for transport coordination)
                     if self.on_user_transcript:
                         try:
-                            await self.on_user_transcript(event.text)
+                            await self.on_user_transcript(
+                                event.text,
+                                event.turn_id,
+                                event.sequence,
+                            )
                         except Exception as e:
                             logger.warning(
                                 f"[{self._conn_short}] Failed to invoke on_user_transcript: {e}"
@@ -836,7 +936,10 @@ class RouteTurnThread:
                     # Legacy: emit via transcript emitter (deprecated)
                     if self.transcript_emitter:
                         try:
-                            await self.transcript_emitter.emit_user_transcript(event.text)
+                            await self.transcript_emitter.emit_user_transcript(
+                                event.text,
+                                turn_id=event.turn_id,
+                            )
                         except Exception as e:
                             logger.warning(
                                 f"[{self._conn_short}] Failed to emit user transcript: {e}"
@@ -853,7 +956,7 @@ class RouteTurnThread:
                         )
                         if coro:
                             self.current_response_task = asyncio.create_task(coro)
-                            await self.current_response_task
+                            await asyncio.shield(self.current_response_task)
 
                 except asyncio.CancelledError:
                     logger.info(
@@ -870,7 +973,9 @@ class RouteTurnThread:
                     if self.thread_bridge is not None:
                         self.thread_bridge.disarm_turn_guard()
                     if self.current_response_task and not self.current_response_task.done():
-                        self.current_response_task.cancel()
+                        if not self.current_response_task.cancelling():
+                            self.current_response_task.cancel()
+                        await asyncio.gather(self.current_response_task, return_exceptions=True)
                     self.current_response_task = None
                     # Close voice.turn.N.total now that the response is fully generated
                     # and TTS has been dispatched. The core KPIs (ttft/ttfb/synth/wall)
@@ -934,6 +1039,7 @@ class RouteTurnThread:
         turn_wall_ms: float | None = None,
         agent_name: str | None = None,
         latency_anchor: str | None = None,
+        model: str | None = None,
     ) -> None:
         """Stamp the structured per-turn latency profile on the active turn span."""
         if self._active_turn_span:
@@ -948,6 +1054,7 @@ class RouteTurnThread:
                 turn_wall_ms=turn_wall_ms,
                 agent_name=agent_name,
                 latency_anchor=latency_anchor,
+                model=model,
             )
 
     @property
@@ -976,6 +1083,7 @@ class RouteTurnThread:
             while not self.speech_queue.empty():
                 try:
                     self.speech_queue.get_nowait()
+                    self.speech_queue.task_done()
                     cleared_count += 1
                 except asyncio.QueueEmpty:
                     break
@@ -985,34 +1093,29 @@ class RouteTurnThread:
 
             # Cancel current response task
             if self.current_response_task and not self.current_response_task.done():
-                self.current_response_task.cancel()
-                try:
-                    await self.current_response_task
-                except asyncio.CancelledError:
-                    pass
+                await cancel_and_join([self.current_response_task])
             self.current_response_task = None
 
         except Exception as e:
             logger.error(f"[{self._conn_short}] Error cancelling processing: {e}")
+            raise
 
     async def stop(self) -> None:
-        """Stop the route turn processing loop."""
-        if self._stopped:
-            return
+        """Await one retained close, keeping unacknowledged producers quarantined."""
+        if self._stop_task is None:
+            self._stopped = True
+            self.running = False
+            self._stop_task = asyncio.create_task(self._stop())
+        await asyncio.shield(self._stop_task)
 
-        self._stopped = True
-        self.running = False
-        await self.cancel_current_processing()
-        await self._end_active_turn()
-
-        if self.processing_task and not self.processing_task.done():
-            self.processing_task.cancel()
-            try:
-                await self.processing_task
-            except asyncio.CancelledError:
-                pass
-
-        await self._clear_speech_queue()
+    async def _stop(self) -> None:
+        try:
+            await cancel_and_join(
+                task for task in (self.current_response_task, self.processing_task) if task
+            )
+        finally:
+            await self._end_active_turn()
+            await self._clear_speech_queue()
 
     async def _clear_speech_queue(self) -> None:
         """Clear remaining events from the speech queue."""
@@ -1021,6 +1124,7 @@ class RouteTurnThread:
             while not self.speech_queue.empty():
                 try:
                     self.speech_queue.get_nowait()
+                    self.speech_queue.task_done()
                     cleared_count += 1
                 except asyncio.QueueEmpty:
                     break
@@ -1083,440 +1187,13 @@ class BargeInController:
         except Exception as e:
             logger.error(f"[{self._conn_short}] Barge-in error: {e}")
         finally:
-            asyncio.create_task(self._reset_barge_in_state())
-
-    async def _reset_barge_in_state(self) -> None:
-        """Reset barge-in state after brief delay."""
-        await asyncio.sleep(0.1)
-        self.barge_in_active.clear()
-
-
-class SpeechCascadeHandler:
-    """
-    Generic Speech Cascade Handler - Three-Thread Architecture Implementation
-
-    Coordinates the three-thread architecture for low-latency voice interactions.
-    This handler is protocol-agnostic and can be composed with different
-    transport handlers (ACS, VoiceLive, Websocket, etc.).
-
-    Usage:
-        handler = SpeechCascadeHandler(
-            connection_id="call_123",
-            orchestrator_func=my_orchestrator,
-            recognizer=speech_recognizer,
-            memory_manager=memo_manager,
-        )
-        await handler.start()
-        # Feed audio via handler.write_audio(bytes)
-        # Queue events via handler.queue_event(event)
-        await handler.stop()
-    """
-
-    def __init__(
-        self,
-        connection_id: str,
-        orchestrator_func: Callable,
-        recognizer: StreamingSpeechRecognizerFromBytes | None = None,
-        memory_manager: MemoManager | None = None,
-        *,
-        on_barge_in: Callable[[], Awaitable[None]] | None = None,
-        on_greeting: Callable[[SpeechEvent], Awaitable[None]] | None = None,
-        on_announcement: Callable[[SpeechEvent], Awaitable[None]] | None = None,
-        on_partial_transcript: Callable[[str, str, str | None], None] | None = None,
-        on_user_transcript: Callable[[str], Awaitable[None]] | None = None,
-        on_tts_request: Callable[[str, SpeechEventType], Awaitable[None]] | None = None,
-        transcript_emitter: TranscriptEmitter | None = None,
-        response_sender: ResponseSender | None = None,
-        redis_mgr: Any | None = None,
-    ):
-        """
-        Initialize the speech cascade handler.
-
-        Args:
-            connection_id: Unique connection identifier.
-            orchestrator_func: Orchestrator function for conversation management.
-            recognizer: Speech recognition client instance.
-            memory_manager: Memory manager for conversation state.
-            on_barge_in: Callback for barge-in events (transport-specific).
-            on_greeting: Callback for greeting playback.
-            on_announcement: Callback for announcement playback.
-            on_partial_transcript: Callback for partial transcripts.
-            on_user_transcript: Callback for final user transcripts (emitted to transport).
-            on_tts_request: Callback for TTS playback requests (emitted to transport).
-            transcript_emitter: Protocol implementation for emitting transcripts.
-            response_sender: Protocol implementation for sending TTS responses.
-            redis_mgr: Optional redis manager for session persistence.
-        """
-        self.connection_id = connection_id
-        self._conn_short = connection_id[-8:] if connection_id else "unknown"
-        self.orchestrator_func = orchestrator_func
-        self.memory_manager = memory_manager
-        self._redis_mgr = redis_mgr
-
-        # Store callbacks for transport layer coordination
-        self.on_user_transcript = on_user_transcript
-        self.on_tts_request = on_tts_request
-
-        # Initialize speech recognizer
-        self.recognizer = recognizer or StreamingSpeechRecognizerFromBytes(
-            candidate_languages=["en-US", "fr-FR", "de-DE", "es-ES", "it-IT"],
-            vad_silence_timeout_ms=800,
-            audio_format="pcm",
-            use_semantic_segmentation=False,
-            enable_diarisation=False,
-        )
-
-        # Cross-thread communication
-        self.speech_queue: asyncio.Queue = asyncio.Queue(maxsize=50)
-        self.thread_bridge = ThreadBridge()
-
-        # Barge-in controller
-        self.barge_in_controller = BargeInController(connection_id, on_barge_in=on_barge_in)
-
-        # Route Turn Thread
-        self.route_turn_thread = RouteTurnThread(
-            connection_id=connection_id,
-            speech_queue=self.speech_queue,
-            orchestrator_func=orchestrator_func,
-            memory_manager=memory_manager,
-            transcript_emitter=transcript_emitter,
-            response_sender=response_sender,
-            on_greeting=on_greeting,
-            on_announcement=on_announcement,
-            on_user_transcript=on_user_transcript,
-            on_tts_request=on_tts_request,
-            thread_bridge=self.thread_bridge,
-        )
-
-        # Speech SDK Thread
-        self.speech_sdk_thread = SpeechSDKThread(
-            connection_id=connection_id,
-            recognizer=self.recognizer,
-            thread_bridge=self.thread_bridge,
-            barge_in_handler=self._handle_barge_in_with_stt_stop,
-            speech_queue=self.speech_queue,
-            on_partial_transcript=on_partial_transcript,
-        )
-
-        self.thread_bridge.set_route_turn_thread(self.route_turn_thread)
-
-        # Lifecycle
-        self.running = False
-        self._stopped = False
-
-    async def _handle_barge_in_with_stt_stop(self) -> None:
-        """Handle barge-in with STT timer stop."""
-        # Stop STT timer first (barge-in ends the current recognition)
-        if self.speech_sdk_thread:
-            self.speech_sdk_thread.stop_stt_timer_for_barge_in()
-        # Then delegate to the barge-in controller
-        await self.barge_in_controller.handle_barge_in()
-
-    async def start(self) -> None:
-        """Start all threads."""
-        with tracer.start_as_current_span(
-            "speech_cascade_handler.start",
-            kind=SpanKind.INTERNAL,
-            attributes={"connection.id": self.connection_id},
-        ):
             try:
-                logger.info(f"[{self._conn_short}] Starting speech cascade handler")
-                self.running = True
-
-                # Capture main event loop
-                main_loop = asyncio.get_running_loop()
-                self.thread_bridge.set_main_loop(main_loop, self.connection_id)
-
-                # Start threads
-                self.speech_sdk_thread.prepare_thread()
-
-                # Wait for thread to be ready
-                for _ in range(10):
-                    if self.speech_sdk_thread.thread_running:
-                        break
-                    await asyncio.sleep(0.05)
-
-                # Start recognizer
-                await asyncio.get_running_loop().run_in_executor(
-                    None, self.speech_sdk_thread.start_recognizer
-                )
-
-                await self.route_turn_thread.start()
-
-                logger.info(f"[{self._conn_short}] Speech cascade handler started")
-
-            except Exception as e:
-                logger.error(f"[{self._conn_short}] Failed to start: {e}")
-                await self.stop()
-                raise
-
-    def write_audio(self, audio_bytes: bytes) -> None:
-        """
-        Write audio bytes to the speech recognizer.
-
-        Args:
-            audio_bytes: Raw audio bytes to process.
-        """
-        if self.running and self.speech_sdk_thread:
-            self.speech_sdk_thread.write_audio(audio_bytes)
-
-    def queue_event(self, event: SpeechEvent) -> bool:
-        """
-        Queue a speech event for processing.
-
-        Args:
-            event: Speech event to queue.
-
-        Returns:
-            True if successfully queued, False otherwise.
-        """
-        if not self.running:
-            return False
-
-        try:
-            self.thread_bridge.queue_speech_result(self.speech_queue, event)
-            return True
-        except Exception as e:
-            logger.error(f"[{self._conn_short}] Failed to queue event: {e}")
-            return False
-
-    def queue_greeting(
-        self,
-        text: str,
-        language: str = "en-US",
-        *,
-        voice_name: str | None = None,
-        voice_style: str | None = None,
-        voice_rate: str | None = None,
-    ) -> bool:
-        """Queue a greeting for playback with optional voice configuration."""
-        return self.queue_event(
-            SpeechEvent(
-                event_type=SpeechEventType.GREETING,
-                text=text,
-                language=language,
-                speaker_id=self.connection_id,
-                voice_name=voice_name,
-                voice_style=voice_style,
-                voice_rate=voice_rate,
-            )
-        )
-
-    def queue_announcement(
-        self,
-        text: str,
-        language: str = "en-US",
-        *,
-        voice_name: str | None = None,
-        voice_style: str | None = None,
-        voice_rate: str | None = None,
-    ) -> bool:
-        """Queue an announcement for playback with optional voice configuration."""
-        return self.queue_event(
-            SpeechEvent(
-                event_type=SpeechEventType.ANNOUNCEMENT,
-                text=text,
-                language=language,
-                voice_name=voice_name,
-                voice_style=voice_style,
-                voice_rate=voice_rate,
-            )
-        )
-
-    async def play_tts_immediate(
-        self,
-        text: str,
-        *,
-        voice_name: str | None = None,
-        voice_style: str | None = None,
-        voice_rate: str | None = None,
-    ) -> None:
-        """
-        Play TTS immediately without queueing.
-
-        Use this during LLM streaming to get immediate audio playback.
-        Bypasses the speech_queue which may be blocked during orchestrator execution.
-
-        Args:
-            text: Text to synthesize and play.
-            voice_name: Optional Azure TTS voice name override.
-            voice_style: Optional voice style (e.g., "cheerful").
-            voice_rate: Optional speech rate (e.g., "1.1").
-        """
-        if not text or not text.strip():
-            return
-
-        if self.on_tts_request:
-            await self.on_tts_request(
-                text,
-                SpeechEventType.TTS_RESPONSE,
-                voice_name=voice_name,
-                voice_style=voice_style,
-                voice_rate=voice_rate,
-            )
-
-    def queue_tts(
-        self,
-        text: str,
-        *,
-        voice_name: str | None = None,
-        voice_style: str | None = None,
-        voice_rate: str | None = None,
-        language: str = "en-US",
-    ) -> bool:
-        """
-        Queue TTS response for unified sequential playback.
-
-        All TTS audio (LLM responses, greetings, announcements) should use this
-        to ensure proper sequencing and avoid audio overlaps during handoffs.
-
-        Args:
-            text: Text to synthesize and play.
-            voice_name: Optional Azure TTS voice name override.
-            voice_style: Optional voice style (e.g., "cheerful").
-            voice_rate: Optional speech rate (e.g., "1.1").
-            language: Language code for synthesis.
-
-        Returns:
-            True if successfully queued, False otherwise.
-        """
-        return self.queue_event(
-            SpeechEvent(
-                event_type=SpeechEventType.TTS_RESPONSE,
-                text=text,
-                language=language,
-                voice_name=voice_name,
-                voice_style=voice_style,
-                voice_rate=voice_rate,
-            )
-        )
-
-    def queue_user_text(self, text: str, language: str = "en-US") -> bool:
-        """
-        Queue user text input for orchestration.
-
-        Used for text input (e.g., browser chat) that bypasses STT.
-
-        Args:
-            text: User text input.
-            language: Language code.
-
-        Returns:
-            True if successfully queued, False otherwise.
-        """
-        return self.queue_event(
-            SpeechEvent(
-                event_type=SpeechEventType.FINAL,
-                text=text,
-                language=language,
-                speaker_id=self.connection_id,
-            )
-        )
-
-    async def stop(self) -> None:
-        """Stop all threads and persist session state."""
-        if self._stopped:
-            return
-
-        with tracer.start_as_current_span("speech_cascade_handler.stop", kind=SpanKind.INTERNAL):
-            try:
-                logger.info(f"[{self._conn_short}] Stopping speech cascade handler")
-                self._stopped = True
-                self.running = False
-
-                cleanup_errors = []
-
-                # Persist session state to Redis before stopping
-                if self.memory_manager and self._redis_mgr:
-                    try:
-                        await self.memory_manager.persist_to_redis_async(self._redis_mgr)
-                        logger.info(f"[{self._conn_short}] Session state persisted to Redis")
-                    except Exception as e:
-                        cleanup_errors.append(f"redis_persist: {e}")
-                        logger.warning(f"[{self._conn_short}] Failed to persist to Redis: {e}")
-
-                try:
-                    await self.route_turn_thread.stop()
-                except Exception as e:
-                    cleanup_errors.append(f"route_turn_thread: {e}")
-
-                try:
-                    self.speech_sdk_thread.stop()
-                except Exception as e:
-                    cleanup_errors.append(f"speech_sdk_thread: {e}")
-
-                try:
-                    await self._clear_speech_queue_final()
-                except Exception as e:
-                    cleanup_errors.append(f"speech_queue_cleanup: {e}")
-
-                if cleanup_errors:
-                    logger.warning(
-                        f"[{self._conn_short}] Stopped with {len(cleanup_errors)} cleanup errors"
-                    )
-                else:
-                    logger.info(f"[{self._conn_short}] Speech cascade handler stopped")
-
-            except Exception as e:
-                logger.error(f"[{self._conn_short}] Critical stop error: {e}")
-
-    async def _clear_speech_queue_final(self) -> None:
-        """Final cleanup of speech queue."""
-        try:
-            cleared_count = 0
-            while not self.speech_queue.empty():
-                try:
-                    self.speech_queue.get_nowait()
-                    cleared_count += 1
-                except asyncio.QueueEmpty:
-                    break
-
-            if cleared_count > 0:
-                logger.info(
-                    f"[{self._conn_short}] Final cleanup: cleared {cleared_count} speech events"
-                )
-        except Exception as e:
-            logger.error(f"[{self._conn_short}] Error in final speech queue cleanup: {e}")
-
-    # =========================================================================
-    # Turn Telemetry Methods (delegate to route_turn_thread)
-    # =========================================================================
-
-    def record_llm_first_token(self) -> None:
-        """Record LLM first token timing on the active turn span."""
-        self.route_turn_thread.record_llm_first_token()
-
-    def record_llm_complete(
-        self,
-        total_ms: float | None = None,
-        input_tokens: int | None = None,
-        output_tokens: int | None = None,
-        response_text: str | None = None,
-    ) -> None:
-        """Record LLM completion timing on the active turn span."""
-        self.route_turn_thread.record_llm_complete(
-            total_ms=total_ms,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            response_text=response_text,
-        )
-
-    def record_tts_first_audio(self) -> None:
-        """Record TTS first audio timing on the active turn span."""
-        self.route_turn_thread.record_tts_first_audio()
-
-    def record_tts_complete(self, total_ms: float | None = None) -> None:
-        """Record TTS completion on the active turn span."""
-        self.route_turn_thread.record_tts_complete(total_ms=total_ms)
-
-    @property
-    def turn_number(self) -> int:
-        """Current turn number for external reference."""
-        return self.route_turn_thread.turn_number
+                await asyncio.sleep(0.1)
+            finally:
+                self.barge_in_active.clear()
 
 
 __all__ = [
-    "SpeechCascadeHandler",
     "SpeechEvent",
     "SpeechEventType",
     "ThreadBridge",

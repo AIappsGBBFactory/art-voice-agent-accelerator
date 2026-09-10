@@ -17,6 +17,9 @@
  * empty list) they return null so callers can fall back to their static presets.
  */
 import { API_BASE_URL } from '../config/constants.js';
+import { pickAttribution, resourceAttribution } from './foundryRegions.js';
+
+export { crossRegionHint, describeModelSource, regionKeyOf } from './foundryRegions.js';
 
 /**
  * Classify a model by its VoiceLive audio architecture. Mirrors the backend
@@ -34,20 +37,38 @@ export const classifyModelArch = (deploymentId) => {
  * Managed Voice Live models — the VoiceLive-hosted models used when BYOM is OFF.
  * These are NOT your resource deployments; they're billed by Voice Live pricing
  * tier. (BYOM is what lets you use your own deployments instead.)
- * https://learn.microsoft.com/azure/ai-services/speech-service/voice-live
+ *
+ * IMPORTANT: this list MUST match the models managed Voice Live actually serves.
+ * Offering an unsupported model here lets the connection succeed but the model
+ * never produces a response — the agent "stops responding" and the session ends
+ * in a 900s idle timeout. In particular the plain `gpt-5-chat`, `o1`, `o3` and
+ * `o3-mini` deployments are NOT valid managed Voice Live models (only the
+ * versioned `gpt-5.x-chat` chat models are) — keep them out of this list.
+ * Source (keep in sync):
+ * https://learn.microsoft.com/azure/ai-services/speech-service/voice-live#supported-models-and-regions
  */
 export const MANAGED_VOICELIVE_MODELS = [
+  // Native speech-to-speech (realtime) — lowest latency.
+  { id: 'gpt-realtime-1.5', tier: 'pro' },
   { id: 'gpt-realtime', tier: 'pro' },
-  { id: 'gpt-4o', tier: 'pro' },
-  { id: 'gpt-4.1', tier: 'pro' },
-  { id: 'gpt-5', tier: 'pro' },
-  { id: 'gpt-5-chat', tier: 'pro' },
   { id: 'gpt-realtime-mini', tier: 'basic' },
-  { id: 'gpt-4o-mini', tier: 'basic' },
-  { id: 'gpt-4.1-mini', tier: 'basic' },
+  { id: 'phi4-mm-realtime', tier: 'lite' },
+  { id: 'azure-realtime', tier: 'lite' },
+  // Cascaded (Azure STT → text LLM → Azure TTS).
+  { id: 'gpt-5.4', tier: 'pro' },
+  { id: 'gpt-5.3-chat', tier: 'pro' },
+  { id: 'gpt-5.2', tier: 'pro' },
+  { id: 'gpt-5.2-chat', tier: 'pro' },
+  { id: 'gpt-5.1', tier: 'pro' },
+  { id: 'gpt-5.1-chat', tier: 'pro' },
+  { id: 'gpt-5', tier: 'pro' },
   { id: 'gpt-5-mini', tier: 'basic' },
   { id: 'gpt-5-nano', tier: 'lite' },
-  { id: 'phi4-mm-realtime', tier: 'lite' },
+  { id: 'gpt-4.1', tier: 'pro' },
+  { id: 'gpt-4.1-mini', tier: 'basic' },
+  { id: 'gpt-4.1-nano', tier: 'lite' },
+  { id: 'gpt-4o', tier: 'pro' },
+  { id: 'gpt-4o-mini', tier: 'basic' },
   { id: 'phi4-mini', tier: 'lite' },
 ];
 
@@ -59,12 +80,38 @@ export const MANAGED_VOICELIVE_OPTIONS = MANAGED_VOICELIVE_MODELS.map((m) => ({
 }));
 
 /**
- * Fetch the live model deployments from the connected Foundry/Azure OpenAI
- * resource. Returns { models, source, byCategory } or null on failure/empty.
+ * True when `deploymentId` is a model that managed Voice Live can actually host
+ * (i.e. valid to run with BYOM OFF). Non-managed models — e.g. `o3-mini`, `o1`,
+ * `o3`, plain `gpt-5-chat`, or any custom/fine-tuned deployment — REQUIRE a BYOM
+ * profile: connecting them as managed lets the socket open but the model never
+ * responds, so the agent goes silent. Empty id → true (nothing to validate; the
+ * backend applies the managed default).
  */
-export async function fetchFoundryModels() {
+export const isManagedVoiceLiveModel = (deploymentId) => {
+  const id = (deploymentId || '').trim().toLowerCase();
+  if (!id) return true;
+  return MANAGED_VOICELIVE_MODELS.some((m) => m.id.toLowerCase() === id);
+};
+
+/**
+ * Fetch the live model deployments for an orchestration mode.
+ *
+ * `mode` picks WHICH Azure resource is listed — they are usually different
+ * accounts (Voice Live is often provisioned in its own region):
+ *   • undefined / 'cascade'  → primary AI Foundry / Azure OpenAI (AZURE_OPENAI_ENDPOINT)
+ *   • 'voicelive'            → the Voice Live account (AZURE_VOICELIVE_ENDPOINT)
+ *
+ * Listing the primary resource for the VoiceLive dropdown lets a user pick a
+ * deployment Voice Live can't reach: the session connects but the agent never
+ * responds. Always pass 'voicelive' for the VoiceLive model list.
+ *
+ * Returns { models, source, byCategory, ...resourceAttribution } or null on
+ * failure/empty. See `foundryRegions.js` for the attribution fields.
+ */
+export async function fetchFoundryModels(mode) {
   try {
-    const res = await fetch(`${API_BASE_URL}/api/v1/agent-builder/models`);
+    const qs = mode ? `?mode=${encodeURIComponent(mode)}` : '';
+    const res = await fetch(`${API_BASE_URL}/api/v1/agent-builder/models${qs}`);
     if (!res.ok) return null;
     const data = await res.json();
     const models = Array.isArray(data.models) ? data.models : [];
@@ -73,10 +120,24 @@ export async function fetchFoundryModels() {
       models,
       source: data.source || 'azure_openai',
       byCategory: data.by_category || {},
+      ...resourceAttribution(data),
     };
   } catch {
     return null;
   }
+}
+
+/**
+ * Fetch the deployments on the Voice Live (AVL) resource and return them as
+ * ready-to-render VoiceLive dropdown options, or null when unavailable.
+ * Returns { options, ...resourceAttribution }.
+ */
+export async function fetchVoiceLiveModels() {
+  const live = await fetchFoundryModels('voicelive');
+  if (!live) return null;
+  const { voicelive } = deriveModelOptions(live.models);
+  if (!voicelive.length) return null;
+  return { options: voicelive, ...pickAttribution(live) };
 }
 
 /**
@@ -135,8 +196,15 @@ export async function fetchRegionVoices() {
     return {
       voices: data.voices || [],
       verifiedAgainstRegion: Boolean(data.verified_against_region),
+      hdFromCatalog: Boolean(data.hd_from_catalog),
+      hdTotal: data.hd_total ?? (data.voices || []).filter((v) => v.is_hd).length,
+      locales: data.locales || [],
+      notes: data.notes || [],
       source: data.source || 'static-catalog',
       defaultVoice: data.default_voice || null,
+      // Which Speech resource + region synthesizes these voices — the leg every
+      // Cascade TTS/STT hop travels to.
+      ...resourceAttribution(data),
     };
   } catch {
     return null;

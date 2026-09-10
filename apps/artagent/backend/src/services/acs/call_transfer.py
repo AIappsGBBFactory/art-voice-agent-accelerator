@@ -19,6 +19,7 @@ from opentelemetry import trace
 from opentelemetry.trace import SpanKind, Status, StatusCode
 from src.acs.acs_helper import AcsCaller
 from utils.ml_logging import get_logger
+from utils.pii_filter import mask_pii
 
 if TYPE_CHECKING:  # pragma: no cover - typing assistance only
     from azure.communication.callautomation import CallParticipant
@@ -179,8 +180,9 @@ async def transfer_call(
         except HttpResponseError as exc:
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             logger.error(
-                "ACS transfer failed | call=%s error=%s",
+                "ACS transfer failed | call=%s target=%s error=%s",
                 connection_id,
+                mask_pii(target_address, prefix="phone"),
                 exc,
             )
             return {
@@ -191,8 +193,9 @@ async def transfer_call(
         except Exception as exc:  # pragma: no cover - defensive
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             logger.exception(
-                "Unexpected error during ACS transfer | call=%s",
+                "Unexpected error during ACS transfer | call=%s target=%s",
                 connection_id,
+                mask_pii(target_address, prefix="phone"),
             )
             return {
                 "success": False,
@@ -205,8 +208,9 @@ async def transfer_call(
         span.set_status(Status(StatusCode.OK))
 
         logger.info(
-            "ACS transfer initiated | call=%s status=%s",
+            "ACS transfer initiated | call=%s target=%s status=%s",
             connection_id,
+            mask_pii(target_address, prefix="phone"),
             status_value,
         )
 

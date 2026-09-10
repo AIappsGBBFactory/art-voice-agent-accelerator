@@ -29,19 +29,19 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from fastapi.websockets import WebSocketState
 
 # Import VoiceHandler and related items from voice module
 # Note: MediaHandler was previously an alias but has been removed
 from apps.artagent.backend.voice import (
-    VoiceHandler,
-    VoiceHandlerConfig,
-    TransportType,
-    pcm16le_rms,
     BROWSER_PCM_SAMPLE_RATE,
     BROWSER_SPEECH_RMS_THRESHOLD,
     RMS_SILENCE_THRESHOLD,
+    TransportType,
+    VoiceHandler,
+    VoiceHandlerConfig,
+    pcm16le_rms,
 )
+from fastapi.websockets import WebSocketState
 
 # Aliases for backward compatibility in tests (will be phased out)
 MediaHandler = VoiceHandler
@@ -255,11 +255,14 @@ class MockMemoManager:
         self._history[agent].append({"role": role, "content": content})
 
     @classmethod
-    def from_redis(cls, session_key: str, redis_mgr: Any):
+    async def from_redis_async(cls, session_key: str, redis_mgr: Any):
         return cls(session_id=session_key)
 
-    async def persist_to_redis_async(self, redis_mgr: Any):
-        pass
+    async def persist_to_redis_async(self, redis_mgr: Any, *, raise_on_failure=False):
+        return True
+
+    async def flush_pending_persist(self, *, raise_on_failure=False):
+        return True
 
 
 def create_mock_app_state(
@@ -454,7 +457,7 @@ class TestMediaHandlerLifecycle:
             def start_recognizer(self):
                 order.append("stt_start")
 
-            def stop(self):
+            async def stop_async(self):
                 order.append("stt_stop")
 
         ws = MockWebSocket()

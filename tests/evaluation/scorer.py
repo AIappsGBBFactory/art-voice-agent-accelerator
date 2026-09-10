@@ -606,6 +606,7 @@ class MetricsScorer:
                     agent_name=turn.agent_name,
                     model_used=turn.eval_model_config.model_name,
                     e2e_ms=turn.e2e_ms,
+                    ttft_ms=turn.ttft_ms,
                     tools_expected=expected_tools,
                     tools_called=[tc.name for tc in turn.tool_calls],
                     tool_precision=score.tool_precision,

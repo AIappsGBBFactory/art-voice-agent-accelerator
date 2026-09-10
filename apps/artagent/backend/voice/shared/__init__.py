@@ -41,6 +41,7 @@ from .config_resolver import (
     DEFAULT_START_AGENT,
     SCENARIO_ENV_VAR,
     OrchestratorConfigResult,
+    build_effective_registry,
     get_scenario_greeting,
     resolve_from_app_state,
     resolve_orchestrator_config,
@@ -89,6 +90,18 @@ from .context import (
     VoiceSessionContext,
 )
 
+# Error classification and surfacing
+from .errors import (
+    WS_CLOSE_CODE_VOICE_ERROR,
+    VoiceErrorInfo,
+    classify_speech_cancellation,
+    classify_voice_error,
+    classify_voicelive_server_error,
+    close_reason_for,
+    emit_exception,
+    emit_voice_error,
+)
+
 __all__ = [
     # Context/Result (shared data classes)
     "OrchestratorContext",
@@ -97,6 +110,7 @@ __all__ = [
     "DEFAULT_START_AGENT",
     "SCENARIO_ENV_VAR",
     "OrchestratorConfigResult",
+    "build_effective_registry",
     "resolve_orchestrator_config",
     "resolve_from_app_state",
     "get_scenario_greeting",
@@ -125,4 +139,13 @@ __all__ = [
     # Voice Session Context (Phase 3)
     "TransportType",
     "VoiceSessionContext",
+    # Error Classification & Surfacing
+    "WS_CLOSE_CODE_VOICE_ERROR",
+    "VoiceErrorInfo",
+    "classify_voice_error",
+    "classify_speech_cancellation",
+    "classify_voicelive_server_error",
+    "close_reason_for",
+    "emit_exception",
+    "emit_voice_error",
 ]

@@ -278,6 +278,10 @@
         "max_tts_first_chunk_ms": {
           "type": "integer",
           "description": "Maximum time-to-first-audio-chunk in milliseconds (cascade streaming TTS dispatch)"
+        },
+        "max_ttft_ms": {
+          "type": "integer",
+          "description": "Maximum LLM time-to-first-token in milliseconds (request -> first streamed token; core voice responsiveness KPI, excludes tool-call time)"
         }
       }
     },

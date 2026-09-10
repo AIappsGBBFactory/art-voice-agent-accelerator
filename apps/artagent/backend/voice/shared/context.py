@@ -42,8 +42,8 @@ Usage:
         ...
     )
 
-    # Pass to SpeechCascadeHandler:
-    handler = SpeechCascadeHandler(context=context, ...)
+    # Pass to VoiceHandler:
+    handler = VoiceHandler(context=context, ...)
 
     # In orchestrator:
     async def process_turn(self, context: VoiceSessionContext):
@@ -70,13 +70,11 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from fastapi import WebSocket
-
-    from apps.artagent.backend.voice.speech_cascade.handler import SpeechCascadeHandler
     from apps.artagent.backend.voice.speech_cascade.orchestrator import (
         CascadeOrchestratorAdapter,
     )
     from apps.artagent.backend.voice.tts import TTSPlayback
+    from fastapi import WebSocket
     from src.enums.stream_modes import StreamMode
     from src.pools.session_manager import SessionContext
     from src.speech.speech_recognizer import StreamingSpeechRecognizerFromBytes
@@ -139,7 +137,6 @@ class VoiceSessionContext:
 
         orchestrator: The orchestrator adapter for this session
         tts_playback: TTSPlayback instance for voice synthesis
-        speech_cascade: SpeechCascadeHandler for speech processing
 
         barge_in_controller: Controller for barge-in detection
         orchestration_tasks: Set of active orchestration tasks
@@ -179,7 +176,6 @@ class VoiceSessionContext:
     # ─── Orchestration Components ───
     orchestrator: CascadeOrchestratorAdapter | None = None
     tts_playback: TTSPlayback | None = None
-    speech_cascade: SpeechCascadeHandler | None = None
 
     # ─── Agent State ───
     # Cached current agent object (set by MediaHandler or orchestrator)
@@ -356,8 +352,6 @@ class VoiceSessionContext:
             ws.state.call_connection_id = self.call_connection_id
 
         # Speech cascade (set later)
-        if self.speech_cascade:
-            ws.state.speech_cascade = self.speech_cascade
 
         # Barge-in controller (set later)
         if self.barge_in_controller:
@@ -413,7 +407,6 @@ class _DeprecatedWebSocketStateWrapper:
             "audio_playing": "audio_playing",
             "tts_cancel_requested": "tts_cancel_requested",
             "tts_cancel_event": "cancel_event",
-            "speech_cascade": "speech_cascade",
             "barge_in_controller": "barge_in_controller",
         }
 

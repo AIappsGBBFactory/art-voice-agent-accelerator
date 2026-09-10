@@ -248,12 +248,20 @@ def _load_config_from_appconfig() -> dict[str, Any] | None:
         from azure.appconfiguration.provider import SettingSelector, load
         from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
 
-        # Choose credential based on AZURE_CLIENT_ID
+        from utils.azure_auth import _environment_credential_broken, _is_azure_hosted
+
+        # AZURE_CLIENT_ID identifies a user-assigned managed identity ONLY when
+        # Azure-hosted. On CI runners (GitHub Actions OIDC) it's the app id used
+        # for `az login`, so fall through to DefaultAzureCredential (which uses
+        # AzureCliCredential), excluding EnvironmentCredential when it would trip
+        # on a missing client secret.
         azure_client_id = os.getenv("AZURE_CLIENT_ID")
-        if azure_client_id:
+        if azure_client_id and _is_azure_hosted():
             credential = ManagedIdentityCredential(client_id=azure_client_id)
         else:
-            credential = DefaultAzureCredential()
+            credential = DefaultAzureCredential(
+                exclude_environment_credential=_environment_credential_broken()
+            )
 
         # Load with retry (exponential backoff)
         import time

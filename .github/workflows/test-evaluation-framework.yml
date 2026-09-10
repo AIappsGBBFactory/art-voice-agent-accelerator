@@ -5,11 +5,15 @@ on:
     branches: [main, staging]
     paths:
       - 'tests/evaluation/**'
+      - 'tests/test_eval_span.py'
+      - 'utils/eval_span.py'
       - '.github/workflows/test-evaluation-framework.yml'
   pull_request:
     branches: [main, staging]
     paths:
       - 'tests/evaluation/**'
+      - 'tests/test_eval_span.py'
+      - 'utils/eval_span.py'
       - 'src/**'
       - '.github/workflows/test-evaluation-framework.yml'
   workflow_dispatch:
@@ -115,7 +119,7 @@ jobs:
       - name: 🧪 Run Evaluation Tests
         run: |
           set -o pipefail
-          pytest tests/evaluation/ \
+          pytest tests/evaluation/ tests/test_eval_span.py \
             -v \
             --tb=short \
             --junitxml=reports/evaluation-tests.xml \

@@ -15,6 +15,7 @@ WebSocket Flow:
 import asyncio
 import json
 import uuid
+from collections.abc import Awaitable, Callable
 
 from apps.artagent.backend.src.ws_helpers.shared_ws import send_agent_inventory
 from apps.artagent.backend.voice import (
@@ -23,6 +24,7 @@ from apps.artagent.backend.voice import (
     VoiceHandlerConfig,
     VoiceLiveSDKHandler,
 )
+from apps.artagent.backend.voice.shared.errors import fail_websocket_session
 from apps.artagent.backend.voice.voicelive.handler import consume_voicelive_call_warmup
 from config import ACS_STREAMING_MODE
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
@@ -251,9 +253,18 @@ async def acs_media_stream(websocket: WebSocket) -> None:
             # Don't re-raise WebSocketDisconnect as it's a normal part of the lifecycle
         except Exception as e:
             _log_websocket_error(e, session_id, call_connection_id)
-            # Only raise non-disconnect errors
-            if not isinstance(e, WebSocketDisconnect):
-                raise
+            # Surface the cause to any browser/dashboard subscribed to this
+            # session before closing. A bare re-raise leaves an opaque 1006 and
+            # the caller simply hears silence.
+            await fail_websocket_session(
+                websocket,
+                e,
+                session_id=session_id,
+                call_id=call_connection_id,
+                conn_id=conn_id,
+                source="voicelive" if stream_mode == StreamMode.VOICE_LIVE else "config",
+                preclassified=getattr(handler, "_startup_error", None),
+            )
         finally:
             await _cleanup_websocket_resources(websocket, handler, call_connection_id, session_id)
 
@@ -289,10 +300,16 @@ async def _create_media_handler(
         # This ensures greeting can access caller_name, session_profile, etc.
         redis_mgr = getattr(websocket.app.state, "redis", None)
         memory_manager = (
-            MemoManager.from_redis(session_id, redis_mgr)
+            await MemoManager.from_redis_async(session_id, redis_mgr)
             if redis_mgr
             else MemoManager(session_id=session_id)
         )
+        from apps.artagent.backend.src.orchestration.session_memory import prime_session_definitions
+
+        await prime_session_definitions(session_id, memo=memory_manager)
+        session_manager = getattr(websocket.app.state, "session_manager", None)
+        if session_manager is not None:
+            await session_manager.add_session(session_id, memory_manager, websocket)
 
         # Set up session context on websocket.state (consistent with browser.py)
         websocket.state.cm = memory_manager
@@ -398,9 +415,7 @@ async def _process_media_stream(
                     try:
                         parsed_msg = json.loads(msg_text)
                     except json.JSONDecodeError:
-                        logger.warning(
-                            f"[{call_connection_id}] Failed to parse message as JSON"
-                        )
+                        logger.warning(f"[{call_connection_id}] Failed to parse message as JSON")
                         continue
                     await handler.handle_media_message(parsed_msg)
                 elif stream_mode == StreamMode.TRANSCRIPTION:
@@ -474,43 +489,68 @@ def _log_websocket_error(e: Exception, session_id: str, call_connection_id: str 
 
 
 async def _cleanup_websocket_resources(
-    websocket: WebSocket, handler, call_connection_id: str | None, session_id: str
+    websocket: WebSocket,
+    handler: VoiceHandler | VoiceLiveSDKHandler | None,
+    call_connection_id: str | None,
+    session_id: str,
 ) -> None:
-    """Clean up WebSocket resources: handler and connection manager."""
-    with tracer.start_as_current_span(
-        "api.v1.media.cleanup_resources",
-        kind=SpanKind.INTERNAL,
-        attributes={"session_id": session_id, "call.connection.id": call_connection_id},
-    ) as span:
-        try:
-            # Stop handler (releases pool resources internally)
-            if handler:
-                try:
-                    await handler.stop()
-                except Exception as e:
-                    logger.error("Error stopping media handler: %s", e)
+    """Retain endpoint cleanup and report failures after independent safe stages."""
+    task = getattr(websocket.state, "_media_cleanup_task", None)
+    if task is None:
 
-            # Unregister connection
-            conn_id = getattr(websocket.state, "conn_id", None)
-            if conn_id:
-                try:
-                    await websocket.app.state.conn_manager.unregister(conn_id)
-                except Exception as e:
-                    logger.error("Error unregistering connection: %s", e)
+        async def cleanup() -> None:
+            with tracer.start_as_current_span(
+                "api.v1.media.cleanup_resources",
+                kind=SpanKind.INTERNAL,
+                attributes={"session_id": session_id, "call.connection.id": call_connection_id},
+            ) as span:
+                errors: list[Exception] = []
+                registered_context = getattr(websocket.state, "session_context", None)
 
-            # Close WebSocket if still connected
-            if (
-                websocket.client_state == WebSocketState.CONNECTED
-                and websocket.application_state == WebSocketState.CONNECTED
-            ):
-                await websocket.close()
+                async def attempt(label: str, operation: Callable[[], Awaitable[object]]) -> None:
+                    try:
+                        await operation()
+                    except Exception as exc:
+                        exc.add_note(f"Media cleanup stage: {label}")
+                        errors.append(exc)
+                        logger.error("[%s] Cleanup %s failed: %s", session_id, label, exc)
 
-            # Track metrics
-            if hasattr(websocket.app.state, "session_metrics"):
-                await websocket.app.state.session_metrics.increment_disconnected()
+                if handler is not None:
+                    await attempt("handler", handler.stop)
+                conn_id = getattr(websocket.state, "conn_id", None)
+                if conn_id:
+                    await attempt(
+                        "connection", lambda: websocket.app.state.conn_manager.unregister(conn_id)
+                    )
+                if registered_context is not None:
+                    await attempt(
+                        "session",
+                        lambda: websocket.app.state.session_manager.remove_session(
+                            registered_context.session_id, expected_context=registered_context
+                        ),
+                    )
+                if (
+                    websocket.client_state == WebSocketState.CONNECTED
+                    and websocket.application_state == WebSocketState.CONNECTED
+                ):
+                    await attempt("socket", websocket.close)
+                if hasattr(websocket.app.state, "session_metrics"):
+                    await attempt(
+                        "disconnect_metrics",
+                        websocket.app.state.session_metrics.increment_disconnected,
+                    )
+                if errors:
+                    failure = ExceptionGroup("Media endpoint cleanup failed", errors)
+                    span.set_status(Status(StatusCode.ERROR, str(failure)))
+                    raise failure
+                span.set_status(Status(StatusCode.OK))
 
-            span.set_status(Status(StatusCode.OK))
+        task = asyncio.create_task(cleanup(), name=f"media-cleanup-{session_id}")
+        websocket.state._media_cleanup_task = task
 
-        except Exception as e:
-            span.set_status(Status(StatusCode.ERROR, f"Cleanup error: {e}"))
-            logger.error("Error during cleanup: %s", e)
+        def observe_cleanup(completed: asyncio.Task) -> None:
+            if not completed.cancelled() and completed.exception() is not None:
+                logger.error("[%s] Media cleanup failed: %s", session_id, completed.exception())
+
+        task.add_done_callback(observe_cleanup)
+    await asyncio.shield(task)

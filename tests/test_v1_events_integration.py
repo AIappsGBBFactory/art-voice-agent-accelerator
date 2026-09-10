@@ -298,6 +298,7 @@ class TestV1EventsIntegration:
         mock_state = MagicMock()
 
         # Process event - should not raise exception
+        mock_state.redis = None
         result = await processor.process_events([event], mock_state)
 
         # Should indicate partial success
@@ -407,6 +408,7 @@ class TestEndToEndIntegration:
         # 3. Mock request state
         mock_state = MagicMock()
         mock_state.redis = MagicMock()
+        mock_state.redis.get_session_data_async = AsyncMock(return_value={})
 
         # 4. Process through event system
         from apps.artagent.backend.api.v1.events.processor import (

@@ -46,14 +46,6 @@ from apps.artagent.backend.registries.agentstore.loader import (
     load_defaults,
     render_prompt,
 )
-from apps.artagent.backend.registries.agentstore.session_manager import (
-    AgentProvider,
-    HandoffProvider,
-    SessionAgentConfig,
-    SessionAgentManager,
-    SessionAgentRegistry,
-    create_session_agent_manager,
-)
 
 __all__ = [
     # Core types
@@ -62,13 +54,6 @@ __all__ = [
     "VoiceConfig",
     "ModelConfig",
     "build_handoff_map",
-    # Session management
-    "SessionAgentConfig",
-    "SessionAgentRegistry",
-    "SessionAgentManager",
-    "AgentProvider",
-    "HandoffProvider",
-    "create_session_agent_manager",
     # Loader functions
     "AgentConfig",
     "discover_agents",

@@ -14,7 +14,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
+from apps.artagent.backend.registries.agentstore.base import UnifiedAgent
 from apps.artagent.backend.voice.shared.base import OrchestratorContext
 from apps.artagent.backend.voice.shared.handoff_service import HandoffResolution
 from apps.artagent.backend.voice.speech_cascade.orchestrator import (
@@ -22,7 +22,9 @@ from apps.artagent.backend.voice.speech_cascade.orchestrator import (
     CascadeOrchestratorAdapter,
 )
 from apps.artagent.backend.voice.voicelive.orchestrator import LiveOrchestrator
-from azure.ai.voicelive.models import UserMessageItem
+from azure.ai.voicelive.models import ResponseStatus, UserMessageItem
+
+from tests.test_voicelive_tool_offload import _drain, _fn_args_done, _response_done
 
 
 class DummyVoiceLiveConnection:
@@ -42,18 +44,11 @@ class DummyVoiceLiveConnection:
         await AsyncMock()(event)
 
 
-class DummyVoiceLiveAgent:
+class DummyVoiceLiveAgent(UnifiedAgent):
     """Minimal VoiceLive agent stub."""
 
     def __init__(self, name: str) -> None:
-        self.name = name
-        self.description = f"{name} agent"
-
-    async def apply_voicelive_session(self, conn, **kwargs) -> None:
-        await AsyncMock()()
-
-    async def trigger_voicelive_response(self, conn, *, say: str | None = None, cancel_active: bool = True) -> None:
-        await AsyncMock()()
+        super().__init__(name=name, description=f"{name} agent")
 
 
 class DummyCascadeAgent:
@@ -111,7 +106,9 @@ class StubHandoffService:
         return self._greeting
 
 
-def _make_voicelive_orchestrator(resolution: HandoffResolution) -> tuple[LiveOrchestrator, DummyVoiceLiveConnection]:
+def _make_voicelive_orchestrator(
+    resolution: HandoffResolution,
+) -> tuple[LiveOrchestrator, DummyVoiceLiveConnection]:
     conn = DummyVoiceLiveConnection()
     agents = {
         "Concierge": DummyVoiceLiveAgent("Concierge"),
@@ -143,6 +140,7 @@ def _make_cascade_adapter(resolution: HandoffResolution) -> CascadeOrchestratorA
         config=config,
         agents=agents,
         handoff_map={"handoff_to_agent": "Advisor"},
+        async_client=MagicMock(),
     )
     adapter._cached_orchestrator_config = MagicMock(
         scenario=None,
@@ -180,15 +178,18 @@ async def test_voicelive_discrete_handoff_success_state() -> None:
         "apps.artagent.backend.voice.voicelive.orchestrator.execute_tool",
         new=AsyncMock(return_value={"handoff_summary": "summary"}),
     ):
-        result = await orchestrator._execute_tool_call(
-            call_id="call-1",
-            name="handoff_to_agent",
-            args_json=json.dumps({"target_agent": "Advisor", "reason": "Card help"}),
+        await orchestrator.handle_event(
+            _fn_args_done(
+                "call-1", "handoff_to_agent", {"target_agent": "Advisor", "reason": "Card help"}
+            )
         )
+        assert orchestrator.active == "Concierge"
+        await orchestrator.handle_event(_response_done("response", ResponseStatus.COMPLETED))
+        await _drain(orchestrator)
 
-    assert result is True
     assert orchestrator.active == "Advisor"
-    assert orchestrator._handoff_response_pending is True
+    assert orchestrator._handoff_transition.phase == "complete"
+    conn.response.create.assert_awaited_once()
 
     additional_instruction = conn.response.create.call_args.kwargs["additional_instructions"]
     assert "respond immediately" in additional_instruction.lower()
@@ -225,15 +226,18 @@ async def test_voicelive_announced_handoff_success_state() -> None:
         "apps.artagent.backend.voice.voicelive.orchestrator.execute_tool",
         new=AsyncMock(return_value={"handoff_summary": "summary"}),
     ):
-        result = await orchestrator._execute_tool_call(
-            call_id="call-2",
-            name="handoff_to_agent",
-            args_json=json.dumps({"target_agent": "Advisor", "reason": "Policy help"}),
+        await orchestrator.handle_event(
+            _fn_args_done(
+                "call-2", "handoff_to_agent", {"target_agent": "Advisor", "reason": "Policy help"}
+            )
         )
+        assert orchestrator.active == "Concierge"
+        await orchestrator.handle_event(_response_done("response", ResponseStatus.COMPLETED))
+        await _drain(orchestrator)
 
-    assert result is True
     assert orchestrator.active == "Advisor"
-    assert orchestrator._handoff_response_pending is True
+    assert orchestrator._handoff_transition.phase == "complete"
+    conn.response.create.assert_awaited_once()
 
     additional_instruction = conn.response.create.call_args.kwargs["additional_instructions"]
     assert "after your greeting" in additional_instruction.lower()
@@ -322,3 +326,87 @@ async def test_cascade_announced_handoff_success_state() -> None:
     assert result.agent_name == "Advisor"
     assert result.response_text == "Happy to help with your policy."
     assert adapter.handoff_service.last_greet_on_switch is True
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SCENARIO PROPAGATION INTO THE VOICELIVE ORCHESTRATOR
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _banking_registry():
+    from apps.artagent.backend.registries.agentstore.loader import (
+        build_handoff_map,
+        discover_agents,
+    )
+
+    agents = discover_agents()
+    return agents, build_handoff_map(agents)
+
+
+def test_seeded_scenario_drives_declarative_handoff_routing():
+    """A seeded config must give the orchestrator real scenario-based routing.
+
+    Without seeding, ``_orchestrator_config`` re-resolves with no scenario name and
+    returns ``scenario=None``, so ``HandoffService`` falls back to the global
+    handoff map and the scenario's declarative ``type``/``share_context`` never
+    apply. This is what a Quick Tune reconnect used to land in.
+    """
+    from apps.artagent.backend.voice.shared import (
+        build_effective_registry,
+        resolve_orchestrator_config,
+    )
+
+    base_agents, app_state_handoff_map = _banking_registry()
+    config = resolve_orchestrator_config(
+        session_id="handoff-states-session", scenario_name="banking"
+    )
+    agents, start_agent, handoff_map = build_effective_registry(
+        config,
+        base_agents=base_agents,
+        app_state_handoff_map=app_state_handoff_map,
+    )
+
+    orchestrator = LiveOrchestrator(
+        conn=DummyVoiceLiveConnection(),
+        agents=agents,
+        handoff_map=handoff_map,
+        start_agent=start_agent,
+        orchestrator_config=config,
+    )
+
+    service = orchestrator.handoff_service
+    assert service.scenario_name == "banking"
+    assert service._get_scenario() is config.scenario
+
+    resolution = service.resolve_handoff(
+        tool_name="handoff_card_recommendation",
+        tool_args={"reason": "wants a travel card"},
+        source_agent="BankingConcierge",
+        current_system_vars={},
+    )
+
+    assert resolution.success
+    assert resolution.target_agent == "CardRecommendation"
+    # banking/orchestration.yaml declares this edge as discrete + share_context.
+    assert resolution.is_discrete
+    assert resolution.share_context
+
+    orchestrator.cleanup()
+
+
+def test_unseeded_orchestrator_loses_the_scenario(monkeypatch):
+    """Regression guard for the bug: no seed means no scenario, hence no routing."""
+    monkeypatch.delenv("AGENT_SCENARIO", raising=False)
+
+    orchestrator = LiveOrchestrator(
+        conn=DummyVoiceLiveConnection(),
+        agents={"Concierge": DummyVoiceLiveAgent("Concierge")},
+        handoff_map={},
+        start_agent="Concierge",
+    )
+
+    # No scenario name is available to the lazy fallback, so it cannot find one.
+    assert orchestrator._orchestrator_config.scenario is None
+    assert orchestrator.handoff_service.scenario_name is None
+
+    orchestrator.cleanup()

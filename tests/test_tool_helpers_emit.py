@@ -11,6 +11,7 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from fastapi.websockets import WebSocketState
 
 from apps.artagent.backend.voice.voicelive.tool_helpers import (
     push_tool_end,
@@ -97,3 +98,43 @@ async def test_acs_tool_end_publishes_cross_worker():
     _, payload, _ = cm.publish_calls[0]
     assert payload["type"] == "tool_end"
     assert payload["tool"] == "verify_identity"
+
+
+@pytest.mark.asyncio
+async def test_browser_tool_frames_send_directly_to_active_websocket():
+    cm = _RecordingConnManager()
+    ws = _make_ws(cm)
+    ws.client_state = WebSocketState.CONNECTED
+    ws.application_state = WebSocketState.CONNECTED
+    sent: list[dict] = []
+
+    async def send_json(payload: dict) -> None:
+        sent.append(payload)
+
+    ws.send_json = send_json
+
+    await push_tool_start(
+        ws,
+        tool_name="lookup_balance",
+        call_id="browser-1",
+        arguments={},
+        is_acs=False,
+        session_id="session-browser",
+        turn_id="turn-browser",
+        segment_id="turn-browser",
+    )
+    await push_tool_end(
+        ws,
+        tool_name="lookup_balance",
+        call_id="browser-1",
+        result={"balance": 42},
+        is_acs=False,
+        session_id="session-browser",
+        turn_id="turn-browser",
+        segment_id="turn-browser",
+    )
+
+    assert [payload["type"] for payload in sent] == ["tool_start", "tool_end"]
+    assert all(payload["turn_id"] == "turn-browser" for payload in sent)
+    assert cm.broadcast_session_calls == []
+    assert cm.publish_calls == []

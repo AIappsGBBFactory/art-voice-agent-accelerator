@@ -23,6 +23,7 @@ Configuration via environment variables:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -32,6 +33,11 @@ from re import Pattern
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Stable salt for log pseudonyms. Tokens are correlatable within a deployment
+# (same raw value -> same token) but are not reversible back to the raw PII.
+# Override per-environment to rotate the pseudonym space.
+_PSEUDONYM_SALT = os.getenv("TELEMETRY_PII_HASH_SALT", "artvoice-log-pseudonym-v1")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PII PATTERN DEFINITIONS
@@ -293,3 +299,29 @@ def scrub_pii(value: str) -> str:
 def scrub_attributes(attributes: dict[str, Any]) -> dict[str, Any]:
     """Convenience function to scrub PII from a dictionary of attributes."""
     return get_pii_scrubber().scrub_dict(attributes)
+
+
+def mask_pii(value: Any, *, prefix: str = "pii", digest_len: int = 10) -> str:
+    """Return a stable, non-reversible pseudonym for a sensitive value.
+
+    Use this in place of raw PII (phone numbers, caller IDs, customer/client
+    identifiers, account references) in log statements. The same input always
+    maps to the same token within a deployment, so log lines referencing the
+    same value remain correlatable for debugging without exposing the raw data.
+
+    Args:
+        value: Sensitive value to pseudonymize.
+        prefix: Short label describing the value class (e.g. ``"phone"``,
+            ``"client"``). Included verbatim in the returned token.
+        digest_len: Number of hex characters to keep from the digest.
+
+    Returns:
+        A token such as ``"phone:3f9a1c2b7d"``. Empty or ``None`` values yield
+        ``"<prefix>:none"`` so the absence of a value is still distinguishable.
+    """
+    if value is None or value == "":
+        return f"{prefix}:none"
+    digest = hashlib.sha256(
+        f"{_PSEUDONYM_SALT}:{value}".encode("utf-8", errors="replace")
+    ).hexdigest()[:digest_len]
+    return f"{prefix}:{digest}"

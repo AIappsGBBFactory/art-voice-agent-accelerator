@@ -5,8 +5,7 @@
   "cosmosdb_location": null,
   "acs_data_location": "United States",
   "tags": {
-    "SecurityControl": "Ignore",
-    "SecurityControls": "Ignore"
+    "SecurityControl": "Ignore"
   },
   "disable_local_auth": true,
   "enable_redis_ha": false,

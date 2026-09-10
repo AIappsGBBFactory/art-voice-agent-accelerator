@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { styles } from '../styles/voiceAppStyles.js';
 import { smoothValue } from '../utils/audio.js';
+import { useOverlayOpen } from '../utils/overlayVisibility.js';
 
 const WaveformVisualization = React.memo(({ activeSpeaker, audioLevelRef, outputAudioLevelRef, bargeInActive = false }) => {
   const [waveRenderState, setWaveRenderState] = useState({ amplitude: 0, offset: 0 });
@@ -13,6 +14,10 @@ const WaveformVisualization = React.memo(({ activeSpeaker, audioLevelRef, output
   const levelTimestampRef = useRef(performance.now());
   const lastVisualUpdateRef = useRef(performance.now());
   const waveRenderRef = useRef({ amplitude: 0, offset: 0 });
+  // A full-screen overlay hides this waveform entirely; keep the rAF loops
+  // parked while it is up instead of repainting a 160-point SVG path nobody
+  // can see.
+  const overlayOpen = useOverlayOpen();
   const USER_THRESHOLD = 0.015;
   const ASSISTANT_THRESHOLD = 0.006;
   const userDisplayActive = speakerState.user || activeSpeaker === "User";
@@ -39,7 +44,10 @@ const WaveformVisualization = React.memo(({ activeSpeaker, audioLevelRef, output
   }, [canvasWidth]);
 
   useEffect(() => {
+    if (overlayOpen) return undefined;
+
     let rafId;
+    levelTimestampRef.current = performance.now();
     const updateLevels = () => {
       const now = performance.now();
       const deltaMs = now - (levelTimestampRef.current || now);
@@ -78,10 +86,13 @@ const WaveformVisualization = React.memo(({ activeSpeaker, audioLevelRef, output
         cancelAnimationFrame(rafId);
       }
     };
-  }, [audioLevelRef, outputAudioLevelRef]);
+  }, [audioLevelRef, outputAudioLevelRef, overlayOpen]);
 
   useEffect(() => {
+    if (overlayOpen) return undefined;
+
     let lastTs = performance.now();
+    lastVisualUpdateRef.current = lastTs;
 
     const animate = () => {
       const now = performance.now();
@@ -123,7 +134,7 @@ const WaveformVisualization = React.memo(({ activeSpeaker, audioLevelRef, output
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [bargeInActive]);
+  }, [bargeInActive, overlayOpen]);
   
   const generateWavePath = () => {
     const width = Math.max(canvasWidth, 200);

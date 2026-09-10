@@ -358,6 +358,31 @@ def print_scenario_summary(events: list[dict], elapsed_s: float, runs_dir: Path 
     if errors:
         print(f"  {C.RED}Errors:    {errors}{C.RESET}")
     print(f"  Avg E2E:   {format_duration(avg_e2e)}")
+    # Responsiveness KPIs alongside e2e. TTFT (LLM request -> first token) is the
+    # perceived-latency metric; e2e includes tool calls / multi-iteration time.
+    # TTFB (first audio byte) only exists when TTS runs — the headless eval does
+    # not synthesize audio, so it is reported n/a there.
+    ttft_vals = [e.get("ttft_ms") for e in events if e.get("ttft_ms") is not None]
+    if ttft_vals:
+        avg_ttft = sum(ttft_vals) / len(ttft_vals)
+        print(
+            f"  Avg TTFT:  {format_duration(avg_ttft)}"
+            f"{C.DIM} (max {format_duration(max(ttft_vals))}){C.RESET}"
+        )
+    else:
+        print(f"  Avg TTFT:  {C.DIM}n/a{C.RESET}")
+    ttfb_vals = [
+        e.get("tts_first_chunk_ms") for e in events
+        if e.get("tts_first_chunk_ms") is not None
+    ]
+    if ttfb_vals:
+        avg_ttfb = sum(ttfb_vals) / len(ttfb_vals)
+        print(
+            f"  Avg TTFB:  {format_duration(avg_ttfb)}"
+            f"{C.DIM} (max {format_duration(max(ttfb_vals))}){C.RESET}"
+        )
+    else:
+        print(f"  Avg TTFB:  {C.DIM}n/a (no TTS in headless eval){C.RESET}")
     print(f"  Elapsed:   {elapsed_s:.1f}s")
     
     # Expectations validation summary
@@ -425,8 +450,15 @@ class EventsFileTailer:
         self._stop = True
     
     def find_latest_events_file(self) -> Path | None:
-        """Find the most recently created *_events.jsonl file after start_time."""
-        events_files = list(self.runs_dir.glob("*_events.jsonl"))
+        """Find the most recently created *_events.jsonl file after start_time.
+
+        Uses rglob (recursive) so A/B comparisons are supported: ComparisonRunner
+        writes each variant's events to runs/<comparison>/<variant>/*_events.jsonl,
+        which a non-recursive glob would miss (leaving the UI stuck on
+        "Waiting for evaluation to start..." while the run proceeds in the
+        background).
+        """
+        events_files = list(self.runs_dir.rglob("*_events.jsonl"))
         if not events_files:
             return None
         
@@ -526,13 +558,34 @@ def run_evaluation_with_streaming(input_path: Path, output_dir: Path | None = No
         scenario = yaml.safe_load(f)
     scenario_name = scenario.get("scenario_name", scenario.get("name", input_path.stem))
     demo_user = scenario.get("demo_user")
-    
+
+    # Resolve the demo user's email the same way the runner does (env override
+    # wins over the scenario value) so expectations can reference it dynamically
+    # via the ${demo_user.email} / ${email} placeholders instead of hardcoding.
+    demo_email = None
+    if demo_user:
+        demo_email = os.environ.get("EVAL_EMAIL_OVERRIDE") or demo_user.get("email")
+
+    def _substitute_placeholders(obj):
+        """Recursively replace ${demo_user.email} / ${email} in expectations."""
+        if isinstance(obj, str):
+            if demo_email:
+                return obj.replace("${demo_user.email}", demo_email).replace(
+                    "${email}", demo_email
+                )
+            return obj
+        if isinstance(obj, dict):
+            return {k: _substitute_placeholders(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_substitute_placeholders(v) for v in obj]
+        return obj
+
     # Build turn expectations mapping from scenario turns
     turn_expectations = {}
     for turn in scenario.get("turns", []):
         turn_id = turn.get("turn_id")
         if turn_id and turn.get("expectations"):
-            turn_expectations[turn_id] = turn["expectations"]
+            turn_expectations[turn_id] = _substitute_placeholders(turn["expectations"])
     
     print_scenario_header(scenario_name, str(input_path), demo_user)
     
@@ -575,16 +628,21 @@ def run_evaluation_with_streaming(input_path: Path, output_dir: Path | None = No
     
     # Run evaluation in subprocess
     start_time = time.time()
-    
+
+    # Capture the subprocess exit code so the latency gate (cli `run` exits 1
+    # when pass_fail is False) propagates through `make eval-run` to CI.
+    proc_result = {"returncode": 0}
+
     def run_subprocess():
         try:
-            subprocess.run(
+            completed = subprocess.run(
                 shell_cmd,
                 shell=True,
                 cwd=project_root,
                 env=env,
                 stdin=subprocess.DEVNULL,
             )
+            proc_result["returncode"] = completed.returncode
         finally:
             tailer.stop()
     
@@ -600,13 +658,19 @@ def run_evaluation_with_streaming(input_path: Path, output_dir: Path | None = No
         print(f"\n{Colors.YELLOW}Interrupted!{Colors.RESET}")
         return 130
     
-    # Wait for subprocess to finish
-    proc_thread.join(timeout=5)
+    # Wait for subprocess to finish scoring + latency gate (runs after the last
+    # turn event is written). Generous timeout so the returncode is reliable.
+    proc_thread.join(timeout=60)
     
     elapsed = time.time() - start_time
     print_scenario_summary(events, elapsed, runs_dir, tailer.all_validation_results)
-    
-    return 0
+
+    if proc_result["returncode"] != 0:
+        print(
+            f"{Colors.RED}❌ Evaluation FAILED "
+            f"(exit {proc_result['returncode']} — latency gate or error){Colors.RESET}"
+        )
+    return proc_result["returncode"]
 
 
 def main():
