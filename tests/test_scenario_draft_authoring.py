@@ -53,6 +53,11 @@ class FakeRedis:
         self.read_keys.append(key)
         return dict(self.store.get(key, {}))
 
+    async def get_session_data_async(
+        self, key: str, *, raise_on_failure: bool = False
+    ) -> dict[str, str]:
+        return self.get_session_data(key)
+
     async def compare_and_store_session_data_async(self, key, data, *, expected_data):
         from src.redis.manager import AUTHORING_FIELDS, merge_session_snapshot
 
@@ -220,9 +225,9 @@ def env(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_generation_reuses_agents_is_session_scoped_and_never_mutates(env):
-    env.registry[
-        "Concierge"
-    ].prompt_template = "Internal text PRIVATE-PROMPT. Serve {{ institution_name }}; {{ api_key }}."
+    env.registry["Concierge"].prompt_template = (
+        "Internal text PRIVATE-PROMPT. Serve {{ institution_name }}; {{ api_key }}."
+    )
     env.registry["Concierge"].template_vars = {
         "institution_name": "PRIVATE-BRAND",
         "api_key": "PRIVATE-KEY",
@@ -858,8 +863,8 @@ async def test_apply_notifies_both_existing_orchestrators_with_complete_domain_c
     from apps.artagent.backend.src.orchestration import unified
     from apps.artagent.backend.voice.voicelive import orchestrator as voicelive
 
-    cascade = SimpleNamespace(update_scenario=Mock())
-    live = SimpleNamespace(update_scenario=Mock())
+    cascade = SimpleNamespace(update_scenario=Mock(), memo_manager=None)
+    live = SimpleNamespace(update_scenario=Mock(), memo_manager=None)
     monkeypatch.setattr(unified, "_adapters", {SID: cascade})
     monkeypatch.setattr(voicelive, "get_voicelive_orchestrator", lambda sid: live)
     callback = Mock(wraps=unified.update_session_scenario)
@@ -897,10 +902,14 @@ async def test_new_cascade_adapter_keeps_scenario_start_instead_of_first_custom_
         _active_agent=resolved.start_agent,
     )
     monkeypatch.setattr(unified, "_adapters", {})
-    monkeypatch.setattr(unified, "get_cascade_orchestrator", Mock(return_value=adapter))
-    result = unified._get_or_create_adapter(SID, "test-call", env.state)
+    factory = Mock(return_value=adapter)
+    monkeypatch.setattr(unified.CascadeOrchestratorAdapter, "create", factory)
+    snapshot = await read_authoring_snapshot(SID, env.redis)
+    result = unified._get_or_create_adapter(SID, "test-call", env.state, memo_manager=snapshot.memo)
     assert result._active_agent == "Concierge"
     assert set(result.agents) == {"Concierge", "OrderSpecialist"}
+    assert factory.call_args.kwargs["start_agent"] == "Concierge"
+    assert result._current_memo_manager is snapshot.memo
 
 
 @pytest.mark.asyncio

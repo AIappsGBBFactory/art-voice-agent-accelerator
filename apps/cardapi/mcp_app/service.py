@@ -15,6 +15,7 @@ Implements MCP standard patterns:
 """
 
 import asyncio
+import inspect
 import json
 import os
 import sys
@@ -39,6 +40,18 @@ MCP_PORT = int(os.getenv("MCP_SERVER_PORT", "8080"))
 # Transport mode: "stdio" for local CLI, "streamable-http" for deployed HTTP access
 # Per MCP spec 2025-11-25: https://modelcontextprotocol.io/specification/2025-11-25/basic/transports
 MCP_TRANSPORT: Literal["stdio", "streamable-http"] = os.getenv("MCP_TRANSPORT", "streamable-http")  # type: ignore
+
+# Host/Origin allow-list for the streamable-http transport.
+# FastMCP 3.4.3+ enables Host/Origin protection by default: its
+# HostOriginGuardMiddleware returns "421 Misdirected Request" for any Host header
+# not in its defaults (localhost/127.0.0.1 + the bound server IP). Behind Azure
+# Container Apps the request arrives with the app FQDN as Host (and health probes
+# use pod IPs), none of which are in the defaults, so every ingress request 421s.
+# EasyAuth already authenticates each request, so permissive host matching is safe.
+# Override with MCP_ALLOWED_HOSTS (comma-separated; supports "*" and fnmatch).
+MCP_ALLOWED_HOSTS: list[str] = [
+    h.strip() for h in os.getenv("MCP_ALLOWED_HOSTS", "*").split(",") if h.strip()
+] or ["*"]
 
 # Path to local JSON file (for development fallback)
 LOCAL_DATA_FILE = Path(__file__).parent.parent / "database" / "decline_codes_policy_pack.json"
@@ -790,13 +803,27 @@ async def main() -> None:
         # Streamable HTTP transport: for deployed HTTP access
         # This serves the MCP protocol AND health endpoints on the same port
         logger.info(f"Starting MCP server with streamable-http transport on port {MCP_PORT}...")
-        try:
-            await mcp.run_http_async(
-                transport="streamable-http",
-                host="0.0.0.0",
-                port=MCP_PORT,
-                show_banner=False,
+
+        # FastMCP 3.4.3+ accepts an allowed_hosts allow-list to relax the
+        # default Host/Origin guard (which 421s the Container Apps FQDN). Pass it
+        # only when supported so older FastMCP releases don't raise TypeError.
+        run_kwargs: dict[str, Any] = {
+            "transport": "streamable-http",
+            "host": "0.0.0.0",
+            "port": MCP_PORT,
+            "show_banner": False,
+        }
+        if "allowed_hosts" in inspect.signature(mcp.run_http_async).parameters:
+            run_kwargs["allowed_hosts"] = MCP_ALLOWED_HOSTS
+            logger.info(f"MCP Host/Origin guard allow-list: {MCP_ALLOWED_HOSTS}")
+        else:
+            logger.warning(
+                "Installed FastMCP does not support allowed_hosts; "
+                "Host/Origin guard may 421 requests arriving with the app FQDN"
             )
+
+        try:
+            await mcp.run_http_async(**run_kwargs)
         except Exception as e:
             logger.error(f"MCP HTTP server error: {e}", exc_info=True)
             raise

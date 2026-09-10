@@ -7,7 +7,7 @@ import base64
 import time
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
-from contextlib import AsyncExitStack, asynccontextmanager, suppress
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlencode, urlsplit, urlunsplit
@@ -18,6 +18,7 @@ from apps.artagent.backend.registries.agentstore.base import (
     MAI_VOICELIVE_API_VERSION,
     SpeechConfig,
 )
+from apps.artagent.backend.voice.shared.close import cancel_and_join
 from apps.artagent.backend.voice.shared.context import TransportType, VoiceSessionContext
 from apps.artagent.backend.voice.shared.metrics_factory import LazyMeter, build_session_attributes
 from apps.artagent.backend.voice.speech_cascade.handler import (
@@ -58,6 +59,7 @@ class MAITranscriptionError(RuntimeError):
 @dataclass
 class _InputTurn:
     partial: str = ""
+    sequence: int = 0
     start_ts: float | None = None
     final: SpeechEvent | None = None
 
@@ -79,7 +81,7 @@ class MAITranscriber:
         thread_bridge: ThreadBridge,
         barge_in_handler: Callable[[], Awaitable[None]],
         on_error: Callable[[str], Awaitable[None]],
-        on_partial: Callable[[str, str, str | None], Awaitable[None]] | None = None,
+        on_partial: Callable[[str, str, str | None, str, int], Awaitable[None]] | None = None,
         sample_rate: int | None = None,
     ) -> None:
         if context.transport not in (TransportType.BROWSER, TransportType.ACS):
@@ -110,6 +112,7 @@ class MAITranscriber:
         self._finished_items: deque[str] = deque(maxlen=128)
         self._connection: VoiceLiveConnection | None = None
         self._task: asyncio.Task[None] | None = None
+        self._stop_task: asyncio.Task[None] | None = None
         self._ready: asyncio.Future[None] | None = None
         self._closed = False
         self._failure: MAITranscriptionError | None = None
@@ -262,6 +265,7 @@ class MAITranscriber:
                 await self._report_failure()
         finally:
             self._connection = None
+            self._drain_audio()
 
     def _check_session(self, session: Mapping[str, Any]) -> None:
         if not isinstance(session, Mapping):
@@ -285,7 +289,13 @@ class MAITranscriber:
         """Feed ordered PCM16 with bounded backpressure; never silently drop audio."""
         if self._failure:
             raise self._failure
-        if self._closed or self._ready is None or not self._ready.done():
+        if (
+            self._closed
+            or self._ready is None
+            or not self._ready.done()
+            or self._task is None
+            or self._task.done()
+        ):
             raise MAITranscriptionError("MAI input is not ready for audio.")
         self._ready.result()
         if len(audio) % 2:
@@ -333,6 +343,7 @@ class MAITranscriber:
             if len(self._turns) >= MAX_PENDING_TURNS:
                 raise MAITranscriptionError("MAI exceeded the bounded pending transcription queue.")
             self._turns[item_id] = _InputTurn()
+            self._turn_order.append(item_id)
         return self._turns[item_id]
 
     async def _handle_event(self, event: Mapping[str, Any]) -> None:
@@ -386,8 +397,10 @@ class MAITranscriber:
             if len(turn.partial.strip()) > 3 and not self._bridge.turn_guard_active:
                 self._bridge.schedule_barge_in(self._barge_in_handler)
                 if self._on_partial:
+                    turn.sequence += 1
                     await asyncio.wait_for(
-                        self._on_partial(turn.partial.strip(), "", None), timeout=IO_TIMEOUT_S
+                        self._on_partial(turn.partial.strip(), "", None, item_id, turn.sequence),
+                        timeout=IO_TIMEOUT_S,
                     )
         else:
             text = event.get("transcript")
@@ -397,6 +410,8 @@ class MAITranscriber:
                 event_type=SpeechEventType.FINAL,
                 text=text,
                 language=event.get("language"),
+                turn_id=item_id,
+                sequence=turn.sequence + 1,
                 recognition_start_ts=turn.start_ts,
                 recognition_end_perf=time.perf_counter(),
             )
@@ -421,28 +436,21 @@ class MAITranscriber:
                 self._finished_items.append(final_id)
 
     async def _report_failure(self) -> None:
-        message = str(self._failure)
-        try:
-            await self._bridge.queue_speech_result_async(
-                self._speech_queue,
-                SpeechEvent(event_type=SpeechEventType.ERROR, text=message),
-                timeout=IO_TIMEOUT_S,
-            )
-        except TimeoutError:
-            logger.error(
-                "[%s] Speech event queue full while reporting MAI failure",
-                self.context.session_short,
-            )
-        await self._on_error(message)
+        # Terminal provider errors bypass the turn queue: a busy/full queue must
+        # not delay close or emit the same failure a second time as an SDK error.
+        await self._on_error(str(self._failure))
 
     async def stop(self) -> None:
-        """Cancel and join this connection's tasks; never close shared credentials."""
+        """Retain strict, bounded stop acknowledgement for this input connection."""
         self._closed = True
-        if self._task and self._task is not asyncio.current_task():
-            if not self._task.done():
-                self._task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._task
+        if self._stop_task is None:
+            self._stop_task = asyncio.create_task(
+                self._stop(), name=f"mai-stop-{self.context.session_short}"
+            )
+        await asyncio.shield(self._stop_task)
+
+    async def _stop(self) -> None:
+        await cancel_and_join([self._task] if self._task else [], timeout=IO_TIMEOUT_S)
         self._turns.clear()
         self._turn_order.clear()
         self._finished_items.clear()

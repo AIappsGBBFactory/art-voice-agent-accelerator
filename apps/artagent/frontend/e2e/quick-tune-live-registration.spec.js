@@ -16,7 +16,7 @@ function agentConfig(name) {
       max_tokens: 777, api_version: 'v1', endpoint_preference: 'chat',
     },
     voicelive_model: {
-      deployment_id: 'gpt-realtime', name: 'gpt-realtime', temperature: 0.71,
+      deployment_id: 'gpt-4o', name: 'gpt-4o', temperature: 0.71,
       top_p: 0.91, max_tokens: 1200,
     },
     byom: { mode: 'byom-azure-openai-chat-completion' },
@@ -120,12 +120,14 @@ test('real HTTP registration preserves every configuration group and BYOM profil
     await expectSuccess(await request.put(`${api}/agent-builder/session/${sid}?create_only=true&activate=false`, {
       data: config,
     }));
-    for (const mode of [
-      'byom-azure-openai-realtime',
-      'byom-azure-openai-chat-completion',
-      'byom-foundry-anthropic-messages',
+    for (const [mode, deployment] of [
+      ['byom-azure-openai-realtime', 'gpt-realtime'],
+      ['byom-azure-openai-chat-completion', 'gpt-4o'],
+      ['byom-foundry-anthropic-messages', 'claude-sonnet'],
     ]) {
       config.byom.mode = mode;
+      config.voicelive_model.deployment_id = deployment;
+      config.voicelive_model.name = deployment;
       await expectSuccess(await request.put(`${api}/agent-builder/session/${sid}?activate=false`, { data: config }));
       const saved = await expectSuccess(await request.get(`${api}/agent-builder/session/${sid}?agent_name=${config.name}`));
       for (const field of ['name', 'description', 'greeting', 'return_greeting', 'tools', 'byom', 'voice', 'speech', 'template_vars']) {
@@ -231,13 +233,13 @@ test('browser edits register in the real agent and scenario stores', async ({ pa
     expect(updated.config.speech).toEqual(first.speech);
     expect(updated.config.cascade_model).toMatchObject(first.cascade_model);
 
-    await panel.getByRole('tab', { name: 'Handoffs', exact: true }).click();
+    await panel.getByRole('tab', { name: 'Edit scenario', exact: true }).click();
     await panel.getByRole('textbox', { name: 'When should this handoff happen?' }).fill('When the caller asks for specialist assistance.');
     await panel.getByRole('checkbox', { name: 'Share conversation context' }).uncheck();
     await panel.getByRole('combobox', { name: 'Transfer style' }).click();
     await page.getByRole('option', { name: 'Transfer silently', exact: true }).click();
-    await panel.getByRole('button', { name: 'Save handoffs', exact: true }).click();
-    await expect(panel.getByText('Scenario handoffs saved. Start a conversation to try them.')).toBeVisible();
+    await panel.getByRole('button', { name: 'Save scenario', exact: true }).click();
+    await expect(panel.getByText('Scenario saved and selected. Start a conversation to try it.')).toBeVisible();
     const updatedScenario = await expectSuccess(await request.get(`${api}/scenario-builder/session/${sid}`));
     expect(updatedScenario.config.start_agent).toBe(first.name);
     expect(updatedScenario.config.handoffs[0]).toMatchObject({

@@ -17,6 +17,7 @@ from apps.artagent.backend.api.v1.schemas.scenario_builder import (
     MAX_DRAFT_BYTES,
     MAX_DRAFT_HANDOFFS,
     MAX_DRAFT_TOOLS,
+    GenericHandoffConfigSchema,
     ScenarioDraft,
     ScenarioGenerateRequest,
     SessionScenarioResponse,
@@ -24,11 +25,8 @@ from apps.artagent.backend.api.v1.schemas.scenario_builder import (
 from apps.artagent.backend.config import get_config_value
 from apps.artagent.backend.registries.agentstore.base import UnifiedAgent
 from apps.artagent.backend.registries.agentstore.loader import discover_agents
-from apps.artagent.backend.registries.scenariostore.loader import (
-    AgentOverride,
-    HandoffConfig,
-    ScenarioConfig,
-)
+from apps.artagent.backend.registries.definitions import definition_payload
+from apps.artagent.backend.registries.scenariostore.loader import ScenarioConfig
 from apps.artagent.backend.registries.toolstore.registry import (
     _TOOL_DEFINITIONS,
     ToolDefinition,
@@ -407,6 +405,15 @@ def validate_draft(
         names[key] = agent.name
         new_agents[key] = agent
         _validate_tools(agent.tools, catalog, f"Agent '{agent.name}'.tools")
+        available_servers = {
+            definition.mcp_server
+            for definition in catalog.values()
+            if definition.source == ToolSource.MCP
+        }
+        if set(agent.mcp_servers) - available_servers:
+            _invalid(
+                f"Agent '{agent.name}'.mcp_servers must refer to healthy, selected MCP capabilities."
+            )
         verified_prompt = _is_verified_template_copy(
             agent.prompt, copy_references.get("prompt", [])
         )
@@ -417,8 +424,9 @@ def validate_draft(
             if not _is_verified_template_copy(value, copy_references.get(field, [])):
                 _validate_template(value, f"Agent '{agent.name}'.{field}")
         _validate_context(agent.template_vars or {}, f"Agent '{agent.name}'.template_vars")
-        if agent.handoff_trigger:
-            trigger = catalog.get(agent.handoff_trigger)
+        incoming_trigger = agent.handoff.trigger if agent.handoff is not None else ""
+        if agent.handoff_trigger or incoming_trigger:
+            trigger = catalog.get(incoming_trigger or agent.handoff_trigger)
             if trigger is None or not trigger.is_handoff:
                 _invalid(f"Agent '{agent.name}' handoff_trigger must be a registered handoff tool.")
 
@@ -437,6 +445,23 @@ def validate_draft(
     if start_key not in selected_keys:
         _invalid("scenario.start_agent is required and must belong to scenario.agents.")
     scenario.start_agent = names[start_key]
+
+    if scenario.generic_handoff is None:
+        scenario.generic_handoff = GenericHandoffConfigSchema()
+    generic = scenario.generic_handoff
+    if generic is not None:
+        target_keys = [agent_key(name) for name in generic.allowed_targets]
+        if len(target_keys) != len(set(target_keys)) or set(target_keys) - set(selected_keys):
+            _invalid(
+                "scenario.generic_handoff.allowed_targets must contain unique selected agents."
+            )
+        generic.allowed_targets = [names[key] for key in target_keys]
+        if generic.default_type not in ("announced", "discrete"):
+            _invalid("scenario.generic_handoff.default_type must be announced or discrete.")
+        if generic.enabled and (
+            GENERIC_HANDOFF not in catalog or not catalog[GENERIC_HANDOFF].is_handoff
+        ):
+            _invalid("Generic scenario routing requires the registered handoff_to_agent tool.")
 
     for key in selected_keys:
         if key not in new_agents:
@@ -482,6 +507,8 @@ def validate_draft(
     if edges and (GENERIC_HANDOFF not in catalog or not catalog[GENERIC_HANDOFF].is_handoff):
         _invalid("Scenario routing requires the registered handoff_to_agent tool.")
     reachable = {start_key}
+    if generic is not None and generic.enabled:
+        reachable.update(agent_key(name) for name in (generic.allowed_targets or scenario.agents))
     while True:
         expanded = reachable | {target for source, target in edges if source in reachable}
         if expanded == reachable:
@@ -493,7 +520,12 @@ def validate_draft(
         )
     for key, agent in new_agents.items():
         for tool in agent.tools:
-            if catalog[tool].is_handoff and not any(source == key for source, _ in edges):
+            generic_route = tool == GENERIC_HANDOFF and generic is not None and generic.enabled
+            if (
+                catalog[tool].is_handoff
+                and not generic_route
+                and not any(source == key for source, _ in edges)
+            ):
                 _invalid(f"Agent '{agent.name}' declares a handoff tool but has no outgoing route.")
             if (
                 catalog[tool].is_handoff
@@ -881,20 +913,7 @@ async def apply_scenario_draft(
             status_code=422,
             detail="A new agent has invalid runtime settings. Review its model, voice and session configuration.",
         ) from exc
-    scenario = ScenarioConfig(
-        name=config.name,
-        description=config.description,
-        icon=config.icon,
-        agents=config.agents,
-        start_agent=config.start_agent,
-        handoff_type=config.handoff_type,
-        handoffs=[HandoffConfig(**edge.model_dump()) for edge in config.handoffs],
-        agent_defaults=(
-            AgentOverride(**config.agent_defaults.model_dump()) if config.agent_defaults else None
-        ),
-        global_template_vars=config.global_template_vars,
-        tools=config.tools,
-    )
+    scenario = ScenarioConfig.from_dict(config.name, config.model_dump())
     try:
         await publish_draft(
             session_id,
@@ -918,7 +937,7 @@ async def apply_scenario_draft(
         session_id=session_id,
         scenario_name=config.name,
         status="applied",
-        config=config.model_dump(),
+        config=definition_payload(scenario),
         created_at=now,
         modified_at=now,
     )

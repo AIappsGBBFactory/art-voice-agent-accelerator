@@ -121,19 +121,25 @@ def _query_voice_snapshot(scope: SpeechVoiceScope) -> VoiceSnapshot:
             raise VoiceCatalogUnavailable("Speech did not return its regional voice catalog.")
         voices = []
         for voice in result.voices:
-            if not voice.short_name or not voice.locale:
+            if not getattr(voice, "short_name", None) or not getattr(voice, "locale", None):
                 raise VoiceCatalogUnavailable("Speech returned incomplete voice metadata.")
+            local_name = getattr(voice, "local_name", "") or ""
+            voice_type = getattr(getattr(voice, "voice_type", None), "name", "")
+            status = getattr(voice, "status", "")
             voices.append(
                 VoiceInfo(
                     name=voice.short_name,
-                    display_name=voice.local_name or voice.short_name,
-                    local_name=voice.local_name or "",
+                    display_name=local_name or voice.short_name,
+                    local_name=local_name,
                     category=voice_category(voice.short_name),
                     language=voice.locale,
-                    gender=getattr(voice.gender, "name", ""),
-                    voice_type=getattr(voice.voice_type, "name", ""),
-                    styles=list(voice.style_list or []),
-                    status=getattr(voice.status, "name", voice.status) or "",
+                    gender=getattr(getattr(voice, "gender", None), "name", None),
+                    voice_type=voice_type,
+                    service_voice_type=voice_type,
+                    is_hd=voice_category(voice.short_name) == "hd",
+                    region_verified=True,
+                    styles=list(getattr(voice, "style_list", None) or []),
+                    status=getattr(status, "name", status) or "",
                 )
             )
         ordered = {voice.name: voice for voice in voices}

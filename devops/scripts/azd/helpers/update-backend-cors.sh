@@ -76,8 +76,8 @@ cat > "$body_file" <<EOF
         "corsPolicy": {
           "allowedOrigins": ["$frontend_origin"],
           "allowedMethods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-          "allowedHeaders": ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Cache-Control"],
-          "exposeHeaders": ["Content-Length", "Content-Range"],
+          "allowedHeaders": ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Cache-Control", "Request-Id", "Request-Context", "traceparent", "tracestate"],
+          "exposeHeaders": ["Content-Length", "Content-Range", "Request-Context"],
           "allowCredentials": true,
           "maxAge": 86400
         }

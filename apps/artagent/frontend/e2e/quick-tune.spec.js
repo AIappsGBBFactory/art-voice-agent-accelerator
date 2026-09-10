@@ -55,7 +55,7 @@ test.describe('Quick Tune authoring workspace', () => {
     await installQuickTuneMocks(page);
     let releaseModels;
     const modelsGate = new Promise((resolve) => { releaseModels = resolve; });
-    await page.route('**/api/v1/agent-builder/models', async (route) => {
+    await page.route('**/api/v1/agent-builder/models{,?*}', async (route) => {
       await modelsGate;
       await route.fulfill({ status: 200, contentType: 'application/json', body: '{"models":[]}' });
     });

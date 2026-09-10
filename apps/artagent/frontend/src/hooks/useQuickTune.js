@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { deriveModelOptions, fetchFoundryModels } from '../utils/foundryModels.js';
+import { pickAttribution } from '../utils/foundryRegions.js';
 import {
   agentKey, copyAgentConfig, loadEditableAgent, mergeAgentAssignments, quickTuneRequest, sameConfig,
 } from '../utils/quickTune.js';
 import logger from '../utils/logger.js';
 
 export default function useQuickTune({ open, sessionId, activeAgentName }) {
-  const [catalog, setCatalog] = useState({ agents: [], tools: [], voices: [], voiceMetadata: null, models: null });
+  const [catalog, setCatalog] = useState({
+    agents: [], tools: [], voices: [], voiceMetadata: null, models: null, modelMetadata: {},
+  });
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [coreCatalogErrors, setCoreCatalogErrors] = useState([]);
   const [voicesLoading, setVoicesLoading] = useState(false);
@@ -43,6 +46,8 @@ export default function useQuickTune({ open, sessionId, activeAgentName }) {
         'source', 'region', 'resource_host', 'total', 'total_available', 'catalog_complete',
         'verified_against_region', 'cached', 'stale', 'retrieved_at', 'warnings',
         'runtime_transcription_models',
+        'resource_name', 'endpoint_host', 'app_region', 'region_source', 'resource_fallback',
+        'hd_from_catalog',
       ].filter((key) => key in data).map((key) => [key, data[key]]));
       setCatalog((previous) => ({ ...previous, voices: data.voices, voiceMetadata: metadata }));
     } catch (cause) {
@@ -72,11 +77,15 @@ export default function useQuickTune({ open, sessionId, activeAgentName }) {
     const version = ++catalogVersion.current;
     loadVoices();
     // Deployment discovery is optional and must not hold up basic agent editing.
-    fetchFoundryModels({ signal }).then((result) => {
-      if (signal.aborted || version !== catalogVersion.current) return;
-      setCatalog((previous) => ({
-        ...previous, models: result ? deriveModelOptions(result.models) : null,
-      }));
+    ['cascade', 'voicelive'].forEach((mode) => {
+      fetchFoundryModels(mode, { signal }).then((result) => {
+        if (signal.aborted || version !== catalogVersion.current) return;
+        setCatalog((previous) => ({
+          ...previous,
+          models: { ...previous.models, [mode]: result ? deriveModelOptions(result.models)[mode] : null },
+          modelMetadata: { ...previous.modelMetadata, [mode]: result ? pickAttribution(result) : null },
+        }));
+      });
     });
     const results = await Promise.allSettled([
       quickTuneRequest(`agent-builder/templates?session_id=${encodeURIComponent(sessionId)}`, { signal }),

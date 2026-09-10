@@ -34,6 +34,14 @@ def cascade_prompt_context(memo: MemoManager, *, agent_name: str | None = None) 
     return context
 
 
+def cascade_runtime_prompt_context(
+    metadata: dict[str, Any] | None, *, session_vars: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Use the resolved handoff scope instead of reintroducing withheld memo fields."""
+    variables = session_vars if session_vars and session_vars.get("is_handoff") else metadata
+    return {key: value for key, value in (variables or {}).items() if key != "memo_manager"}
+
+
 def refresh_voicelive_prompt_context(system_vars: dict[str, Any], memo: MemoManager) -> None:
     """Refresh VoiceLive's existing bindings in place, preserving their precedence."""
     profile = memo.get_value_from_corememory("session_profile")

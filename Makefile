@@ -140,6 +140,33 @@ eval-run:
 	fi
 	@$(EVAL_PYTHON_INTERPRETER) tests/evaluation/run-eval-stream.py run --input $(SCENARIO)
 
+# Real voice-channel E2E/performance evaluation. Generate the input audio once
+# and keep it outside the measured run so Speech synthesis does not pollute the
+# backend latency numbers.
+EVAL_LIVE_SCENARIO ?= tests/evaluation/scenarios/session_based/latency_first_audio.yaml
+EVAL_LIVE_MODES ?= realtime,voice_live
+EVAL_LIVE_CACHE ?= runs/live-evals/audio-cache
+EVAL_LIVE_OUT ?= runs/live-evals
+EVAL_LIVE_REPEAT ?= 1
+
+eval-live-synth:
+	@$(EVAL_PYTHON_INTERPRETER) -m tests.evaluation.live.run_matrix \
+		--scenario "$(EVAL_LIVE_SCENARIO)" \
+		--cache-dir "$(EVAL_LIVE_CACHE)" \
+		--synth-only
+
+eval-live:
+	@url="$${EVAL_LIVE_URL:-$${EVAL_BACKEND_URL:-http://localhost:8010}}"; \
+	$(EVAL_PYTHON_INTERPRETER) -m tests.evaluation.live.run_matrix \
+		--url "$$url" \
+		--scenario "$(EVAL_LIVE_SCENARIO)" \
+		--modes "$(EVAL_LIVE_MODES)" \
+		--repeat "$(EVAL_LIVE_REPEAT)" \
+		--cache-dir "$(EVAL_LIVE_CACHE)" \
+		--out-dir "$(EVAL_LIVE_OUT)" \
+		--require-audio-cache \
+		--no-appconfig
+
 # Internal helper: run every *.yaml scenario under a directory ($(DIR))
 define _eval_run_dir
 	@echo "═══════════════════════════════════════════════════"
@@ -201,7 +228,7 @@ eval-declined-card:
 eval-ui:
 	@$(EVAL_PYTHON_INTERPRETER) -m tests.evaluation.ui
 
-.PHONY: eval eval-run eval-declined-card eval-session eval-smoke eval-ab eval-ui
+.PHONY: eval eval-run eval-live-synth eval-live eval-declined-card eval-session eval-smoke eval-ab eval-ui
 
 # Convenience targets for full code/test quality cycle
 check_and_fix_code_quality: fix_code_quality check_code_quality
@@ -702,7 +729,14 @@ test_redis_connection:
 enable_public_networking:
 	@bash devops/scripts/azd/helpers/make-resources-public.sh $(ARGS)
 
-.PHONY: enable_public_networking
+# Backwards-compatible name used by older deployment notes and environments.
+# This alias additionally asks whether every resource opened by the helper
+# should receive SecurityControl=Ignore. --yes skips both prompts and does not
+# add the tag.
+enable_public_resources:
+	@bash devops/scripts/azd/helpers/make-resources-public.sh --prompt-security-control-ignore $(ARGS)
+
+.PHONY: enable_public_networking enable_public_resources
 
 ############################################################
 # Help and Documentation
@@ -767,6 +801,7 @@ help:
 	@echo ""
 	@echo "🌐 Azure Network Exposure:"
 	@echo "  enable_public_networking         Flip azd-deployed private resources to public (ARGS=--dry-run|--yes)"
+	@echo "  enable_public_resources          Public networking + optional SecurityControl=Ignore tag prompt"
 	@echo ""
 	@echo "📖 Configuration Variables:"
 	@echo "  CONDA_ENV                        Conda environment name (default: audioagent)"

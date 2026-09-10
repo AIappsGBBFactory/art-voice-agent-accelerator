@@ -19,7 +19,12 @@ export const authoringMenuSx = {
 };
 
 export const authoringSelectProps = {
-  MenuProps: { slotProps: { paper: { sx: authoringMenuSx } } },
+  MenuProps: {
+    slotProps: {
+      paper: { sx: authoringMenuSx },
+      list: { sx: { maxHeight: 'min(420px, calc(100dvh - 64px))', overflowY: 'auto' } },
+    },
+  },
 };
 
 export const authoringAutocompleteSlots = {

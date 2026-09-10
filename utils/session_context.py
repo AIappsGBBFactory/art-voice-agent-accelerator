@@ -36,9 +36,32 @@ from typing import Any
 
 from opentelemetry import trace
 
+from utils.pii_filter import mask_pii
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONTEXT VARIABLE - Thread-safe, async-safe session state
 # ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _extract_trace_context(trace_parent: str | None):
+    """Extract an OpenTelemetry context from a W3C ``traceparent`` string.
+
+    Used to root a session's root span under a caller-supplied trace (e.g. the
+    browser operation forwarded over the WebSocket) so App Insights shows one
+    end-to-end transaction. Returns None on missing/invalid input, in which case
+    a new trace is started as before.
+    """
+    if not trace_parent:
+        return None
+    try:
+        from opentelemetry.trace.propagation.tracecontext import (
+            TraceContextTextMapPropagator,
+        )
+
+        return TraceContextTextMapPropagator().extract({"traceparent": trace_parent})
+    except Exception:
+        return None
+
 
 
 @dataclass
@@ -51,6 +74,17 @@ class SessionCorrelation:
         session_id: User/conversation session identifier
         transport_type: "ACS" or "BROWSER"
         agent_name: Current agent handling the session
+        user_id: Stable authenticated user identifier (e.g. Entra ID oid) from
+            EasyAuth. Held in-memory only; it is never exported raw. On the
+            telemetry boundary it is emitted as a stable, non-reversible
+            pseudonym via the ``enduser.id`` semantic attribute so the operator
+            shows up as the App Insights authenticated user without exposing PII.
+        user_email: Authenticated user email / UPN. In-memory only; pseudonymized
+            (never emitted raw) in logs and dropped from span attributes.
+        device_id: Persistent anonymous per-browser/device identifier (e.g. the
+            App Insights ``ai_user`` id forwarded by the SPA). Used as the
+            ``enduser.pseudo.id`` bucket when there is no authenticated user, so
+            anonymous sessions from the same browser still group across time.
         extra: Additional custom attributes
     """
 
@@ -58,6 +92,9 @@ class SessionCorrelation:
     session_id: str | None = None
     transport_type: str | None = None
     agent_name: str | None = None
+    user_id: str | None = None
+    user_email: str | None = None
+    device_id: str | None = None
     extra: dict = field(default_factory=dict)
 
     @property
@@ -70,14 +107,44 @@ class SessionCorrelation:
         return "unknown"
 
     def to_span_attributes(self) -> dict[str, Any]:
-        """Convert to OpenTelemetry span attributes."""
+        """Convert to OpenTelemetry span attributes.
+
+        App Insights correlation mapping (via the Azure Monitor OTel exporter):
+            - ``ai.session.id`` groups telemetry into a single visit/call.
+            - ``enduser.id`` is the OpenTelemetry semantic attribute the exporter
+              maps to the App Insights user column so the signed-in operator
+              shows up as the authenticated user. We emit a stable,
+              non-reversible pseudonym of the EasyAuth identity — never the raw
+              Entra oid/UPN — so users correlate across sessions without
+              exposing PII.
+            - ``enduser.pseudo.id`` is the anonymous device/user bucket, used
+              only when there is no authenticated identity.
+        """
         attrs = {}
+        # Prefer the conversation session_id as the App Insights session key so
+        # browser and ACS telemetry share the same session bucket. Fall back to
+        # the call connection id when no session_id is present.
+        session_key = self.session_id or self.call_connection_id
+        if session_key:
+            attrs["ai.session.id"] = session_key  # App Insights standard
         if self.call_connection_id:
             attrs["call.connection.id"] = self.call_connection_id
-            attrs["ai.session.id"] = self.call_connection_id  # App Insights standard
         if self.session_id:
             attrs["session.id"] = self.session_id
-            attrs["ai.user.id"] = self.session_id  # App Insights standard
+        if self.user_id:
+            # Obfuscated, stable pseudonym of the signed-in identity (never the
+            # raw oid/UPN). enduser.id → App Insights authenticated user.
+            attrs["enduser.id"] = mask_pii(self.user_id, prefix="user")
+            attrs["enduser.authenticated"] = True
+        else:
+            # No authenticated user; bucket by the persistent device id (so the
+            # same browser groups across sessions, matching the browser's own
+            # ai_user), falling back to the session id when no device id is
+            # available so the Users blade still renders. Not PII, so emitted
+            # as-is under the OTel pseudonymous-id convention.
+            anon_id = self.device_id or session_key
+            if anon_id:
+                attrs["enduser.pseudo.id"] = anon_id
         if self.transport_type:
             attrs["transport.type"] = self.transport_type
         if self.agent_name:
@@ -89,12 +156,19 @@ class SessionCorrelation:
         return attrs
 
     def to_log_record(self) -> dict[str, Any]:
-        """Convert to log record extras for structured logging."""
+        """Convert to log record extras for structured logging.
+
+        The signed-in identity is pseudonymized here (never raw) because these
+        extras can be shipped to Application Insights traces.
+        """
         return {
             "call_connection_id": self.call_connection_id or "-",
             "session_id": self.session_id or "-",
             "transport_type": self.transport_type or "-",
             "agent_name": self.agent_name or "-",
+            "user_id": mask_pii(self.user_id, prefix="user") if self.user_id else "-",
+            "user_email": mask_pii(self.user_email, prefix="email") if self.user_email else "-",
+            "device_id": self.device_id or "-",
             **{k: v for k, v in self.extra.items() if isinstance(v, (str, int, float, bool))},
         }
 
@@ -116,6 +190,10 @@ async def session_context(
     session_id: str | None = None,
     transport_type: str | None = None,
     agent_name: str | None = None,
+    user_id: str | None = None,
+    user_email: str | None = None,
+    trace_parent: str | None = None,
+    device_id: str | None = None,
     **extra: Any,
 ):
     """
@@ -129,6 +207,9 @@ async def session_context(
         session_id: User/conversation session identifier
         transport_type: "ACS" or "BROWSER"
         agent_name: Name of the agent handling this session
+        trace_parent: Optional W3C ``traceparent`` from the caller (e.g. the
+            browser). When provided, the session root span is parented to that
+            trace so App Insights shows one end-to-end transaction.
         **extra: Additional custom attributes to include in all spans/logs
 
     Example:
@@ -144,18 +225,31 @@ async def session_context(
         session_id=session_id,
         transport_type=transport_type,
         agent_name=agent_name,
+        user_id=user_id,
+        user_email=user_email,
+        device_id=device_id,
         extra=extra,
     )
 
     token = _session_context.set(correlation)
 
-    # Create a root span for this session with all correlation attributes
+    # Create a root span for this session with all correlation attributes.
+    # If a caller trace context is supplied, parent under it for e2e tracing.
+    #
+    # SpanKind.INTERNAL (not SERVER) on purpose: this span lasts the entire
+    # voice session (often minutes). Azure Monitor maps SERVER spans to the
+    # `requests` table, so a SERVER session span makes every call a multi-minute
+    # "request" and destroys Apdex. As INTERNAL it is recorded as a dependency
+    # (not Apdex-scored); the short-lived connect/HTTP spans remain the real
+    # requests.
     tracer = trace.get_tracer(__name__)
     span_name = f"session[{transport_type or 'unknown'}]"
+    parent_ctx = _extract_trace_context(trace_parent)
 
     with tracer.start_as_current_span(
         span_name,
-        kind=trace.SpanKind.SERVER,
+        context=parent_ctx,
+        kind=trace.SpanKind.INTERNAL,
         attributes=correlation.to_span_attributes(),
     ):
         try:
@@ -170,6 +264,9 @@ def session_context_sync(
     session_id: str | None = None,
     transport_type: str | None = None,
     agent_name: str | None = None,
+    user_id: str | None = None,
+    user_email: str | None = None,
+    device_id: str | None = None,
     **extra: Any,
 ):
     """
@@ -182,6 +279,9 @@ def session_context_sync(
         session_id=session_id,
         transport_type=transport_type,
         agent_name=agent_name,
+        user_id=user_id,
+        user_email=user_email,
+        device_id=device_id,
         extra=extra,
     )
 
@@ -206,6 +306,9 @@ def set_session_context(
     session_id: str | None = None,
     transport_type: str | None = None,
     agent_name: str | None = None,
+    user_id: str | None = None,
+    user_email: str | None = None,
+    device_id: str | None = None,
     **extra: Any,
 ) -> contextvars.Token:
     """
@@ -225,6 +328,9 @@ def set_session_context(
         session_id=session_id,
         transport_type=transport_type,
         agent_name=agent_name,
+        user_id=user_id,
+        user_email=user_email,
+        device_id=device_id,
         extra=extra,
     )
     return _session_context.set(correlation)

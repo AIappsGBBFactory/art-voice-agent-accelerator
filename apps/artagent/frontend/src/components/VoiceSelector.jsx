@@ -48,6 +48,8 @@ const VoiceSelector = memo(function VoiceSelector({
     provenance = `${count} voices from ${origin}${metadata.stale ? ' (stale cache)' : metadata.cached ? ' (cached)' : ''}.`;
   } else if (metadata?.source === 'static-catalog') {
     provenance = 'Limited starter presets. Regional availability is not verified.';
+  } else if (metadata?.hd_from_catalog) {
+    provenance = `${count} catalog voices for ${origin}; documented HD entries are unverified.`;
   } else if (metadata?.source === 'region-validated') {
     provenance = 'Region-checked presets only. This backend does not expose the full catalog.';
   }
@@ -60,7 +62,8 @@ const VoiceSelector = memo(function VoiceSelector({
           slotProps={authoringAutocompleteSlots}
           getOptionLabel={voiceDisplayLabel}
           getOptionKey={(voice) => voice.name}
-          getOptionDisabled={(voice) => Boolean(voice.unavailablePreset)}
+          getOptionDisabled={(voice) => Boolean(voice.unavailablePreset)
+            || (maiVoiceRank(voice.name) < 2 && voice.region_verified === false)}
           isOptionEqualToValue={(option, current) => option.name === current.name}
           filterOptions={(items, { inputValue }) => {
             const terms = inputValue.toLowerCase().trim().split(/\s+/).filter(Boolean);
@@ -85,7 +88,7 @@ const VoiceSelector = memo(function VoiceSelector({
                     {[voice.languageLabel, voice.gender, voice.category, voice.status].filter(Boolean).join(' / ')}
                   </Typography>
                   <Typography variant="caption" color="text.secondary" component="div">{voice.name}</Typography>
-                  {voice.unavailablePreset && <Typography variant="caption" color="text.secondary" component="div">
+                  {(voice.unavailablePreset || voice.region_verified === false) && <Typography variant="caption" color="text.secondary" component="div">
                     Not verified for this resource
                   </Typography>}
                 </Box>

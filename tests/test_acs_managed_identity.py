@@ -15,7 +15,6 @@ from types import SimpleNamespace
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # utils.azure_auth.should_use_managed_identity_for_acs
 # ---------------------------------------------------------------------------
@@ -46,8 +45,27 @@ def test_should_use_mi_autodetect_in_azure(monkeypatch):
 
     monkeypatch.delenv("ACS_USE_MANAGED_IDENTITY", raising=False)
     monkeypatch.setenv("AZURE_CLIENT_ID", "00000000-0000-0000-0000-000000000000")
+    monkeypatch.setenv("CONTAINER_APP_NAME", "test-backend")
 
     assert should_use_managed_identity_for_acs() is True
+
+
+def test_should_use_mi_client_id_without_azure_host(monkeypatch):
+    """An OIDC/CLI client ID alone does not imply Azure-hosted managed identity."""
+    from utils.azure_auth import should_use_managed_identity_for_acs
+
+    for name in (
+        "ACS_USE_MANAGED_IDENTITY",
+        "MSI_ENDPOINT",
+        "IDENTITY_ENDPOINT",
+        "WEBSITE_SITE_NAME",
+        "CONTAINER_APP_NAME",
+        "FUNCTIONS_WORKER_RUNTIME",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("AZURE_CLIENT_ID", "00000000-0000-0000-0000-000000000000")
+
+    assert should_use_managed_identity_for_acs() is False
 
 
 def test_should_use_mi_autodetect_local(monkeypatch):

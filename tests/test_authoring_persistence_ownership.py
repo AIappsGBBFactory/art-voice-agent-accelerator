@@ -10,12 +10,13 @@ import socket
 import subprocess
 import time
 import uuid
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from apps.artagent.backend.registries.agentstore.base import UnifiedAgent, VoiceConfig
 from apps.artagent.backend.registries.scenariostore.loader import ScenarioConfig
 from apps.artagent.backend.src.orchestration import session_agents as sa
+from apps.artagent.backend.src.orchestration import session_drafts as drafts
 from apps.artagent.backend.src.orchestration import session_scenarios as ss
 from apps.artagent.backend.src.orchestration.session_drafts import (
     DraftStateConflict,
@@ -114,6 +115,8 @@ def store(redis_server, monkeypatch):
                 "_persisted_agent_data",
                 "_pending_agent_edits",
                 "_agent_persist_tasks",
+                "_active_session_agents",
+                "_pending_agent_activations",
             ),
         ),
         (ss, ("_session_scenarios", "_active_scenario", "_session_load_times")),
@@ -152,12 +155,19 @@ async def apply_scenario(manager, session_id):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("synchronous", [False, True])
-async def test_live_memo_saving_after_apply_cannot_erase_authoring_state(store, synchronous):
+@pytest.mark.parametrize("async_hydration", [False, True])
+async def test_live_memo_saving_after_apply_cannot_erase_authoring_state(
+    store, synchronous, async_hydration
+):
     manager, session_id = store
     live_memo = MemoManager(session_id=session_id)
     sync_state_to_memo(live_memo, active_agent="Concierge")
     assert await live_memo.persist_to_redis_async(manager, raise_on_failure=True)
-    stale = MemoManager.from_redis(session_id, manager)
+    stale = (
+        await MemoManager.from_redis_async(session_id, manager)
+        if async_hydration
+        else MemoManager.from_redis(session_id, manager)
+    )
 
     await apply_scenario(manager, session_id)
     for index in range(2):
@@ -425,6 +435,27 @@ async def test_replayed_acknowledgement_does_not_reactivate_a_superseded_scenari
 
 
 @pytest.mark.asyncio
+async def test_replayed_acknowledgement_does_not_restart_a_scenario_after_a_new_pending_handoff(
+    store,
+):
+    manager, session_id = store
+    raw_client = manager.redis_client
+
+    def later_handoff():
+        key = MemoManager.build_redis_key(session_id)
+        core = json.loads(raw_client.hget(key, "corememory"))
+        core["pending_handoff"] = {"target_agent": "AnotherAgent", "reason": "A later request"}
+        raw_client.hset(key, "corememory", json.dumps(core))
+
+    manager.redis_client = LoseAcknowledgement(raw_client, after_commit=later_handoff)
+    await apply_scenario(manager, session_id)
+    restored = await read_authoring_snapshot(session_id, manager)
+    assert restored.memo.get_context("pending_handoff")["target_agent"] == "AnotherAgent"
+    assert "OrderSpecialist" in sa._session_agents[session_id]
+    ss._scenario_update_callback.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_real_competing_cas_is_not_misreported_as_a_replayed_success(store):
     manager, session_id = store
     stale = await read_authoring_snapshot(session_id, manager)
@@ -441,3 +472,133 @@ async def test_real_competing_cas_is_not_misreported_as_a_replayed_success(store
         )
     assert manager.get_session_data(MemoManager.build_redis_key(session_id)) == before
     ss._scenario_update_callback.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_read_authoring_snapshot_uses_strict_native_async_reads():
+    manager = Mock()
+    manager.get_session_data_async = AsyncMock(return_value={})
+    manager.get_session_data.side_effect = AssertionError("Do not perform a synchronous read")
+    snapshot = await read_authoring_snapshot("strict-snapshot", manager)
+    assert snapshot.memo.session_id == "strict-snapshot"
+    manager.get_session_data_async.assert_awaited_once_with(
+        "session:strict-snapshot", raise_on_failure=True
+    )
+    manager.get_session_data_async.side_effect = RedisTimeoutError("read unavailable")
+    with pytest.raises(RedisTimeoutError, match="read unavailable"):
+        await read_authoring_snapshot("strict-snapshot", manager)
+
+
+@pytest.mark.asyncio
+async def test_authoring_snapshot_does_not_share_mutable_cache_records(store):
+    _, session_id = store
+    agent = new_agent()
+    scenario = ScenarioConfig(
+        name="Cached", agents=[agent.name], global_template_vars={"examples": ["original"]}
+    )
+    sa._session_agents[session_id] = {agent.name: agent}
+    ss._session_scenarios[session_id] = {"cached": scenario}
+    sa._session_agents["another-session"] = {"Other": new_agent("Other")}
+    snapshot = await read_authoring_snapshot(session_id, None)
+    snapshot.agents[agent.name].template_vars["examples"].append("edited in snapshot")
+    snapshot.scenarios["cached"].global_template_vars["examples"].clear()
+    assert agent.template_vars["examples"] == []
+    assert scenario.global_template_vars["examples"] == ["original"]
+    assert set(snapshot.agents) == {agent.name}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("persisted_initially", [False, True])
+async def test_draft_publication_updates_live_definition_views_without_replacing_runtime(
+    store, monkeypatch, persisted_initially
+):
+    manager, session_id = store
+    live = MemoManager(session_id=session_id, redis_mgr=manager)
+    live.set_context("active_agent", "Concierge")
+    if persisted_initially:
+        assert await live.persist_to_redis_async(manager, raise_on_failure=True)
+    live.append_to_history("Concierge", "user", "Not yet saved")
+    live.set_context("tool_outputs", {"lookup": {"status": "completed"}})
+    monkeypatch.setattr(drafts, "live_memo", lambda key: live if key == session_id else None)
+
+    await apply_scenario(manager, session_id)
+    assert live.histories["Concierge"][-1]["content"] == "Not yet saved"
+    assert live.get_context("tool_outputs") == {"lookup": {"status": "completed"}}
+    assert live.get_context("active_scenario_name") == "orders"
+    from apps.artagent.backend.src.orchestration.session_memory import prime_session_definitions
+
+    await prime_session_definitions(session_id, memo=live)
+    assert sa.get_session_agent(session_id).name == "OrderSpecialist"
+    assert ss.get_active_scenario_name(session_id) == "orders"
+    assert await live.persist_to_redis_async(manager, raise_on_failure=True)
+    restored = await MemoManager.from_redis_async(session_id, manager)
+    assert restored.get_context("active_agent") == "OrderSpecialist"
+    assert restored.get_context("tool_outputs") == {"lookup": {"status": "completed"}}
+    assert restored.histories["Concierge"][-1]["content"] == "Not yet saved"
+
+
+@pytest.mark.asyncio
+async def test_repeated_apply_cancellation_cannot_abandon_commit_or_publication(store, monkeypatch):
+    manager, session_id = store
+    started, release = asyncio.Event(), asyncio.Event()
+    commit = manager.compare_and_store_session_data_async
+
+    async def held_commit(*args, **kwargs):
+        started.set()
+        await release.wait()
+        return await commit(*args, **kwargs)
+
+    monkeypatch.setattr(manager, "compare_and_store_session_data_async", held_commit)
+    task = asyncio.create_task(apply_scenario(manager, session_id))
+    await asyncio.wait_for(started.wait(), timeout=2)
+    task.cancel()
+    await asyncio.sleep(0)
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    restored = await read_authoring_snapshot(session_id, manager)
+    assert restored.memo.get_context("active_scenario_name") == "orders"
+    assert "OrderSpecialist" in sa._session_agents[session_id]
+    ss._scenario_update_callback.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_scenario_deletion_cas_rechecks_activation_after_a_concurrent_author(
+    store, monkeypatch
+):
+    manager, session_id = store
+    for name in ("First", "Second"):
+        await ss.set_session_scenario_async(
+            session_id, ScenarioConfig(name=name, agents=[name], start_agent=name)
+        )
+    independent = copy.copy(manager)
+    compare = manager._compare_and_store_session_data
+    interleaved = False
+
+    def compare_after_activation(*args, **kwargs):
+        nonlocal interleaved
+        if not interleaved:
+            interleaved = True
+            memo = MemoManager.from_redis(session_id, independent)
+            scenario = ScenarioConfig(name="Third", agents=["Third"], start_agent="Third")
+            config = ss._serialize_scenario(scenario)
+            memo.set_corememory("active_scenario_name", "third")
+            memo.set_corememory("scenario_name", "third")
+            memo.set_corememory("session_scenario_config", config)
+            memo.set_corememory("active_agent", "Third")
+            memo.persist_to_redis(
+                independent,
+                authoring_fields=ss._SCENARIO_WRITE_FIELDS + ("active_agent",),
+                registry_updates={"session_scenarios_all": {"third": config}},
+            )
+        return compare(*args, **kwargs)
+
+    monkeypatch.setattr(manager, "_compare_and_store_session_data", compare_after_activation)
+    assert await ss.remove_session_scenario_async(session_id, "SECOND", raise_on_failure=True)
+    restored = await read_authoring_snapshot(session_id, manager)
+    assert set(restored.scenarios) == {"first", "third"}
+    assert restored.memo.get_context("active_scenario_name") == "third"
+    assert restored.memo.get_context("active_agent") == "Third"

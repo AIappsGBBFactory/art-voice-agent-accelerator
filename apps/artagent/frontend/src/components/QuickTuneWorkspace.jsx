@@ -25,6 +25,7 @@ import { OrchestrationDiagramModal } from './OrchestrationDiagram.jsx';
 import logger from '../utils/logger.js';
 import { authoringAutocompleteSlots, authoringSurfaceSx } from '../styles/authoringStyles.js';
 import { maiConfigurationError } from '../utils/maiSpeech.js';
+import { voiceLiveModelError } from '../utils/foundryModels.js';
 
 const QuickTuneWorkspace = memo(function QuickTuneWorkspace({
   open, onClose, expanded, onExpandedChange, view, onViewChange,
@@ -119,7 +120,7 @@ const QuickTuneWorkspace = memo(function QuickTuneWorkspace({
       if (signal.aborted) return;
       saved = true;
       tune.markSaved(tune.selectedName, submitted);
-      await onAgentSaved(submitted, { isNew: entry.isNew, reconnect, live: Boolean(patch && data.live) });
+      await onAgentSaved(submitted, { isNew: entry.isNew, reconnect, live: Boolean(patch && data.live), mode });
       if (signal.aborted) return;
       setNotice(patch && data.live ? 'Applied to the running agent.'
         : reconnect ? 'Saved. The conversation is reconnecting with your changes.'
@@ -186,6 +187,7 @@ const QuickTuneWorkspace = memo(function QuickTuneWorkspace({
     : reconnect ? 'Apply & reconnect' : 'Save changes';
   const agentSaveDisabled = !tune.dirty || busy || tune.loadingAgent || duplicateName || !entry?.config.name?.trim()
     || (entry?.config.prompt?.trim().length || 0) < 10
+    || (mode === 'voicelive' && Boolean(voiceLiveModelError(entry?.config, tune.catalog.models?.voicelive)))
     || Boolean(maiConfigurationError(entry?.config, mode, tune.catalog.voiceMetadata));
 
   return (
@@ -291,6 +293,7 @@ const QuickTuneWorkspace = memo(function QuickTuneWorkspace({
                     saveAction={{ onClick: saveAgent, disabled: agentSaveDisabled, label: busy ? 'Saving...' : applyLabel }}
                     saveError={tune.error} saveNotice={tune.dirty ? '' : notice}
                     tools={tune.catalog.tools} voices={tune.catalog.voices} models={tune.catalog.models}
+                    modelMetadata={tune.catalog.modelMetadata}
                     voiceMetadata={tune.catalog.voiceMetadata} voicesLoading={tune.voicesLoading}
                     onRefreshVoices={tune.refreshVoices}
                     assignmentAgents={tune.assignmentAgents} toolsAvailable={toolsReady}

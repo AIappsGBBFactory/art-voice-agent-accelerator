@@ -72,6 +72,9 @@ def register_core_state_step(manager: LifecycleManager, app: FastAPI) -> None:
 
         # Initialize managers
         app.state.session_manager = ThreadSafeSessionManager()
+        from apps.artagent.backend.src.orchestration.session_memory import bind_session_manager
+
+        bind_session_manager(app.state.session_manager)
         app.state.session_metrics = ThreadSafeSessionMetrics()
         app.state.greeted_call_ids = set()
 
@@ -235,7 +238,10 @@ def register_aoai_step(manager: LifecycleManager, app: FastAPI) -> None:
         app.state.aoai_client_manager = aoai_manager
         app.state.aoai_client = await aoai_manager.get_client()
 
-    manager.add_step("aoai", start)
+    async def stop() -> None:
+        await app.state.aoai_client_manager.aclose()
+
+    manager.add_step("aoai", start, stop)
 
 
 # ============================================================================
@@ -245,7 +251,7 @@ def register_aoai_step(manager: LifecycleManager, app: FastAPI) -> None:
 
 def register_warmup_step(manager: LifecycleManager, app: FastAPI) -> None:
     """Register the connection warmup step (deferred - runs in background).
-    
+
     This step warms OpenAI and speech connections to reduce first-request latency.
     Since it's deferred, the app starts accepting requests immediately while
     warmup continues in the background.
@@ -455,13 +461,13 @@ def register_agents_step(manager: LifecycleManager, app: FastAPI) -> None:
 
 def register_mcp_servers_step(manager: LifecycleManager, app: FastAPI) -> None:
     """Register the MCP server validation and tool discovery step (deferred).
-    
+
     Validates that configured MCP servers are reachable,
     discovers their tools, and registers them in the central tool registry
     so agents can reference them by name.
-    
+
     For EasyAuth-protected servers, acquires tokens using Managed Identity.
-    
+
     Since this is a deferred step, MCP tool availability is not guaranteed
     immediately at startup. Required servers are still validated but failures
     are logged as errors rather than blocking startup.
@@ -570,6 +576,12 @@ def register_mcp_servers_step(manager: LifecycleManager, app: FastAPI) -> None:
                         url=url,
                         transport=MCPTransport(transport),
                         timeout=timeout,
+                        # Pass the managed-identity auth headers so the discovery
+                        # session can clear EasyAuth. Without these the client's
+                        # own /health + /mcp calls get 401 and no tools register,
+                        # even though the health probe above (which DOES send the
+                        # headers) succeeds.
+                        headers=auth_headers,
                     )
                     session = MCPClientSession(config)
                     

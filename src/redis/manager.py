@@ -27,16 +27,24 @@ from src.enums.monitoring import PeerService, SpanAttr
 
 T = TypeVar("T")
 
-AUTHORING_FIELDS = frozenset({
-    "session_agents_all",
-    "session_scenarios_all",
-    "session_scenario_config",
-    "active_scenario_name",
-    "scenario_name",
-})
-ACTIVATION_FIELDS = frozenset({
-    "active_agent", "pending_handoff", "handoff_context", "visited_agents",
-})
+AUTHORING_FIELDS = frozenset(
+    {
+        "session_agents_all",
+        "active_session_agent",
+        "session_scenarios_all",
+        "session_scenario_config",
+        "active_scenario_name",
+        "scenario_name",
+    }
+)
+ACTIVATION_FIELDS = frozenset(
+    {
+        "active_agent",
+        "pending_handoff",
+        "handoff_context",
+        "visited_agents",
+    }
+)
 AUTHORING_REVISION_KEY = "__authoring_revision"
 _CAS_RECEIPTS_FIELD = "__session_write_receipts"
 _CAS_RETRY_BUDGET_SECONDS = 30
@@ -75,6 +83,8 @@ def merge_session_snapshot(
         for key in authoring_fields:
             if key in incoming:
                 merged[key] = incoming[key]
+            else:
+                merged.pop(key, None)
         for key, changes in updates.items():
             registry = dict(merged.get(key) or {})
             for name, value in changes.items():
@@ -84,6 +94,40 @@ def merge_session_snapshot(
                 if value is not None:
                     registry[name] = value
             merged[key] = registry
+        if "session_agents_all" in updates and "active_session_agent" not in authored:
+            registry = merged.get("session_agents_all") or {}
+            selected = previous.get("active_session_agent")
+            actual = next(
+                (name for name in registry if name.lower() == (selected or "").lower()), None
+            )
+            if actual is None:
+                selected = incoming.get("active_session_agent")
+                actual = next(
+                    (name for name in registry if name.lower() == (selected or "").lower()), None
+                )
+                if actual is None:
+                    actual = next(iter(sorted(registry)), None)
+            merged["active_session_agent"] = actual
+        deleted_scenarios = {
+            name.lower()
+            for name, value in updates.get("session_scenarios_all", {}).items()
+            if value is None
+        }
+        if (
+            previous.get("active_scenario_name") or previous.get("scenario_name") or ""
+        ).lower() in deleted_scenarios and not {
+            "active_scenario_name",
+            "scenario_name",
+            "session_scenario_config",
+        } & authored:
+            remaining = merged.get("session_scenarios_all") or {}
+            next_name = next(iter(sorted(remaining)), None)
+            next_config = remaining.get(next_name) if next_name else None
+            merged["active_scenario_name"] = next_name
+            merged["scenario_name"] = next_name
+            merged["session_scenario_config"] = next_config
+            if next_config and next_config.get("start_agent"):
+                merged["active_agent"] = next_config["start_agent"]
         if any(
             previous.get(key) != merged.get(key)
             for key in ("active_scenario_name", "scenario_name", "session_scenario_config")
@@ -193,6 +237,10 @@ class AzureRedisManager:
             self.use_cluster = str(use_cluster_env).lower() in {"1", "true", "yes", "on"}
         else:
             self.use_cluster = False
+        # Set once a MOVED reply proves the endpoint is a cluster. When True we must
+        # never silently fall back to a standalone client (doing so re-triggers MOVED
+        # in an endless ping-pong), so cluster construction failures surface instead.
+        self._cluster_required = False
         if not self.host:
             raise ValueError(
                 "Redis host must be provided either as argument or environment variable."
@@ -304,9 +352,22 @@ class AzureRedisManager:
                     command_name,
                     moved_err,
                 )
-                if not self.use_cluster:
-                    self.use_cluster = True
-                self._create_client()
+                # A MOVED reply is authoritative: the endpoint is an OSS-cluster.
+                # Latch cluster mode so a transient build failure can't drop us back
+                # to a standalone client that would just raise MOVED again.
+                self.use_cluster = True
+                self._cluster_required = True
+                try:
+                    self._create_client()
+                except Exception as create_err:
+                    # Cluster client couldn't be built (e.g. topology unreachable).
+                    # Stop retrying and surface the original MOVED to the caller.
+                    self.logger.error(
+                        "Failed to switch to Redis cluster mode after MOVED on %s: %s",
+                        command_name,
+                        create_err,
+                    )
+                    break
             except (RedisConnectionError, TimeoutError, RedisError) as redis_err:
                 last_exc = redis_err
                 self.logger.warning(
@@ -375,6 +436,11 @@ class AzureRedisManager:
             "reinitialize_steps": 1,
             "read_from_replicas": os.getenv("REDIS_READ_FROM_REPLICAS", "false").lower()
             in {"1", "true", "yes", "on"},
+            # Topology discovery has to reach every shard node during CLUSTER
+            # SLOTS/NODES; the standalone 0.2s connect budget is too tight and makes
+            # cluster init flap on transient latency. Give discovery more headroom.
+            "socket_connect_timeout": float(os.getenv("REDIS_CLUSTER_CONNECT_TIMEOUT", "5.0")),
+            "socket_timeout": float(os.getenv("REDIS_CLUSTER_SOCKET_TIMEOUT", "5.0")),
         }
 
         if self.access_key:
@@ -400,9 +466,18 @@ class AzureRedisManager:
                 self.redis_client = redis.Redis(**standalone_kwargs)
                 self.logger.debug("Azure Redis connection initialized in standalone mode.")
         except RedisClusterException as exc:
-            self.logger.warning("Redis cluster initialization failed (will try standalone): %s", exc)
-            if not self.use_cluster:
+            if self._cluster_required:
+                # A prior MOVED proved this endpoint requires cluster mode; falling
+                # back to standalone would just loop on MOVED. Surface the error.
+                self.logger.error(
+                    "Redis cluster initialization failed and cluster mode is required "
+                    "(endpoint returned MOVED); not falling back to standalone: %s",
+                    exc,
+                )
                 raise
+            self.logger.warning(
+                "Redis cluster initialization failed (will try standalone): %s", exc
+            )
             self.logger.debug("Falling back to standalone Redis client.")
             standalone_kwargs = {**common_kwargs, "db": self.db, **auth_kwargs}
             self.redis_client = redis.Redis(**standalone_kwargs)
@@ -742,8 +817,10 @@ return {1, redis.call('HGET', KEYS[1], 'corememory') or '',
 
         return self._execute_with_retry("SESSION_CAS", compare_and_store)
 
-    async def get_session_data_async(self, session_id: str) -> dict[str, str]:
-        """Async version of get_session_data using thread pool executor."""
+    async def get_session_data_async(
+        self, session_id: str, *, raise_on_failure: bool = False
+    ) -> dict[str, str]:
+        """Read through the executor, optionally distinguishing failure from an empty hash."""
         try:
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(None, self.get_session_data, session_id)
@@ -752,6 +829,8 @@ return {1, redis.call('HGET', KEYS[1], 'corememory') or '',
             raise
         except Exception as e:
             self.logger.error(f"Error in get_session_data_async for session {session_id}: {e}")
+            if raise_on_failure:
+                raise
             return {}
 
     async def update_session_field_async(self, session_id: str, field: str, value: str) -> bool:

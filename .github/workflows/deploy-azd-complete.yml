@@ -50,6 +50,7 @@ on:
 
 permissions:
   contents: read
+  actions: write  # Allow the finalizer to dispatch staging evals with its job token
   id-token: write
   pull-requests: write  # Required by _template-deploy-azd.yml for PR preview comments
 

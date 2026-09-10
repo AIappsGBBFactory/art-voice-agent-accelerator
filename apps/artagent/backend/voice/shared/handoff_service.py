@@ -57,8 +57,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from jinja2 import Template
-
 from apps.artagent.backend.registries.scenariostore.loader import (
     HandoffConfig,
     ScenarioConfig,
@@ -69,6 +67,7 @@ from apps.artagent.backend.registries.toolstore.registry import (
     is_handoff_tool as registry_is_handoff_tool,
 )
 from apps.artagent.backend.voice.handoffs.context import build_handoff_system_vars
+from jinja2 import Template
 
 if TYPE_CHECKING:
     from apps.artagent.backend.registries.agentstore.base import UnifiedAgent
@@ -84,7 +83,6 @@ except ImportError:
     logger = logging.getLogger("voice.shared.handoff_service")
 
 from apps.artagent.backend.src.orchestration.naming import find_agent_by_name
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DATA CLASSES
@@ -254,7 +252,12 @@ class HandoffService:
         Returns:
             True if tool triggers a handoff
         """
-        return registry_is_handoff_tool(tool_name)
+        scenario = self._get_scenario()
+        return (
+            tool_name in self._handoff_map
+            or bool(scenario and any(edge.tool == tool_name for edge in scenario.handoffs))
+            or registry_is_handoff_tool(tool_name)
+        )
 
     # ───────────────────────────────────────────────────────────────────────────
     # Handoff Resolution
@@ -306,7 +309,7 @@ class HandoffService:
             return None
 
         # Extract suffix after "handoff_"
-        suffix = tool_name[len("handoff_"):]
+        suffix = tool_name[len("handoff_") :]
         if not suffix:
             return None
 
@@ -366,10 +369,9 @@ class HandoffService:
         Returns:
             HandoffConfig with type, share_context, greet_on_switch
         """
-        if self._scenario is not None:
-            return self._scenario.get_handoff_config(
-                from_agent=source_agent, tool_name=tool_name
-            )
+        scenario = self._get_scenario()
+        if scenario is not None:
+            return scenario.get_handoff_config(source_agent, tool_name=tool_name)
         return get_handoff_config(
             scenario_name=self._scenario_name,
             from_agent=source_agent,
@@ -450,8 +452,15 @@ class HandoffService:
                     error=f"Generic handoff to '{target_agent}' is not allowed in this scenario",
                 )
         else:
-            # Standard handoff - lookup from handoff_map
-            target_agent = self.get_handoff_target(tool_name)
+            # Source-specific scenario routing wins over the lossy tool->target map.
+            scenario = self._get_scenario()
+            if scenario is not None:
+                handoff_cfg = scenario.get_handoff_config(source_agent, tool_name=tool_name)
+            target_agent = (
+                handoff_cfg.to_agent
+                if handoff_cfg and handoff_cfg.to_agent
+                else self.get_handoff_target(tool_name)
+            )
             if not target_agent:
                 logger.warning(
                     "Handoff tool '%s' not found in handoff_map | scenario=%s",

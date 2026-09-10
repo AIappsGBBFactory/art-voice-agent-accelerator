@@ -10,8 +10,10 @@ import asyncio
 import html
 import os
 import re
+import threading
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 
 import azure.cognitiveservices.speech as speechsdk
 from dotenv import load_dotenv
@@ -614,6 +616,12 @@ class SpeechSynthesizer:
         self.tracer = None
         self._session_span = None
 
+        # ``cancellation_details.error_details`` from the most recent failed
+        # synthesis. The Speech SDK does not raise for a bad voice name or a bad
+        # key — it cancels and stashes the real cause here — so callers read this
+        # to classify and surface the failure instead of reporting silence.
+        self.last_synthesis_error: str | None = None
+
         if self.enable_tracing:
             try:
                 # Use same pattern as speech_recognizer
@@ -628,6 +636,8 @@ class SpeechSynthesizer:
         # DON'T initialize speaker synthesizer during __init__ to avoid audio library issues
         # Only create it when actually needed for speaker playback
         self._speaker = None
+        self._active_synthesizers: set = set()
+        self._active_synth_lock = threading.Lock()
 
         # Create base speech config for other operations
         self.cfg = None
@@ -1311,13 +1321,48 @@ class SpeechSynthesizer:
                 self._session_span = None
 
     def stop_speaking(self) -> None:
-        """Stop current playback (if any)."""
-        if self._speaker:
+        """Request stop on this instance's speaker and active PCM producers."""
+        with self._active_synth_lock:
+            synthesizers = set(self._active_synthesizers)
+            if self._speaker is not None:
+                synthesizers.add(self._speaker)
+        for synthesizer in synthesizers:
             try:
                 logger.info("[🛑] Stopping speech synthesis...")
-                self._speaker.stop_speaking_async()
+                synthesizer.stop_speaking_async()
             except Exception as e:
                 logger.warning(f"Could not stop speech synthesis: {e}")
+
+    @property
+    def has_active_synthesis(self) -> bool:
+        """Whether a PCM producer still lacks a successful stop acknowledgement."""
+        with self._active_synth_lock:
+            return bool(self._active_synthesizers)
+
+    @contextmanager
+    def _pcm_operation(self, synthesizer, ssml, *, streaming, cancel_event):
+        """Register/start atomically so stop cannot miss a newly started producer."""
+        registered = False
+        try:
+            with self._active_synth_lock:
+                cancelled = cancel_event is not None and cancel_event.is_set()
+                if not cancelled:
+                    self._active_synthesizers.add(synthesizer)
+                    registered = True
+                    start = (
+                        synthesizer.start_speaking_ssml_async
+                        if streaming
+                        else synthesizer.speak_ssml_async
+                    )
+                    operation = start(ssml)
+            yield None if cancelled else operation.get()
+        finally:
+            if registered:
+                # Runs on the synthesis worker, including generator.close().
+                # Retain ownership if the provider cannot acknowledge stop.
+                synthesizer.stop_speaking_async().get()
+                with self._active_synth_lock:
+                    self._active_synthesizers.discard(synthesizer)
 
     def synthesize_speech(
         self, text: str, voice: str = None, style: str = None, rate: str = None
@@ -1483,6 +1528,11 @@ class SpeechSynthesizer:
                         logger.error("Failed to refresh authentication for speech synthesis")
 
                 error_msg = f"Speech synthesis failed: {result.reason}"
+                cancellation = getattr(result, "cancellation_details", None)
+                detail_text = getattr(cancellation, "error_details", "") if cancellation else ""
+                self.last_synthesis_error = detail_text or str(result.reason)
+                if detail_text:
+                    error_msg = f"{error_msg} | {detail_text}"
                 logger.error(error_msg)
 
                 if self._session_span:
@@ -1814,6 +1864,7 @@ class SpeechSynthesizer:
         sample_rate: int = 16000,
         style: str | None = None,
         rate: str | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> bool:
         """
         Warm the TTS connection by synthesizing minimal audio.
@@ -1846,6 +1897,7 @@ class SpeechSynthesizer:
                 style=style,
                 rate=rate,
                 read_chunk_bytes=320,
+                cancel_event=cancel_event,
             ):
                 warmed_bytes += len(chunk)
 
@@ -1873,7 +1925,9 @@ class SpeechSynthesizer:
         sample_rate: int = 16000,
         style: str = None,
         rate: str = None,
-        pitch: str = None,
+        *,
+        pitch: str | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> bytes:
         """
         Synthesize text to PCM bytes with consistent voice parameter support.
@@ -1960,13 +2014,18 @@ class SpeechSynthesizer:
         retry_delay = 0.1
         last_result = None
         last_error_details = ""
+        self.last_synthesis_error = None
 
         for attempt in range(max_attempts):
             synthesizer = speechsdk.SpeechSynthesizer(
                 speech_config=speech_config, audio_config=None
             )
 
-            result = synthesizer.speak_ssml_async(ssml).get()
+            with self._pcm_operation(
+                synthesizer, ssml, streaming=False, cancel_event=cancel_event
+            ) as result:
+                if result is None or (cancel_event is not None and cancel_event.is_set()):
+                    return b""
             last_result = result
 
             # Check for 401 authentication error and retry with refresh if needed
@@ -1994,6 +2053,7 @@ class SpeechSynthesizer:
                 cancellation = result.cancellation_details
                 error_details = getattr(cancellation, "error_details", "")
                 last_error_details = error_details or "canceled"
+                self.last_synthesis_error = last_error_details
                 logger.warning(
                     "PCM synthesis canceled (attempt=%s): reason=%s error=%s (voice=%s, text_preview=%s)",
                     attempt + 1,
@@ -2013,6 +2073,7 @@ class SpeechSynthesizer:
                     continue
             else:
                 last_error_details = str(result.reason)
+                self.last_synthesis_error = last_error_details
                 logger.warning(
                     "PCM synthesis returned reason=%s (attempt=%s, voice=%s)",
                     result.reason,
@@ -2027,8 +2088,13 @@ class SpeechSynthesizer:
             break
 
         if last_result and last_result.reason:
-            raise RuntimeError(f"TTS failed: {last_result.reason}")
-        raise RuntimeError(f"TTS failed: {last_error_details or 'unknown error'}")
+            raise RuntimeError(
+                f"TTS failed for voice '{voice}': "
+                f"{last_error_details or last_result.reason} (reason={last_result.reason})"
+            )
+        raise RuntimeError(
+            f"TTS failed for voice '{voice}': {last_error_details or 'unknown error'}"
+        )
 
     def synthesize_to_pcm_stream(
         self,
@@ -2037,8 +2103,10 @@ class SpeechSynthesizer:
         sample_rate: int = 16000,
         style: str = None,
         rate: str = None,
-        pitch: str = None,
         read_chunk_bytes: int = 3200,
+        *,
+        pitch: str | None = None,
+        cancel_event: threading.Event | None = None,
     ):
         """
         Stream-synthesize ``text`` to raw PCM, yielding byte chunks as Azure
@@ -2128,24 +2196,24 @@ class SpeechSynthesizer:
 
             # start_speaking_* returns as soon as synthesis BEGINS (not when it
             # completes), unlocking incremental reads from the audio stream.
-            result = synthesizer.start_speaking_ssml_async(ssml).get()
-            audio_stream = speechsdk.AudioDataStream(result)
-
             produced = False
-            while True:
-                # Allocate a FRESH buffer per read. Reusing one immutable
-                # ``bytes`` object across ``read_data`` calls inside a generator
-                # makes the SDK's ctypes writes (c_char_p, argtypes=None) fail to
-                # land back in the object we read from across ``yield`` suspension
-                # boundaries — every chunk comes back as silence. A fresh buffer
-                # per call yields byte-for-byte the same audio as the blocking
-                # path. Do NOT hoist this out of the loop.
-                buffer = bytes(read_chunk_bytes)
-                filled = audio_stream.read_data(buffer)
-                if filled == 0:
-                    break
-                produced = True
-                yield bytes(buffer[:filled])
+            with self._pcm_operation(
+                synthesizer, ssml, streaming=True, cancel_event=cancel_event
+            ) as result:
+                if result is None:
+                    return
+                audio_stream = speechsdk.AudioDataStream(result)
+                while cancel_event is None or not cancel_event.is_set():
+                    # Fresh buffers are required for the SDK ctypes writes; a
+                    # reused immutable bytes buffer can produce silent frames.
+                    buffer = bytes(read_chunk_bytes)
+                    filled = audio_stream.read_data(buffer)
+                    if filled == 0:
+                        break
+                    produced = True
+                    yield bytes(buffer[:filled])
+                if cancel_event is not None and cancel_event.is_set():
+                    return
 
             # read_data returns 0 on completion OR cancellation. Inspect status.
             if audio_stream.status == speechsdk.StreamStatus.Canceled:
@@ -2167,6 +2235,9 @@ class SpeechSynthesizer:
                     f"Streaming TTS canceled: reason="
                     f"{getattr(details, 'reason', 'unknown')} error={error_details or 'none'}"
                 )
+                # Record the real cause so callers can classify and surface it
+                # instead of reporting a bare "no audio".
+                self.last_synthesis_error = error_details or error_msg
                 if produced:
                     # Partial audio already streamed; log and stop rather than raise
                     # so the turn degrades gracefully instead of erroring mid-utterance.

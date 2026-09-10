@@ -118,6 +118,22 @@ if [ -n "$AZURE_APPCONFIG_ENDPOINT" ]; then
         else
             echo "⚠️  Could not fetch ws-url from App Config (got: '$appconfig_ws_url')"
         fi
+
+        # Fetch Application Insights connection string for browser telemetry.
+        # Prefer a frontend-scoped key; fall back to the shared platform key.
+        if [ -z "$APPLICATIONINSIGHTS_CONNECTION_STRING" ]; then
+            echo "   Fetching app/frontend/appinsights-connection-string..."
+            appconfig_appi=$(fetch_from_appconfig "app/frontend/appinsights-connection-string" "$ACCESS_TOKEN")
+            if [ -z "$appconfig_appi" ] || [ "$appconfig_appi" = "null" ]; then
+                appconfig_appi=$(fetch_from_appconfig "azure/appinsights/connection-string" "$ACCESS_TOKEN")
+            fi
+            if [ -n "$appconfig_appi" ] && [ "$appconfig_appi" != "null" ]; then
+                echo "✅ Fetched App Insights connection string from App Config"
+                APPLICATIONINSIGHTS_CONNECTION_STRING="$appconfig_appi"
+            else
+                echo "⚠️  App Insights connection string not found in App Config"
+            fi
+        fi
     else
         echo "❌ Could not acquire access token, falling back to env vars"
         echo "   Check that the frontend managed identity has 'App Configuration Data Reader' role"
@@ -157,6 +173,17 @@ if [ -n "$WS_URL" ]; then
     find /app/dist -type f -name "*.html" -exec sed -i "s|__WS_URL__|${WS_URL}|g" {} \;
 else
     echo "⚠️  WS_URL not set and BACKEND_URL unavailable; leaving __WS_URL__ placeholder"
+fi
+
+# Replace Application Insights connection string placeholder used by the
+# browser telemetry client. Uses '|' as the sed delimiter and escapes any '|'
+# in the value so InstrumentationKey=...;IngestionEndpoint=... substitutes safely.
+if [ -n "$APPLICATIONINSIGHTS_CONNECTION_STRING" ]; then
+    echo "📝 Replacing __APPINSIGHTS_CONNECTION_STRING__ (browser telemetry enabled)"
+    APPI_ESCAPED=$(printf '%s' "$APPLICATIONINSIGHTS_CONNECTION_STRING" | sed -e 's/[|\\&]/\\&/g')
+    find /app/dist -type f -name "*.js" -exec sed -i "s|__APPINSIGHTS_CONNECTION_STRING__|${APPI_ESCAPED}|g" {} \;
+else
+    echo "ℹ️  APPLICATIONINSIGHTS_CONNECTION_STRING not set; browser telemetry disabled"
 fi
 
 # Start the application

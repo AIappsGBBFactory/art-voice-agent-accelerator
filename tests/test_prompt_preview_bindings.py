@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-from collections import deque
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -28,22 +27,23 @@ from src.stateful.state_managment import MemoManager
 
 def _cascade() -> CascadeOrchestratorAdapter:
     adapter = object.__new__(CascadeOrchestratorAdapter)
+    adapter._session_vars = {}
     adapter._cached_orchestrator_config = SimpleNamespace(scenario=None, scenario_name=None)
     return adapter
 
 
 def _live(agent, memo, *, variables=None) -> LiveOrchestrator:
-    orchestrator = object.__new__(LiveOrchestrator)
+    active = memo.get_value_from_corememory("active_agent") or agent.name
+    orchestrator = LiveOrchestrator(
+        conn=SimpleNamespace(session=SimpleNamespace(update=AsyncMock())),
+        agents={active: agent},
+        start_agent=active,
+        memo_manager=memo,
+        orchestrator_config=SimpleNamespace(scenario=None, scenario_name=None),
+    )
     orchestrator._system_vars = (
         sync_state_from_memo(memo).system_vars if variables is None else dict(variables)
     )
-    orchestrator._memo_manager = memo
-    orchestrator._user_message_history = deque([], maxlen=5)
-    orchestrator._last_assistant_message = None
-    orchestrator.active = memo.get_value_from_corememory("active_agent") or agent.name
-    orchestrator.agents = {orchestrator.active: agent}
-    orchestrator.conn = SimpleNamespace(session=SimpleNamespace(update=AsyncMock()))
-    orchestrator._cached_orchestrator_config = SimpleNamespace(scenario=None, scenario_name=None)
     orchestrator._build_conversation_recap = Mock(return_value="")
     return orchestrator
 
@@ -87,6 +87,51 @@ def test_cascade_direct_and_unified_entry_points_keep_their_existing_difference(
     assert unified["active_agent"] == "Current agent"
     assert unified["caller_name"] == "Core name"
     assert "memo_manager" not in unified
+
+
+def test_cascade_handoff_preview_uses_resolved_scope_without_rehydrating_withheld_context():
+    memo = MemoManager(session_id="handoff-preview")
+    memo.context.update(
+        {
+            "active_agent": "Target",
+            "caller_name": "Withheld caller",
+            "session_profile": {"full_name": "Withheld profile"},
+        }
+    )
+    adapter = _cascade()
+    adapter._session_vars = {
+        "is_handoff": True,
+        "active_agent": "Target",
+        "previous_agent": "Source",
+        "handoff_context": {"reason": "Verify the order"},
+        "memo_manager": memo,
+    }
+    prompt = (
+        "{{ active_agent }}|{{ previous_agent }}|{{ handoff_context.reason }}|"
+        "{{ caller_name | default('withheld') }}|{{ session_profile | default('withheld') }}"
+    )
+    agent = UnifiedAgent(name="Target", prompt_template=prompt)
+    metadata = cascade_prompt_context(memo, agent_name="Target")
+    context = OrchestratorContext(
+        session_id=memo.session_id,
+        websocket=None,
+        user_text="",
+        conversation_history=[],
+        metadata=metadata,
+    )
+    expected = adapter._build_messages(context, agent)[0]["content"]
+    result = service._render_snapshot(
+        PromptPreviewRequest(prompt=prompt, agent_name="Target", mode="cascade"),
+        SessionAuthoringSnapshot(memo, {}, {}, {}),
+        saved_agent=agent,
+        app_state=SimpleNamespace(),
+        live=adapter,
+    )
+    assert result.errors == []
+    assert result.rendered_prompt == expected == "Target|Source|Verify the order|withheld|withheld"
+    assert not any(row.path == "memo_manager" for row in result.variables)
+    assert memo.context["caller_name"] == "Withheld caller"
+    assert adapter._session_vars["memo_manager"] is memo
 
 
 @pytest.mark.asyncio
@@ -259,11 +304,17 @@ def test_preview_never_calls_runtime_render_fallback_tools_or_models(monkeypatch
         "execute_tool",
         "get_tools",
         "_load_custom_tools",
-        "apply_voicelive_session",
     ):
         monkeypatch.setattr(
             UnifiedAgent, name, Mock(side_effect=AssertionError(f"{name} is forbidden"))
         )
+    from apps.artagent.backend.voice.voicelive import session as voicelive_session
+
+    monkeypatch.setattr(
+        voicelive_session,
+        "apply_voicelive_session",
+        Mock(side_effect=AssertionError("session updates are forbidden")),
+    )
     saved = UnifiedAgent(name="Saved", template_vars={"removed": "old"}, tool_names=["saved_tool"])
     constructor = Mock(wraps=UnifiedAgent)
     monkeypatch.setattr(service, "UnifiedAgent", constructor)

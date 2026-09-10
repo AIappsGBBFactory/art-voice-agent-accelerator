@@ -40,6 +40,22 @@ def test_no_pin_preserves_existing_local_credential_behavior(monkeypatch):
     assert fallback.call_args.kwargs["exclude_managed_identity_credential"] is True
 
 
+def test_staging_oidc_runner_uses_cli_when_environment_credentials_are_incomplete(monkeypatch):
+    local_environment(monkeypatch)
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    monkeypatch.setenv("AZURE_CLIENT_ID", "oidc-application")
+    monkeypatch.delenv("AZURE_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("AZURE_AUTH_SUBSCRIPTION")
+    fallback = Mock()
+    managed = Mock()
+    monkeypatch.setattr(azure_auth, "DefaultAzureCredential", fallback)
+    monkeypatch.setattr(azure_auth, "ManagedIdentityCredential", managed)
+    assert azure_auth._create_credential_internal() is fallback.return_value
+    assert fallback.call_args.kwargs["exclude_environment_credential"] is True
+    assert fallback.call_args.kwargs["exclude_cli_credential"] is False
+    managed.assert_not_called()
+
+
 def test_hosted_managed_identity_ignores_local_account_pin(monkeypatch):
     local_environment(monkeypatch)
     monkeypatch.setenv("IDENTITY_ENDPOINT", "http://managed-identity")

@@ -6,7 +6,14 @@ import json
 from typing import Annotated, Any, get_args, get_origin
 
 from apps.artagent.backend.api.v1.schemas.agent_builder import DynamicAgentConfig
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from apps.artagent.backend.registries.definitions import definition_fields
+from apps.artagent.backend.registries.scenariostore.loader import (
+    AgentOverride,
+    GenericHandoffConfig,
+    HandoffConfig,
+    ScenarioConfig,
+)
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, create_model, model_validator
 
 MAX_DRAFT_BYTES = 96_000
 MAX_DRAFT_AGENTS = 8
@@ -14,15 +21,14 @@ MAX_DRAFT_HANDOFFS = 32
 MAX_DRAFT_TOOLS = 64
 
 
-class HandoffConfigSchema(BaseModel):
+class HandoffConfigSchema(
+    create_model("HandoffDefinitionSchema", __base__=BaseModel, **definition_fields(HandoffConfig))
+):
     """A directed scenario handoff edge."""
 
     from_agent: str
     to_agent: str
     tool: str
-    type: str = "announced"
-    share_context: bool = True
-    handoff_condition: str = ""
     context_vars: dict[str, Any] = Field(
         default_factory=dict,
         description="Optional business context only. Prefer {}. Never repeat routing fields "
@@ -30,32 +36,40 @@ class HandoffConfigSchema(BaseModel):
     )
 
 
-class AgentOverrideSchema(BaseModel):
+class AgentOverrideSchema(
+    create_model(
+        "AgentOverrideDefinitionSchema", __base__=BaseModel, **definition_fields(AgentOverride)
+    )
+):
     """Overrides applied to agents by the existing scenario runtime."""
 
-    greeting: str | None = None
-    return_greeting: str | None = None
-    description: str | None = None
-    template_vars: dict[str, Any] = Field(default_factory=dict)
-    voice_name: str | None = None
-    voice_rate: str | None = None
+
+class GenericHandoffConfigSchema(
+    create_model(
+        "GenericHandoffDefinitionSchema",
+        __base__=BaseModel,
+        **definition_fields(GenericHandoffConfig),
+    )
+):
+    """Configuration for the shared handoff_to_agent tool."""
 
 
-class DynamicScenarioConfig(BaseModel):
+class DynamicScenarioConfig(
+    create_model(
+        "ScenarioDefinitionSchema", __base__=BaseModel, **definition_fields(ScenarioConfig)
+    )
+):
     """Configuration for creating a dynamic scenario."""
 
     name: str = Field(..., min_length=1, max_length=64, description="Scenario display name")
-    description: str = Field(default="", max_length=512)
-    icon: str = Field(default="🎭", max_length=8)
+    description: str = Field(default=ScenarioConfig.description, max_length=512)
+    icon: str = Field(default=ScenarioConfig.icon, max_length=8)
     agents: list[str] = Field(
         default_factory=list, description="Agent names (empty means all for legacy Builder)"
     )
-    start_agent: str | None = None
-    handoff_type: str = "announced"
     handoffs: list[HandoffConfigSchema] = Field(default_factory=list)
     agent_defaults: AgentOverrideSchema | None = None
-    global_template_vars: dict[str, Any] = Field(default_factory=dict)
-    tools: list[str] = Field(default_factory=list)
+    generic_handoff: GenericHandoffConfigSchema | None = None
 
 
 class SessionScenarioResponse(BaseModel):

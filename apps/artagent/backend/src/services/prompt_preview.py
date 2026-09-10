@@ -29,6 +29,7 @@ from apps.artagent.backend.src.orchestration.naming import (
 )
 from apps.artagent.backend.src.orchestration.prompt_context import (
     cascade_prompt_context,
+    cascade_runtime_prompt_context,
     refresh_voicelive_prompt_context,
     voicelive_prompt_context,
 )
@@ -303,7 +304,10 @@ def _runtime_context(
     memo = snapshot.memo
     if body.mode == "cascade":
         active = memo.get_value_from_corememory("active_agent")
-        return cascade_prompt_context(memo, agent_name=active if type(active) is str else None)
+        metadata = cascade_prompt_context(memo, agent_name=active if type(active) is str else None)
+        return cascade_runtime_prompt_context(
+            metadata, session_vars=getattr(live, "_session_vars", None)
+        )
     if live is not None:
         history = list(live._user_message_history)
         _check_history(history)
@@ -541,4 +545,8 @@ async def preview_prompt(
         from apps.artagent.backend.voice.voicelive.orchestrator import get_voicelive_orchestrator
 
         live = get_voicelive_orchestrator(session_id)
+    else:
+        from apps.artagent.backend.src.orchestration.unified import _adapters
+
+        live = _adapters.get(session_id)
     return _render_snapshot(body, snapshot, saved_agent=saved_agent, app_state=app_state, live=live)

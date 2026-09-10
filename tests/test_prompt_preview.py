@@ -377,6 +377,10 @@ class ReadOnlyRedis:
         self.read_keys.append(key)
         return copy.deepcopy(self.data.get(key, {}))
 
+    async def get_session_data_async(self, key: str, *, raise_on_failure: bool = False) -> dict:
+        assert raise_on_failure is True
+        return self.get_session_data(key)
+
     def __getattr__(self, name: str):
         raise AssertionError(f"Preview must not use Redis operation {name}")
 

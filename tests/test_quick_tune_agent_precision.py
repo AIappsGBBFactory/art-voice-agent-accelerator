@@ -63,11 +63,16 @@ def agent(name: str, created_at: int) -> UnifiedAgent:
 def env(monkeypatch):
     first, second = agent("First", 100), agent("Second", 200)
     monkeypatch.setattr(sa, "_session_agents", {SID: {"First": first, "Second": second}})
+    monkeypatch.setattr(sa, "_active_session_agents", {SID: "First"})
     monkeypatch.setattr(sa, "_session_load_times", {})
+    monkeypatch.setattr(sa, "_persisted_agent_data", {})
+    monkeypatch.setattr(sa, "_pending_agent_edits", {})
+    monkeypatch.setattr(sa, "_pending_agent_activations", {})
     monkeypatch.setattr(sa, "_redis_manager", None)
     monkeypatch.setattr(sa, "_adapter_update_callback", Mock())
     orch = SimpleNamespace(
         active="First",
+        memo_manager=None,
         agents={"First": first, "Second": second},
         conn=object(),
         apply_live_session_settings=AsyncMock(return_value=True),

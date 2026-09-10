@@ -106,7 +106,7 @@ const AgentDetailsPanel = ({
     [recentTools],
   );
   const recentMessages = useMemo(
-    () => (messages || []).slice(-12).reverse(),
+    () => (messages || []).filter((msg) => !msg?.isTool).slice(-12).reverse(),
     [messages],
   );
 

@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from apps.artagent.backend.registries.definitions import decode_definition
+from apps.artagent.backend.src.orchestration.naming import find_agent_by_name
 from utils.ml_logging import get_logger
 
 logger = get_logger("agents.scenarios.loader")
@@ -74,15 +76,17 @@ class HandoffConfig:
         if not isinstance(context_vars, dict):
             context_vars = {}
 
-        return cls(
-            from_agent=data.get("from", data.get("from_agent", "")),
-            to_agent=data.get("to", data.get("to_agent", "")),
-            tool=data.get("tool", data.get("tool_name", "")),
-            type=handoff_type,
-            share_context=data.get("share_context", True),
-            handoff_condition=data.get("handoff_condition", data.get("condition", "")),
-            context_vars=context_vars,
-        )
+        normalized = dict(data)
+        for alias, name in (
+            ("from", "from_agent"),
+            ("to", "to_agent"),
+            ("tool_name", "tool"),
+            ("condition", "handoff_condition"),
+        ):
+            if name not in normalized and alias in data:
+                normalized[name] = data[alias]
+        normalized.update(type=handoff_type, context_vars=context_vars)
+        return decode_definition(cls, normalized)
 
 
 @dataclass
@@ -107,25 +111,19 @@ class AgentOverride:
 
         Unknown top-level keys are treated as template vars for convenience.
         """
-        known_keys = {
-            "greeting",
-            "return_greeting",
-            "description",
-            "template_vars",
-            "voice",
-        }
+        from dataclasses import fields
+
+        known_keys = {field.name for field in fields(cls)} | {"voice"}
 
         template_vars = dict(data.get("template_vars") or {})
         extra_template_vars = {k: v for k, v in data.items() if k not in known_keys}
         template_vars.update(extra_template_vars)
-        return cls(
-            greeting=data.get("greeting"),
-            return_greeting=data.get("return_greeting"),
-            description=data.get("description"),
-            template_vars=template_vars,
-            voice_name=data.get("voice", {}).get("name"),
-            voice_rate=data.get("voice", {}).get("rate"),
-        )
+        normalized = {**data, "template_vars": template_vars}
+        voice = data.get("voice") or {}
+        for alias, name in (("name", "voice_name"), ("rate", "voice_rate")):
+            if name not in normalized and alias in voice:
+                normalized[name] = voice[alias]
+        return decode_definition(cls, normalized)
 
 
 @dataclass
@@ -154,16 +152,7 @@ class GenericHandoffConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> GenericHandoffConfig:
         """Create from dictionary."""
-        if not data:
-            return cls()
-
-        return cls(
-            enabled=data.get("enabled", False),
-            allowed_targets=data.get("allowed_targets", []),
-            require_client_id=data.get("require_client_id", False),
-            default_type=data.get("default_type", "announced"),
-            share_context=data.get("share_context", True),
-        )
+        return decode_definition(cls, data or {})
 
     def is_target_allowed(self, target_agent: str, scenario_agents: list[str]) -> bool:
         """Check if a target agent is allowed for generic handoffs.
@@ -226,8 +215,8 @@ class ScenarioConfig:
     def from_dict(cls, name: str, data: dict[str, Any]) -> ScenarioConfig:
         """Create from dictionary."""
         agent_defaults = None
-        if "agent_defaults" in data:
-            agent_defaults = AgentOverride.from_dict(data.get("agent_defaults") or {})
+        if data.get("agent_defaults") is not None:
+            agent_defaults = AgentOverride.from_dict(data["agent_defaults"])
 
         # Parse handoff configurations as list of edges
         handoffs: list[HandoffConfig] = []
@@ -235,26 +224,24 @@ class ScenarioConfig:
         if isinstance(raw_handoffs, list):
             # New format: list of {from, to, tool, type, share_context}
             for h in raw_handoffs:
-                if isinstance(h, dict) and h.get("from") and h.get("to"):
+                if isinstance(h, dict):
                     handoffs.append(HandoffConfig.from_dict(h))
 
         # Parse generic handoff configuration
-        generic_handoff = GenericHandoffConfig.from_dict(
-            data.get("generic_handoff")
-        )
+        generic_handoff = GenericHandoffConfig.from_dict(data.get("generic_handoff"))
 
-        return cls(
-            name=name,
-            description=data.get("description", ""),
-            icon=data.get("icon", "🎭"),
-            agents=data.get("agents", []),
-            agent_defaults=agent_defaults,
-            global_template_vars=data.get("template_vars", {}),
-            tools=data.get("tools", []),
-            start_agent=data.get("start_agent"),
-            handoff_type=data.get("handoff_type", "announced"),
-            handoffs=handoffs,
-            generic_handoff=generic_handoff,
+        return decode_definition(
+            cls,
+            {
+                **data,
+                "name": name,
+                "agent_defaults": agent_defaults,
+                "global_template_vars": data.get(
+                    "global_template_vars", data.get("template_vars", {})
+                ),
+                "handoffs": handoffs,
+                "generic_handoff": generic_handoff,
+            },
         )
 
     def get_handoff_config(
@@ -435,7 +422,9 @@ class ScenarioConfig:
                 condition = f"When the customer's needs are better served by {h.to_agent}."
 
             # Always reference the generic handoff_to_agent tool
-            lines.append(f"- **{h.to_agent}** - call `handoff_to_agent(target_agent=\"{h.to_agent}\", reason=\"...\")`")
+            lines.append(
+                f'- **{h.to_agent}** - call `handoff_to_agent(target_agent="{h.to_agent}", reason="...")`'
+            )
             # Indent the condition text
             for line in condition.split("\n"):
                 if line.strip():
@@ -502,7 +491,13 @@ def load_scenario(name: str) -> ScenarioConfig | None:
         ScenarioConfig or None if not found
     """
     _discover_scenarios()
-    return _SCENARIOS.get(name)
+    scenario = _SCENARIOS.get(name)
+    if scenario:
+        return scenario
+    for scenario_name, scenario in _SCENARIOS.items():
+        if scenario_name.lower() == name.lower():
+            return scenario
+    return None
 
 
 def list_scenarios() -> list[str]:
@@ -539,7 +534,13 @@ def get_scenario_agents(
     # Filter agents if scenario specifies a subset
     if scenario.agents:
         requested = set(scenario.agents)
-        agents = {k: v for k, v in base_agents.items() if k in requested}
+        agents = {}
+        missing = set(requested)
+        for requested_name in requested:
+            actual_key, agent = find_agent_by_name(base_agents, requested_name)
+            if actual_key is not None:
+                agents[actual_key] = copy.deepcopy(agent)
+                missing.discard(requested_name)
 
         # Warn if requested agents are missing and fall back to base registry
         if not agents:
@@ -548,9 +549,8 @@ def get_scenario_agents(
                 scenario_name,
                 extra={"requested_agents": sorted(requested)},
             )
-            agents = dict(base_agents)
+            agents = copy.deepcopy(base_agents)
         else:
-            missing = requested - set(agents.keys())
             if missing:
                 logger.warning(
                     "Scenario '%s' missing agents not found in registry: %s",
@@ -558,7 +558,7 @@ def get_scenario_agents(
                     sorted(missing),
                 )
     else:
-        agents = dict(base_agents)
+        agents = copy.deepcopy(base_agents)
 
     return apply_scenario_overrides(scenario, agents)
 

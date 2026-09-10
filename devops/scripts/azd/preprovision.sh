@@ -304,6 +304,7 @@ generate_provider_conf_json() {
 # This file is regenerated each time to stay in sync with the active azd environment
 generate_tfvars_json() {
     local tfvars_json="$SCRIPT_DIR/../../../infra/terraform/main.tfvars.json"
+    local params_dir="$SCRIPT_DIR/../../../infra/terraform/params"
     local deployer
     deployer=$(get_deployer_identity)
     
@@ -315,14 +316,30 @@ generate_tfvars_json() {
         principal_id=$(az ad signed-in-user show --query id -o tsv 2>/dev/null || true)
     fi
     
+    # Layer the checked-in params files underneath the azd-derived values so
+    # customizations there (model_deployments, openai_location, sku overrides)
+    # actually reach Terraform. Later layers win; azd-derived values always win.
+    local base='{}'
+    local candidate
+    for candidate in "$params_dir/main.tfvars.default.json" "$params_dir/main.tfvars.${AZURE_ENV_NAME}.json"; do
+        [[ -f "$candidate" ]] || continue
+        if ! jq -e 'type == "object"' "$candidate" >/dev/null 2>&1; then
+            warn "Ignoring malformed tfvars params file: $(basename "$candidate")"
+            continue
+        fi
+        base=$(jq -s '.[0] * .[1]' <(printf '%s' "$base") "$candidate")
+        log "   merged params: $(basename "$candidate")"
+    done
+    
     # Build JSON using jq for proper escaping
     local json_content
     json_content=$(jq -n \
+        --argjson base "$base" \
         --arg env "$AZURE_ENV_NAME" \
         --arg loc "$AZURE_LOCATION" \
         --arg deployer "$deployer" \
         --arg principal "${principal_id:-}" \
-        '{
+        '$base + {
             environment_name: $env,
             location: $loc,
             deployed_by: $deployer

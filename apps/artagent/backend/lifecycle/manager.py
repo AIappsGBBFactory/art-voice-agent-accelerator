@@ -131,7 +131,7 @@ class LifecycleManager:
 
         return results
 
-    def start_deferred_startup(self, app) -> None:
+    def start_deferred_startup(self, app, parent_context=None) -> None:
         """
         Start deferred startup tasks in the background.
 
@@ -140,6 +140,9 @@ class LifecycleManager:
 
         Args:
             app: FastAPI application instance for storing deferred status
+            parent_context: Optional OpenTelemetry context (the app startup span)
+                to parent the deferred work under, so its logs/spans share the
+                startup operation id instead of the null 0000... trace.
         """
         if not self.deferred_steps:
             app.state.deferred_startup_complete = True
@@ -147,65 +150,71 @@ class LifecycleManager:
             return
 
         async def run_deferred():
-            results = {}
-            deferred_names = [s.name for s in self.deferred_steps]
-            total = len(self.deferred_steps)
-            logger.info(
-                "Warmup  ▸ %d background task(s) (deferred, non-blocking): %s",
-                total,
-                ", ".join(deferred_names),
-            )
-
-            for i, step in enumerate(self.deferred_steps, start=1):
-                step_start = time.perf_counter()
-
-                with self._tracer.start_as_current_span(f"startup.deferred.{step.name}") as span:
-                    try:
-                        await step.startup()
-                        step.success = True
-                        step.duration = time.perf_counter() - step_start
-                        span.set_attribute("duration_sec", step.duration)
-                        results[step.name] = {"success": True, "duration": round(step.duration, 2)}
-                        logger.info(
-                            "  ✓ %d/%d  %-10s %5.2fs", i, total, step.name, step.duration
-                        )
-                    except Exception as exc:
-                        step.error = str(exc)
-                        step.success = False
-                        step.duration = time.perf_counter() - step_start
-                        span.record_exception(exc)
-                        span.set_status(Status(StatusCode.ERROR, str(exc)))
-                        results[step.name] = {"success": False, "error": str(exc), "duration": round(step.duration, 2)}
-                        logger.warning(
-                            "  ⚠ %d/%d  %-10s failed: %s (non-blocking)", i, total, step.name, exc
-                        )
-
-                # Track for shutdown even if failed
-                self.executed_steps.append(step)
-
-            app.state.deferred_startup_complete = True
-            app.state.deferred_startup_results = results
-            total_deferred = sum(r.get("duration", 0) for r in results.values())
-            success_count = sum(1 for r in results.values() if r.get("success"))
-            boot_elapsed = (
-                time.perf_counter() - self._boot_ts if self._boot_ts else total_deferred
-            )
-            if success_count == len(results):
+            # Root span for the deferred phase so all its logs/spans carry a
+            # valid (non-zero) operation id. Parented to the app startup span
+            # when provided, so blocking + deferred startup form one operation.
+            with self._tracer.start_as_current_span(
+                "startup.deferred", context=parent_context
+            ):
+                results = {}
+                deferred_names = [s.name for s in self.deferred_steps]
+                total = len(self.deferred_steps)
                 logger.info(
-                    "Warmup  ✓ %d/%d ready in %.1fs · fully warmed %.1fs after boot",
-                    success_count,
-                    len(results),
-                    total_deferred,
-                    boot_elapsed,
+                    "Warmup  ▸ %d background task(s) (deferred, non-blocking): %s",
+                    total,
+                    ", ".join(deferred_names),
                 )
-            else:
-                logger.warning(
-                    "Warmup  ⚠ %d/%d ready in %.1fs · %d degraded, on-demand fallback active",
-                    success_count,
-                    len(results),
-                    total_deferred,
-                    len(results) - success_count,
+
+                for i, step in enumerate(self.deferred_steps, start=1):
+                    step_start = time.perf_counter()
+
+                    with self._tracer.start_as_current_span(f"startup.deferred.{step.name}") as span:
+                        try:
+                            await step.startup()
+                            step.success = True
+                            step.duration = time.perf_counter() - step_start
+                            span.set_attribute("duration_sec", step.duration)
+                            results[step.name] = {"success": True, "duration": round(step.duration, 2)}
+                            logger.info(
+                                "  ✓ %d/%d  %-10s %5.2fs", i, total, step.name, step.duration
+                            )
+                        except Exception as exc:
+                            step.error = str(exc)
+                            step.success = False
+                            step.duration = time.perf_counter() - step_start
+                            span.record_exception(exc)
+                            span.set_status(Status(StatusCode.ERROR, str(exc)))
+                            results[step.name] = {"success": False, "error": str(exc), "duration": round(step.duration, 2)}
+                            logger.warning(
+                                "  ⚠ %d/%d  %-10s failed: %s (non-blocking)", i, total, step.name, exc
+                            )
+
+                    # Track for shutdown even if failed
+                    self.executed_steps.append(step)
+
+                app.state.deferred_startup_complete = True
+                app.state.deferred_startup_results = results
+                total_deferred = sum(r.get("duration", 0) for r in results.values())
+                success_count = sum(1 for r in results.values() if r.get("success"))
+                boot_elapsed = (
+                    time.perf_counter() - self._boot_ts if self._boot_ts else total_deferred
                 )
+                if success_count == len(results):
+                    logger.info(
+                        "Warmup  ✓ %d/%d ready in %.1fs · fully warmed %.1fs after boot",
+                        success_count,
+                        len(results),
+                        total_deferred,
+                        boot_elapsed,
+                    )
+                else:
+                    logger.warning(
+                        "Warmup  ⚠ %d/%d ready in %.1fs · %d degraded, on-demand fallback active",
+                        success_count,
+                        len(results),
+                        total_deferred,
+                        len(results) - success_count,
+                    )
 
         # Initialize state for readiness checks
         app.state.deferred_startup_complete = False

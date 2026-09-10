@@ -18,13 +18,14 @@ Endpoint:
     WS  /api/v1/genesys/stream  → AudioHook v2 WebSocket
 """
 
+import asyncio
 import uuid
 
+from apps.artagent.backend.voice.genesys.handler import GenesysVoiceLiveHandler
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi.websockets import WebSocketState
 from opentelemetry import trace
 from utils.ml_logging import get_logger
-
-from apps.artagent.backend.voice.genesys.handler import GenesysVoiceLiveHandler
 
 logger = get_logger("api.v1.endpoints.genesys")
 tracer = trace.get_tracer(__name__)
@@ -77,5 +78,48 @@ async def genesys_audiohook_stream(websocket: WebSocket):
     except Exception:
         logger.exception("[Genesys] WebSocket error | session=%s", session_id)
     finally:
-        await handler.stop()
+        await _cleanup_genesys_websocket(websocket, handler)
         logger.info("[Genesys] WebSocket closed | session=%s", session_id)
+
+
+async def _cleanup_genesys_websocket(
+    websocket: WebSocket, handler: GenesysVoiceLiveHandler
+) -> None:
+    """Keep socket cleanup independent of native stop and caller cancellation."""
+    task = getattr(websocket.state, "_genesys_cleanup_task", None)
+    if task is None:
+
+        async def cleanup() -> None:
+            errors: list[Exception] = []
+            registered_context = getattr(websocket.state, "session_context", None)
+            try:
+                await handler.stop()
+            except Exception as exc:
+                errors.append(exc)
+            if registered_context is not None:
+                try:
+                    await websocket.app.state.session_manager.remove_session(
+                        registered_context.session_id, expected_context=registered_context
+                    )
+                except Exception as exc:
+                    errors.append(exc)
+            if (
+                websocket.client_state == WebSocketState.CONNECTED
+                and websocket.application_state == WebSocketState.CONNECTED
+            ):
+                try:
+                    await websocket.close()
+                except Exception as exc:
+                    errors.append(exc)
+            if errors:
+                raise ExceptionGroup("Genesys endpoint cleanup failed", errors)
+
+        task = asyncio.create_task(cleanup(), name=f"genesys-endpoint-close-{handler.session_id}")
+        websocket.state._genesys_cleanup_task = task
+
+        def observe_cleanup(completed: asyncio.Task) -> None:
+            if not completed.cancelled() and completed.exception() is not None:
+                logger.error("[Genesys] Endpoint cleanup failed: %s", completed.exception())
+
+        task.add_done_callback(observe_cleanup)
+    await asyncio.shield(task)

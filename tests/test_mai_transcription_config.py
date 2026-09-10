@@ -21,10 +21,14 @@ from apps.artagent.backend.registries.agentstore.base import (
     UnifiedAgent,
     VoiceConfig,
     VoiceLiveBYOMConfig,
+    byom_profile_model_conflict,
+    is_managed_voicelive_model,
     validate_voicelive_transcription,
 )
 from apps.artagent.backend.src.orchestration import session_agents
+from apps.artagent.backend.src.orchestration.session_memory import prime_session_definitions
 from apps.artagent.backend.voice.voicelive import handler as vl_handler
+from apps.artagent.backend.voice.voicelive import session as voicelive_session
 from fastapi.websockets import WebSocketState
 from src.redis.manager import merge_session_snapshot
 
@@ -165,6 +169,9 @@ async def test_mai_survives_actual_memo_redis_encoding(monkeypatch: pytest.Monke
 
     redis = SimpleNamespace(
         get_session_data=lambda key: dict(storage.get(key, {})),
+        get_session_data_async=AsyncMock(
+            side_effect=lambda key, **kwargs: dict(storage.get(key, {}))
+        ),
         store_session_data_async=store,
     )
     monkeypatch.setattr(session_agents, "_redis_manager", redis)
@@ -178,6 +185,7 @@ async def test_mai_survives_actual_memo_redis_encoding(monkeypatch: pytest.Monke
     session_agents._session_load_times.pop(session_id, None)
     session_agents._persisted_agent_data.pop(session_id, None)
     try:
+        await prime_session_definitions(session_id)
         restored = session_agents.get_session_agent(session_id, "Persisted")
         assert restored.speech.transcription_model == "mai-transcribe"
         assert restored is not agent
@@ -186,16 +194,34 @@ async def test_mai_survives_actual_memo_redis_encoding(monkeypatch: pytest.Monke
         session_agents._session_load_times.pop(session_id, None)
         session_agents._persisted_agent_data.pop(session_id, None)
         session_agents._pending_agent_edits.pop(session_id, None)
+        session_agents._active_session_agents.pop(session_id, None)
+        session_agents._pending_agent_activations.pop(session_id, None)
 
 
-@pytest.mark.parametrize("model", ["gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-5"])
+@pytest.mark.parametrize(
+    "model",
+    ["gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-5", "gpt-5.1-chat", "gpt-5.6-terra", "phi4-mini"],
+)
 def test_managed_text_hosts_allow_mai_without_mutating_settings(model: str) -> None:
     stored = {"model": "mai-transcribe-2", "language": "es"}
+    assert is_managed_voicelive_model(model)
     assert validate_voicelive_transcription(stored, model_name=model) == {
         "model": "mai-transcribe",
         "language": "es",
     }
     assert stored["model"] == "mai-transcribe-2"
+
+
+@pytest.mark.parametrize("model", ["gpt-5-chat", "o1", "o3", "o3-mini"])
+def test_byom_only_text_models_are_not_misclassified_as_managed_mai_hosts(model: str) -> None:
+    assert not is_managed_voicelive_model(model)
+    with pytest.raises(ValueError, match="non-multimodal managed text model"):
+        validate_voicelive_transcription({"model": "mai-transcribe"}, model_name=model)
+    assert validate_voicelive_transcription(
+        {"model": "mai-transcribe"},
+        model_name=model,
+        byom_profile="byom-azure-openai-chat-completion",
+    ) == {"model": "mai-transcribe"}
 
 
 @pytest.mark.parametrize(
@@ -225,6 +251,7 @@ def test_explicit_byom_text_profile_wins_over_deployment_name(profile: str) -> N
         model_name="my-realtime-named-deployment",
         byom_profile=profile,
     ) == {"model": "mai-transcribe"}
+    assert byom_profile_model_conflict(profile, "my-realtime-named-deployment") is None
 
 
 def test_byom_realtime_rejected_even_when_deployment_name_looks_textual() -> None:
@@ -270,7 +297,7 @@ async def test_mai_and_true_voice_identifier_reach_real_request_session() -> Non
         session={"input_audio_transcription_settings": {"model": "mai-transcribe-1.5"}},
     )
     connection = SimpleNamespace(session=SimpleNamespace(update=AsyncMock()))
-    await agent.apply_voicelive_session(connection)
+    await voicelive_session.apply_voicelive_session(agent, connection)
     payload = connection.session.update.call_args.kwargs["session"].as_dict()
     assert payload["input_audio_transcription"] == {"model": "mai-transcribe"}
     assert payload["voice"]["name"] == "en-US-Harper:MAI-Voice-2-Flash"
@@ -287,7 +314,9 @@ async def test_handoff_validates_actual_connection_not_target_agent_model() -> N
     )
     connection = SimpleNamespace(session=SimpleNamespace(update=AsyncMock()))
     with pytest.raises(ValueError, match="Native realtime/audio"):
-        await agent.apply_voicelive_session(connection, connection_model="gpt-realtime")
+        await voicelive_session.apply_voicelive_session(
+            agent, connection, connection_model="gpt-realtime"
+        )
     connection.session.update.assert_not_called()
 
 
@@ -304,7 +333,7 @@ async def test_only_mai_warmup_opts_into_new_api_version(
         voicelive_model=ModelConfig(deployment_id="gpt-4.1"),
         session={"input_audio_transcription_settings": {"model": transcription}},
     )
-    agent.apply_voicelive_session = AsyncMock()
+    monkeypatch.setattr(voicelive_session, "apply_voicelive_session", AsyncMock())
     monkeypatch.setattr(
         vl_handler,
         "_resolve_voicelive_warmup_config",
@@ -383,7 +412,12 @@ def _voicelive_startup(monkeypatch, agent):
     monkeypatch.setattr(vl_handler.VoiceLiveSDKHandler, "_build_credential", credential)
     monkeypatch.setattr(vl_handler, "register_voicelive_orchestrator", Mock())
     monkeypatch.setattr(vl_handler, "unregister_voicelive_orchestrator", Mock())
-    orchestrator = SimpleNamespace(start=AsyncMock(), cleanup=Mock())
+    orchestrator = SimpleNamespace(
+        start=AsyncMock(),
+        cleanup=Mock(),
+        cancel_and_join_tasks=AsyncMock(),
+        _sync_to_memo_manager=Mock(),
+    )
     monkeypatch.setattr(vl_handler, "LiveOrchestrator", Mock(return_value=orchestrator))
     handler = vl_handler.VoiceLiveSDKHandler(
         websocket=websocket, session_id="mai-voicelive-startup"

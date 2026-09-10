@@ -56,11 +56,18 @@ builder and the event normalizer run as real production code.
 
 from __future__ import annotations
 
+import asyncio
 import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
+import httpx
 import pytest
-from apps.artagent.backend.registries.agentstore.base import ModelConfig
+from apps.artagent.backend.registries.agentstore.base import ModelConfig, UnifiedAgent
+from apps.artagent.backend.voice.shared.base import OrchestratorContext
+from apps.artagent.backend.voice.shared.config_resolver import OrchestratorConfigResult
 from apps.artagent.backend.voice.speech_cascade.orchestrator import (
+    CascadeConfig,
     CascadeOrchestratorAdapter,
     UnsupportedModelOptionError,
     _convert_messages_to_responses_input,
@@ -71,6 +78,7 @@ from apps.artagent.backend.voice.speech_cascade.orchestrator import (
     _resolve_endpoint_choice,
     _validate_model_config_capabilities,
 )
+from openai import AsyncAzureOpenAI
 from openai.types.responses import (
     ResponseCompletedEvent,
     ResponseFunctionCallArgumentsDeltaEvent,
@@ -341,7 +349,13 @@ class TestUnsupportedOptionRejection:
         details = json.loads(adapter._extract_error_details(error))
 
         assert details["code"] == "UnsupportedModelOption"
-        assert details["unsupported_options"] == ["min_p", "typical_p", "include_reasoning"]
+        assert details["metadata"]["unsupported_options"] == [
+            "min_p",
+            "typical_p",
+            "include_reasoning",
+        ]
+        assert details["source"] == "config"
+        assert details["fatal"] is True
         assert "min_p" in details["message"]
 
 
@@ -816,3 +830,188 @@ def test_responses_converts_chat_json_schema_format():
         "strict": True,
         "schema": schema,
     }
+
+
+def _async_adapter(model_config, client):
+    agent = UnifiedAgent(name="RequestAgent", cascade_model=model_config)
+    adapter = CascadeOrchestratorAdapter(
+        config=CascadeConfig(start_agent=agent.name, session_id="request-binding"),
+        agents={agent.name: agent},
+        async_client=client,
+    )
+    adapter._cached_orchestrator_config = OrchestratorConfigResult(agents=adapter.agents)
+    return adapter
+
+
+class _SSEBody(httpx.AsyncByteStream):
+    def __init__(self, events):
+        self.events = events
+        self.closed = False
+
+    async def __aiter__(self):
+        for event in self.events:
+            yield f"data: {json.dumps(event)}\n\n".encode()
+        yield b"data: [DONE]\n\n"
+
+    async def aclose(self):
+        self.closed = True
+
+
+def _wire_events(endpoint):
+    if endpoint == "responses":
+        return [
+            {
+                "type": "response.output_text.delta",
+                "delta": "A response.",
+                "item_id": "msg_1",
+                "output_index": 0,
+                "content_index": 0,
+                "sequence_number": 1,
+                "logprobs": [],
+            },
+            {
+                "type": "response.completed",
+                "sequence_number": 2,
+                "response": {"usage": {"input_tokens": 42, "output_tokens": 17}},
+            },
+        ]
+    return [
+        {"choices": [{"delta": {"content": "A response."}}]},
+        {"choices": [], "usage": {"prompt_tokens": 42, "completion_tokens": 17}},
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", ["chat", "responses"])
+async def test_actual_async_sdk_endpoint_version_usage_and_stream_ownership(endpoint):
+    requests = []
+    bodies = []
+
+    async def respond(request):
+        requests.append(request)
+        body = _SSEBody(_wire_events(endpoint))
+        bodies.append(body)
+        return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=body)
+
+    async with AsyncAzureOpenAI(
+        azure_endpoint="https://offline.openai.azure.com",
+        api_key="offline-test-key",
+        api_version="2025-01-01-preview",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+    ) as client:
+        model = _model_config(
+            endpoint_preference=endpoint,
+            api_version="2026-04-01-preview",
+            verbosity=2,
+            metadata={"suite": "runtime-binding"},
+        )
+        adapter = _async_adapter(model, client)
+        tts = AsyncMock()
+        text, tools = await adapter._process_llm(
+            [{"role": "system", "content": "Be concise."}, {"role": "user", "content": "Hello"}],
+            [],
+            tts,
+        )
+        assert text == "A response." and tools == []
+        assert adapter._metrics.input_tokens == 42
+        assert adapter._metrics.output_tokens == 17
+        tts.assert_awaited_once_with("A response.", display_text="A response.")
+        assert bodies[0].closed
+        assert adapter.async_client is client and not client.is_closed()
+        assert requests[0].url.params["api-version"] == "2026-04-01-preview"
+        payload = json.loads(requests[0].content)
+        assert payload["metadata"] == {"suite": "runtime-binding"}
+        if endpoint == "responses":
+            assert requests[0].url.path.endswith("/responses")
+            assert payload["instructions"] == "Be concise."
+            assert payload["text"]["verbosity"] == "high"
+            assert "messages" not in payload
+        else:
+            assert requests[0].url.path.endswith("/chat/completions")
+            assert payload["verbosity"] == "high"
+            assert "input" not in payload
+
+        model.api_version = "v1"
+        await adapter._process_llm([{"role": "user", "content": "Next turn"}], [])
+        assert requests[1].url.params["api-version"] == "2025-01-01-preview"
+        assert all(body.closed for body in bodies)
+        assert not client.is_closed()
+
+
+@pytest.mark.asyncio
+async def test_responses_stream_cancel_joins_raw_async_provider_without_fallback():
+    entered = asyncio.Event()
+    stopped = asyncio.Event()
+
+    class BlockedResponses:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            entered.set()
+            await asyncio.Event().wait()
+
+        async def close(self):
+            stopped.set()
+
+    client = SimpleNamespace(
+        responses=SimpleNamespace(create=AsyncMock(return_value=BlockedResponses())),
+        chat=SimpleNamespace(completions=SimpleNamespace(create=AsyncMock())),
+    )
+    adapter = _async_adapter(_model_config(endpoint_preference="responses"), client)
+    turn = asyncio.create_task(
+        adapter.process_turn(OrchestratorContext(session_id="request-binding", user_text="Hello"))
+    )
+    await asyncio.wait_for(entered.wait(), 1)
+    await asyncio.wait_for(adapter.cancel_current(), 1)
+    assert turn.cancelled() and stopped.is_set()
+    client.chat.completions.create.assert_not_called()
+    assert adapter._turn_task is None
+    assert not any(task.get_name() == "cascade-llm-stream" for task in asyncio.all_tasks())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event_type", ["error", "response.failed", "response.incomplete"])
+async def test_responses_provider_error_surfaces_through_native_turn_without_fallback(event_type):
+    from tests.test_cascade_llm_processing import AsyncStream
+
+    stream = AsyncStream(
+        [
+            SimpleNamespace(
+                type=event_type,
+                message="Service unavailable",
+                response=SimpleNamespace(error="Service unavailable"),
+            )
+        ]
+    )
+    client = SimpleNamespace(
+        responses=SimpleNamespace(create=AsyncMock(return_value=stream)),
+        chat=SimpleNamespace(completions=SimpleNamespace(create=AsyncMock())),
+    )
+    adapter = _async_adapter(_model_config(endpoint_preference="responses"), client)
+    result = await adapter.process_turn(
+        OrchestratorContext(session_id="request-binding", user_text="Hello")
+    )
+    error = json.loads(result.error)
+    assert "Service unavailable" in error["details"]
+    assert error["source"] == "llm"
+    assert stream.closed
+    client.chat.completions.create.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_unsupported_options_surface_before_either_async_endpoint_is_called():
+    client = SimpleNamespace(
+        responses=SimpleNamespace(create=AsyncMock()),
+        chat=SimpleNamespace(completions=SimpleNamespace(create=AsyncMock())),
+    )
+    adapter = _async_adapter(_model_config(endpoint_preference="responses", min_p=0.1), client)
+    result = await adapter.process_turn(
+        OrchestratorContext(session_id="request-binding", user_text="Hello")
+    )
+    error = json.loads(result.error)
+    assert error["code"] == "UnsupportedModelOption"
+    assert error["metadata"]["unsupported_options"] == ["min_p"]
+    client.responses.create.assert_not_called()
+    client.chat.completions.create.assert_not_called()

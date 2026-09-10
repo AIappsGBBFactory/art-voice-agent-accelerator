@@ -6,6 +6,7 @@ import asyncio
 import base64
 import copy
 import json
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from urllib.parse import parse_qs, urlsplit
@@ -17,6 +18,7 @@ from apps.artagent.backend.registries.agentstore.base import SpeechConfig, Unifi
 from apps.artagent.backend.voice import handler as cascade
 from apps.artagent.backend.voice.shared.config_resolver import OrchestratorConfigResult
 from apps.artagent.backend.voice.shared.context import TransportType, VoiceSessionContext
+from apps.artagent.backend.voice.shared.errors import WS_CLOSE_CODE_VOICE_ERROR, emit_voice_error
 from apps.artagent.backend.voice.speech_cascade import mai_transcriber as mai
 from apps.artagent.backend.voice.speech_cascade.handler import (
     SpeechEvent,
@@ -46,6 +48,8 @@ class FakeSocket:
         self.handshake_error: Exception | None = None
         self.upload_started = asyncio.Event()
         self.upload_gate: asyncio.Event | None = None
+        self.close_started = asyncio.Event()
+        self.close_gate: asyncio.Event | None = None
 
     async def __aenter__(self):
         self.handshake_started.set()
@@ -56,6 +60,9 @@ class FakeSocket:
         return self
 
     async def __aexit__(self, *args):
+        self.close_started.set()
+        if self.close_gate is not None:
+            await self.close_gate.wait()
         self.closed = True
 
     async def send_str(self, data: str) -> None:
@@ -303,7 +310,9 @@ async def test_partial_barge_in_guard_and_ordered_final_events(mai_input) -> Non
     assert [first.text, second.text] == ["First turn", "Second turn"]
     assert first.event_type == second.event_type == SpeechEventType.FINAL
     assert first.recognition_start_ts and first.recognition_end_perf
-    bundle.partials.assert_awaited_once_with("Hello", "", None)
+    bundle.partials.assert_awaited_once_with("Hello", "", None, "first", 1)
+    assert first.turn_id == "first" and first.sequence == 2
+    assert second.turn_id == "second" and second.sequence == 1
     bundle.barge_in.assert_awaited_once()
     assert bundle.bridge.turn_guard_active
     await bundle.provider._handle_event(
@@ -371,12 +380,12 @@ async def test_runtime_error_emits_speech_error_and_closes_input(mai_input, even
             "error": {"code": "unsupported_region", "message": "MAI is unavailable in this region"},
         }
     )
-    error = await asyncio.wait_for(bundle.queue.get(), 1)
     await asyncio.wait_for(bundle.provider._task, 1)
-    assert error.event_type == SpeechEventType.ERROR
-    assert "unsupported_region" in error.text
-    assert "Azure Speech was not substituted" in error.text
-    bundle.errors.assert_awaited_once_with(error.text)
+    error = bundle.errors.await_args.args[0]
+    assert "unsupported_region" in error
+    assert "Azure Speech was not substituted" in error
+    bundle.errors.assert_awaited_once_with(error)
+    assert bundle.queue.empty()
     assert bundle.http.closed and bundle.socket.closed
     with pytest.raises(mai.MAITranscriptionError, match="unsupported_region"):
         await bundle.provider.send_audio(b"\x00\x00")
@@ -566,11 +575,14 @@ async def test_invalid_pcm_and_unsupported_sdk_options_are_explicit(mai_input, m
 
 @pytest_asyncio.fixture
 async def cascade_input(mai_input, monkeypatch):
+    from apps.artagent.backend.voice.shared import errors
+
     handlers = []
     monkeypatch.setattr(cascade, "INACTIVITY_TIMEOUT_S", 0)
     monkeypatch.setattr(cascade, "send_session_envelope", AsyncMock())
     monkeypatch.setattr(cascade, "send_user_transcript", AsyncMock())
     monkeypatch.setattr(cascade, "send_user_partial_transcript", AsyncMock())
+    monkeypatch.setattr(errors, "emit_voice_error", AsyncMock())
     monkeypatch.setattr(cascade.VoiceHandler, "_derive_greeting", AsyncMock(return_value=""))
     monkeypatch.setattr(cascade.VoiceHandler, "_log_connection_banner", Mock())
 
@@ -636,7 +648,9 @@ async def cascade_input(mai_input, monkeypatch):
             transport=transport,
             scenario=scenario,
         )
-        monkeypatch.setattr(cascade.VoiceHandler, "_load_memory_manager", Mock(return_value=memo))
+        monkeypatch.setattr(
+            cascade.VoiceHandler, "_load_memory_manager", AsyncMock(return_value=memo)
+        )
         monkeypatch.setattr(
             cascade,
             "get_session_agent",
@@ -667,6 +681,7 @@ async def cascade_input(mai_input, monkeypatch):
         bundle.route = route_mock
         bundle.processed = processed
         bundle.config = config
+        bundle.error_emitter = errors.emit_voice_error
         if fail_stt:
             return bundle
         handler = await cascade.VoiceHandler.create(config, app_state)
@@ -803,7 +818,11 @@ async def test_mai_startup_failure_is_not_announced_ready_and_releases_tts(casca
     with pytest.raises(mai.MAITranscriptionError, match="not substituted"):
         await bundle.handler.start()
     labels = [call.kwargs["event_label"] for call in cascade.send_session_envelope.await_args_list]
-    assert labels == ["speech_transcription_error"]
+    assert labels == []
+    bundle.error_emitter.assert_awaited_once()
+    error = bundle.error_emitter.await_args.args[1]
+    assert error.code == "MAITranscriptionUnavailable"
+    assert error.source == "stt" and error.fatal
     bundle.websocket.close.assert_awaited_once()
     assert bundle.handler._stopped
     assert bundle.http.closed and bundle.socket.closed
@@ -816,7 +835,9 @@ async def test_mai_runtime_disconnect_stops_owner_and_releases_tts(cascade_input
     bundle = await cascade_input()
     await bundle.handler.start()
     bundle.socket.disconnect()
-    await asyncio.wait_for(bundle.provider._task, 1)
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(bundle.provider._task, 1)
+    await asyncio.wait_for(bundle.handler.stop(), 1)
     assert bundle.handler._stopped
     bundle.state.tts_pool.release_for_session.assert_awaited_once()
     bundle.state.stt_pool.release_for_session.assert_not_called()
@@ -845,3 +866,112 @@ async def test_azure_pool_startup_failure_releases_tts_with_correct_pool_api(cas
         bundle.config.session_id, bundle.tts_client
     )
     bundle.state.stt_pool.release_for_session.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_stop_retains_provider_cleanup_after_first_caller_cancels(mai_input):
+    bundle = mai_input()
+    await bundle.provider.start()
+    bundle.socket.close_gate = asyncio.Event()
+    first = asyncio.create_task(bundle.provider.stop())
+    await asyncio.wait_for(bundle.socket.close_started.wait(), 1)
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    second = asyncio.create_task(bundle.provider.stop())
+    await asyncio.sleep(0)
+    assert not second.done()
+    assert not bundle.provider._stop_task.cancelled()
+    bundle.socket.close_gate.set()
+    await asyncio.wait_for(second, 1)
+    assert bundle.socket.closed and bundle.http.closed
+    assert bundle.provider._task.done()
+    assert bundle.provider._stop_task.done()
+
+
+@pytest.mark.asyncio
+async def test_startup_failure_uses_real_shared_error_envelope(cascade_input, monkeypatch):
+    from apps.artagent.backend.src.ws_helpers import shared_ws
+    from apps.artagent.backend.voice.shared import errors
+
+    bundle = await cascade_input()
+    monkeypatch.setattr(errors, "emit_voice_error", emit_voice_error)
+    monkeypatch.setattr(shared_ws, "send_session_envelope", AsyncMock(return_value=False))
+    bundle.websocket.send_json = AsyncMock()
+    bundle.socket.ack_overrides = {"turn_detection": {"create_response": True}}
+
+    with pytest.raises(mai.MAITranscriptionError):
+        await bundle.handler.start()
+
+    envelope = bundle.websocket.send_json.await_args.args[0]
+    assert envelope["type"] == "error"
+    assert envelope["payload"]["code"] == "MAITranscriptionUnavailable"
+    assert envelope["payload"]["source"] == "stt"
+    assert envelope["payload"]["fatal"] is True
+    assert "Azure Speech was not substituted" in envelope["payload"]["message"]
+    bundle.websocket.close.assert_awaited_once_with(
+        WS_CLOSE_CODE_VOICE_ERROR, "MAI transcription unavailable"
+    )
+    bundle.state.stt_pool.acquire_for_session.assert_not_called()
+    bundle.state.tts_pool.release_for_session.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_mai_stop_timeout_withholds_owned_tts_lease_and_retains_failure(monkeypatch):
+    from tests.test_cascade_runtime_ownership import app_state
+    from tests.test_voice_handler_compat import MockWebSocket
+
+    monkeypatch.setattr(mai, "load_default_phrases_from_env", lambda: set())
+    monkeypatch.setattr(mai, "IO_TIMEOUT_S", 0.03)
+    app = app_state()
+    context = VoiceSessionContext(session_id="mai-stop-timeout")
+    context.call_connection_id = context.session_id
+    context.tts_client, context.tts_tier = await app.tts_pool.acquire_for_session(
+        context.session_id
+    )
+    websocket = MockWebSocket()
+    context._websocket = websocket
+    handler = cascade.VoiceHandler(
+        context,
+        app,
+        config=cascade.VoiceHandlerConfig(websocket=websocket, session_id=context.session_id),
+    )
+    provider = mai.MAITranscriber(
+        context,
+        speech=SpeechConfig(transcription_model="mai-transcribe"),
+        speech_queue=handler._speech_queue,
+        thread_bridge=handler._thread_bridge,
+        barge_in_handler=AsyncMock(),
+        on_error=AsyncMock(),
+    )
+    handler._mai_transcriber = provider
+    gate = asyncio.Event()
+    acknowledged = False
+
+    async def recv():
+        nonlocal acknowledged
+        if not acknowledged:
+            acknowledged = True
+            return {"type": "session.updated", "session": provider._session().as_dict()}
+        await asyncio.Event().wait()
+
+    @asynccontextmanager
+    async def connect():
+        try:
+            yield SimpleNamespace(session=SimpleNamespace(update=AsyncMock()), recv=recv)
+        finally:
+            await gate.wait()
+
+    monkeypatch.setattr(provider, "_connect", connect)
+    await provider.start()
+    try:
+        with pytest.raises(ExceptionGroup, match="could not be quiesced") as first:
+            await asyncio.wait_for(handler.stop(), 1)
+        assert not provider._task.done()
+        assert app.tts_pool.released == app.stt_pool.released == 0
+        with pytest.raises(ExceptionGroup) as repeated:
+            await handler.stop()
+        assert repeated.value is first.value
+    finally:
+        gate.set()
+        await asyncio.gather(provider._task, return_exceptions=True)

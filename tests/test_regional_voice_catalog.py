@@ -75,9 +75,43 @@ async def test_endpoint_returns_voices_outside_the_curated_list(monkeypatch, sco
     assert result.catalog_complete and result.verified_against_region
     assert result.region == "westus2"
     assert result.total == result.total_available == 3
-    assert result.voices[0].styles == ["cheerful"]
+    denise = next(voice for voice in result.voices if voice.name == "fr-FR-DeniseNeural")
+    assert denise.styles == ["cheerful"]
     assert "id" not in result.model_dump()
     assert all("id" not in voice.model_dump() for voice in result.voices)
+
+
+@pytest.mark.asyncio
+async def test_full_568_voice_snapshot_is_never_truncated_to_builder_presets(monkeypatch, scope):
+    snapshot = service.VoiceSnapshot(
+        tuple(
+            VoiceInfo(
+                name=f"fr-FR-Test{index}Neural",
+                display_name=f"Test {index}",
+                category="standard",
+                language="fr-FR",
+            )
+            for index in range(567)
+        )
+        + (
+            VoiceInfo(
+                name="fr-FR-Vivienne:DragonHDLatestNeural",
+                display_name="Vivienne",
+                category="hd",
+                language="fr-FR",
+            ),
+        ),
+        time.time(),
+    )
+    monkeypatch.setattr(
+        api,
+        "discover_voice_catalog",
+        AsyncMock(return_value=service.VoiceDiscovery(scope, snapshot)),
+    )
+    result = await api.list_available_voices()
+    assert result.catalog_complete and result.verified_against_region
+    assert result.total == result.total_available == 568
+    assert {voice.name for voice in result.voices} == {voice.name for voice in snapshot.voices}
 
 
 @pytest.mark.asyncio
@@ -175,11 +209,12 @@ async def test_failed_discovery_is_an_explicit_limited_fallback(monkeypatch, sco
 
 
 @pytest.mark.asyncio
-async def test_explicit_unverified_catalog_does_not_contact_azure(monkeypatch, scope):
+async def test_explicit_offline_presets_do_not_contact_azure(monkeypatch, scope):
     discover = AsyncMock()
     monkeypatch.setattr(api, "discover_voice_catalog", discover)
     monkeypatch.setattr(api, "speech_voice_scope", lambda: scope)
-    result = await api.list_available_voices(include_unverified=True)
+    # include_unverified now supplements the regional list, as in upstream.
+    result = await api.list_available_voices(presets_only=True)
     discover.assert_not_awaited()
     assert any(voice.category == "mai" for voice in result.voices)
     assert not result.verified_against_region

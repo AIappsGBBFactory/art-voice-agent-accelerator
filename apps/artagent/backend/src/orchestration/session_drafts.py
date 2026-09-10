@@ -17,10 +17,17 @@ from apps.artagent.backend.src.orchestration.naming import (
     SCENARIO_KEY_ALL,
     SCENARIO_KEY_CONFIG,
     agent_key,
+    find_agent_by_name,
     scenario_key,
     set_scenario_in_corememory,
 )
-from src.redis.manager import AUTHORING_FIELDS, AUTHORING_REVISION_KEY
+from apps.artagent.backend.src.orchestration.session_memory import live_memo
+from src.redis.manager import (
+    ACTIVATION_FIELDS,
+    AUTHORING_FIELDS,
+    AUTHORING_REVISION_KEY,
+    merge_session_snapshot,
+)
 from src.stateful.state_managment import MemoManager
 
 MAX_SESSION_AGENTS = 32
@@ -67,8 +74,8 @@ async def read_authoring_snapshot(
     redis_data: dict[str, str] = {}
     if redis_manager is not None:
         redis_data = await asyncio.wait_for(
-            asyncio.to_thread(
-                redis_manager.get_session_data, MemoManager.build_redis_key(session_id)
+            redis_manager.get_session_data_async(
+                MemoManager.build_redis_key(session_id), raise_on_failure=True
             ),
             timeout=5,
         )
@@ -78,12 +85,13 @@ async def read_authoring_snapshot(
             memo.corememory.from_json(redis_data["corememory"])
         if "chat_history" in redis_data:
             memo.chatHistory.from_json(redis_data["chat_history"])
+    memo._capture_activation_baseline()
 
     authoritative = AUTHORING_REVISION_KEY in memo.context
     agents = (
         {}
         if authoritative or session_agents.AGENTS_KEY_ALL in memo.context
-        else dict(session_agents._session_agents.get(session_id, {}))
+        else copy.deepcopy(session_agents._session_agents.get(session_id, {}))
     )
     stored_agents = memo.get_value_from_corememory(session_agents.AGENTS_KEY_ALL) or {}
     if not isinstance(stored_agents, dict):
@@ -98,7 +106,7 @@ async def read_authoring_snapshot(
     scenarios = (
         {}
         if authoritative or SCENARIO_KEY_ALL in memo.context or SCENARIO_KEY_CONFIG in memo.context
-        else dict(session_scenarios._session_scenarios.get(session_id, {}))
+        else copy.deepcopy(session_scenarios._session_scenarios.get(session_id, {}))
     )
     stored_scenarios = memo.get_value_from_corememory(SCENARIO_KEY_ALL) or {}
     if not isinstance(stored_scenarios, dict):
@@ -123,7 +131,13 @@ async def _commit_snapshot(
 ) -> None:
     async def commit_and_publish() -> None:
         data = snapshot.memo.to_redis_dict()
-        intended = json.loads(data["corememory"])
+        intended = json.loads(
+            merge_session_snapshot(
+                snapshot.redis_data,
+                data,
+                authoring_fields=AUTHORING_FIELDS | {"active_agent"},
+            )["corememory"]
+        )
         saved = await redis_manager.compare_and_store_session_data_async(
             MemoManager.build_redis_key(session_id),
             data,
@@ -132,27 +146,67 @@ async def _commit_snapshot(
         if not saved:
             raise DraftStateConflict(conflict_detail)
         persisted = json.loads(data["corememory"])
-        if any(
-            intended.get(key) != persisted.get(key) for key in AUTHORING_FIELDS | {"active_agent"}
-        ):
+        superseded = any(
+            intended.get(key) != persisted.get(key) for key in AUTHORING_FIELDS | ACTIVATION_FIELDS
+        )
+        session_agents.cache_persisted_agents(
+            session_id,
+            persisted.get(session_agents.AGENTS_KEY_ALL) or {},
+            submitted=intended.get(session_agents.AGENTS_KEY_ALL) or {},
+        )
+        selected = persisted.get(session_agents.AGENTS_KEY_ACTIVE)
+        if session_id not in session_agents._pending_agent_activations:
+            if selected:
+                session_agents._active_session_agents[session_id] = selected
+            else:
+                session_agents._active_session_agents.pop(session_id, None)
+        scenario_data = persisted.get(SCENARIO_KEY_ALL) or {}
+        if not scenario_data and persisted.get(SCENARIO_KEY_CONFIG):
+            legacy = persisted[SCENARIO_KEY_CONFIG]
+            scenario_data = {scenario_key(legacy["name"]): legacy}
+        session_scenarios._session_scenarios[session_id] = {
+            scenario_key(name): session_scenarios._parse_scenario_data(value)
+            for name, value in scenario_data.items()
+        }
+        active = persisted.get("active_scenario_name")
+        if active:
+            session_scenarios._active_scenario[session_id] = scenario_key(active)
+        else:
+            session_scenarios._active_scenario.pop(session_id, None)
+        now = time.monotonic()
+        session_agents._session_load_times[session_id] = now
+        session_scenarios._session_load_times[session_id] = now
+        memo = live_memo(session_id)
+        if memo is not None:
+            previous = json.loads(snapshot.redis_data.get("corememory", "{}"))
+            if not superseded and any(
+                previous.get(key) != persisted.get(key)
+                for key in (
+                    "active_agent",
+                    "active_scenario_name",
+                    "scenario_name",
+                    SCENARIO_KEY_CONFIG,
+                )
+            ):
+                memo._capture_activation_baseline()
+            # The live instance keeps its history, tool state and runtime ownership.
+            # Only committed authoring fields join the views primed from this memo.
+            for key in AUTHORING_FIELDS | {AUTHORING_REVISION_KEY}:
+                if key in persisted:
+                    memo.set_corememory(key, copy.deepcopy(persisted[key]))
+                else:
+                    memo.context.pop(key, None)
+            memo._authoring_baseline = {
+                key: copy.deepcopy(persisted[key]) for key in AUTHORING_FIELDS if key in persisted
+            }
+        snapshot.memo.corememory.from_json(data["corememory"])
+        if "chat_history" in data:
+            snapshot.memo.chatHistory.from_json(data["chat_history"])
+        snapshot.memo._capture_activation_baseline()
+        if superseded:
             # The receipt can acknowledge our commit after a later edit/handoff.
             # Refresh caches, but never replay its now-superseded activation.
-            agent_data = persisted.get(session_agents.AGENTS_KEY_ALL) or {}
-            session_agents._session_agents[session_id] = {
-                name: session_agents._deserialize_agent(value) for name, value in agent_data.items()
-            }
-            session_agents._persisted_agent_data[session_id] = copy.deepcopy(agent_data)
-            session_scenarios._session_scenarios[session_id] = {
-                scenario_key(name): session_scenarios._parse_scenario_data(value)
-                for name, value in (persisted.get(SCENARIO_KEY_ALL) or {}).items()
-            }
-            active = persisted.get("active_scenario_name")
-            if active:
-                session_scenarios._active_scenario[session_id] = scenario_key(active)
-            else:
-                session_scenarios._active_scenario.pop(session_id, None)
-            session_agents._session_load_times[session_id] = time.monotonic()
-            session_scenarios._session_load_times[session_id] = time.monotonic()
+            return
         else:
             publish()
 
@@ -160,7 +214,12 @@ async def _commit_snapshot(
     try:
         await asyncio.shield(task)
     except asyncio.CancelledError:
-        await task
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+        task.result()
         raise
 
 
@@ -189,13 +248,10 @@ async def publish_new_session_agent(
     )
     if activate:
         snapshot.memo.set_corememory("active_agent", agent.name)
+    if activate or not snapshot.memo.get_context(session_agents.AGENTS_KEY_ACTIVE):
+        snapshot.memo.set_corememory(session_agents.AGENTS_KEY_ACTIVE, agent.name)
 
     def publish() -> None:
-        session_agents._session_agents[session_id] = all_agents
-        session_agents._persisted_agent_data[session_id] = copy.deepcopy(
-            {name: session_agents._serialize_agent(item) for name, item in all_agents.items()}
-        )
-        session_agents._session_load_times[session_id] = time.monotonic()
         if session_agents._adapter_update_callback:
             try:
                 session_agents._adapter_update_callback(session_id, agent, activate)
@@ -262,19 +318,10 @@ async def publish_draft(
     memo.set_corememory(SCENARIO_KEY_CONFIG, session_scenarios._serialize_scenario(scenario))
     set_scenario_in_corememory(memo, scenario_key(scenario.name))
     memo.set_corememory("active_agent", scenario.start_agent)
+    selected, _ = find_agent_by_name(all_agents, scenario.start_agent)
+    memo.set_corememory(session_agents.AGENTS_KEY_ACTIVE, selected)
 
     def publish() -> None:
-        # No awaits between publication of agents and scenario activation.
-        session_agents._session_agents[session_id] = all_agents
-        session_agents._persisted_agent_data[session_id] = copy.deepcopy(
-            {name: session_agents._serialize_agent(item) for name, item in all_agents.items()}
-        )
-        session_scenarios._session_scenarios[session_id] = all_scenarios
-        session_scenarios._active_scenario[session_id] = scenario_key(scenario.name)
-        now = time.monotonic()
-        session_agents._session_load_times[session_id] = now
-        session_scenarios._session_load_times[session_id] = now
-
         # Existing scenario notification resolves all agents and updates both orchestrators.
         if session_scenarios._scenario_update_callback:
             try:

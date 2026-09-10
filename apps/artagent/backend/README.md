@@ -252,8 +252,11 @@ explicitly marks the limited preset fallback as unverified/incomplete.
 
 Optional `category` and `language` filters apply to the discovered catalog, not a
 curated allowlist. `total_available` retains the unfiltered count.
-`include_unverified=true` preserves the legacy opt-in preset behavior without
-contacting Azure. Custom/personal voices and native VoiceLive model voices can
+`include_unverified=true` supplements discovery with explicitly unverified
+presets; `presets_only=true` requests an offline preset catalog without contacting
+Azure. When regional discovery omits HD voices, documented HD entries are
+retained with per-voice verification flags and an explicit catalog warning.
+Custom/personal voices and native VoiceLive model voices can
 require separate configuration beyond the regional prebuilt Speech catalog.
 
 References: [Speech voice discovery](https://learn.microsoft.com/azure/ai-services/speech-service/rest-text-to-speech#get-a-list-of-voices)

@@ -104,6 +104,12 @@ Copies keep the complete shipped prompt, including its existing Jinja logic, and
 allow prose edits without truncation. Legacy handoff tools are not copied into the
 new agent; the scenario supplies its routing.
 
+The model list is scoped to the service that will use it: Custom Speech lists
+deployments on the primary Foundry resource; VoiceLive BYOM lists deployments on
+the VoiceLive resource. Resource/region attribution and cross-region advisories
+remain visible in Quick Tune. Non-managed VoiceLive models require an explicit
+BYOM profile, and known realtime/text profile mismatches cannot be applied.
+
 ### Choose a regional Speech voice
 
 **Voice & model** uses the full voice catalog returned by the connected Speech
@@ -296,6 +302,7 @@ not switch a running conversation's orchestration mode.
 ### Frontend development checks
 
 ```bash
+npm run test:unit
 npm run build
 npm run test:e2e -- quick-tune.spec.js existing-scenarios.spec.js prompt-editor.spec.js scenario-graph-review.spec.js authoring-layout.spec.js tool-catalog.spec.js regional-voices.spec.js mai-speech.spec.js scenario-switching.spec.js
 ```
@@ -306,6 +313,10 @@ Playwright installation, run `npx playwright install chromium` before browser
 tests. The authoring layout suite covers desktop, tablet, and phone-sized windows
 with long agent names, model IDs, and tool names, including dropdowns, handoff
 editing, and the graph inspector.
+
+The blocking unit-test workflow runs the frontend unit suite, production build,
+and mocked Firefox authoring suite. Live HTTP/Redis registration checks remain
+explicit opt-in; browser tests never synthesize speech or execute business tools.
 
 For registration checks against a running local backend (real HTTP and Redis,
 without route mocks), use a dedicated local instance:

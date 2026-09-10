@@ -19,6 +19,7 @@ import {
   authoringSelectProps, authoringSurfaceSx,
 } from '../styles/authoringStyles.js';
 import { maiConfigurationError } from '../utils/maiSpeech.js';
+import { voiceLiveModelError } from '../utils/foundryModels.js';
 
 const isMissing = (value) => value === undefined || value === null
   || (typeof value === 'string' && !value.trim());
@@ -39,6 +40,7 @@ function AgentReviewPanel({
         sessionId={sessionId} scenario={draft.scenario}
         contextNotice="Previewing this scenario draft. Its new agents and context are not registered until Apply scenario."
         tools={catalog.tools} voices={catalog.voices} models={catalog.models}
+        modelMetadata={catalog.modelMetadata}
         voiceMetadata={catalog.voiceMetadata} voicesLoading={voicesLoading} onRefreshVoices={onRefreshVoices}
         assignmentAgents={assignmentAgents} toolsAvailable={!catalogUnavailable} assignmentsAvailable={!catalogUnavailable}
         mode={mode} onModeChange={onModeChange} disabled={Boolean(busy) || applied}
@@ -214,7 +216,8 @@ const ScenarioDraftComposer = memo(function ScenarioDraftComposer({
   const missingCapabilities = draft?.missing_capabilities || [];
   const flowValidation = scenarioFlowError(draft?.scenario, catalog.tools);
   const speechValidation = (draft?.agents || []).map((agent) => {
-    const error = maiConfigurationError(agent, mode, catalog.voiceMetadata);
+    const error = maiConfigurationError(agent, mode, catalog.voiceMetadata)
+      || (mode === 'voicelive' && voiceLiveModelError(agent, catalog.models?.voicelive));
     return error ? `${agent.name}: ${error}` : '';
   }).find(Boolean);
   const catalogUnavailable = catalogLoading

@@ -802,6 +802,10 @@ task_enable_easyauth_cardapi_mcp() {
     resource_group=$(azd_get "AZURE_RESOURCE_GROUP")
     container_app=$(azd_get "CARDAPI_MCP_CONTAINER_APP_NAME")
     uami_client_id=$(azd_get "CARDAPI_MCP_UAI_CLIENT_ID")
+    # Backend managed identity client ID — must be allowed to call the MCP API
+    # with its app-only token, otherwise EasyAuth rejects it with 401.
+    local backend_uai_client_id
+    backend_uai_client_id=$(azd_get "BACKEND_UAI_CLIENT_ID")
     
     if [[ -z "$resource_group" || -z "$container_app" || -z "$uami_client_id" ]]; then
         warn "Missing required values for CardAPI MCP EasyAuth configuration"
@@ -815,7 +819,7 @@ task_enable_easyauth_cardapi_mcp() {
     if is_ci; then
         # In CI mode, automatically enable EasyAuth if not already enabled
         log "Enabling CardAPI MCP EasyAuth (CI mode)…"
-        if AZD_LOG_IN_BOX=true bash "$easyauth_script" -g "$resource_group" -a "$container_app" -i "$uami_client_id"; then
+        if AZD_LOG_IN_BOX=true bash "$easyauth_script" -g "$resource_group" -a "$container_app" -i "$uami_client_id" --allowed-client-ids "$backend_uai_client_id"; then
             success "CardAPI MCP EasyAuth enabled"
             # Set azd env variable to prevent re-running
             azd_set "CARDAPI_MCP_EASYAUTH_ENABLED" "true"
@@ -858,7 +862,7 @@ task_enable_easyauth_cardapi_mcp() {
         1)
             log ""
             log "Enabling CardAPI MCP EasyAuth..."
-            if AZD_LOG_IN_BOX=true bash "$easyauth_script" -g "$resource_group" -a "$container_app" -i "$uami_client_id"; then
+            if AZD_LOG_IN_BOX=true bash "$easyauth_script" -g "$resource_group" -a "$container_app" -i "$uami_client_id" --allowed-client-ids "$backend_uai_client_id"; then
                 success "CardAPI MCP EasyAuth enabled successfully"
                 # Set azd env variable to prevent re-running
                 azd_set "CARDAPI_MCP_EASYAUTH_ENABLED" "true"

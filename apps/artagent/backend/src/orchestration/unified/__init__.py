@@ -28,40 +28,41 @@ import json
 import time
 import uuid
 from collections import deque
-from typing import TYPE_CHECKING, Dict, Optional, Tuple
+from typing import TYPE_CHECKING
 
 from apps.artagent.backend.src.orchestration.naming import (
+    find_agent_by_name,
     get_scenario_from_corememory,
 )
 from apps.artagent.backend.src.orchestration.prompt_context import cascade_prompt_context
 from apps.artagent.backend.src.orchestration.session_agents import (
     get_session_agent,
+    get_session_agents,
     register_adapter_update_callback,
 )
 from apps.artagent.backend.src.orchestration.session_scenarios import (
-    get_session_scenario,
     register_scenario_update_callback,
 )
 from apps.artagent.backend.src.utils.tracing import (
     create_service_handler_attrs,
 )
-from apps.artagent.backend.voice.shared.config_resolver import resolve_orchestrator_config
-from src.stateful.state_managment import MemoManager
 from apps.artagent.backend.voice import (
     CascadeOrchestratorAdapter,
     CascadeSessionScope,
     OrchestratorContext,
-    get_cascade_orchestrator,
     make_assistant_streaming_envelope,
     make_envelope,
     send_session_envelope,
 )
+from apps.artagent.backend.voice.shared.config_resolver import resolve_orchestrator_config
+from apps.artagent.backend.voice.shared.session_state import sync_state_to_memo
 from apps.artagent.backend.voice.voicelive.tool_helpers import (
     push_tool_end,
     push_tool_start,
 )
 from fastapi import WebSocket
 from opentelemetry import trace
+from src.stateful.state_managment import MemoManager
 from utils.ml_logging import get_logger
 
 logger = get_logger(__name__)
@@ -150,23 +151,67 @@ def _get_or_create_adapter(
     # Get scenario from MemoManager using centralized utility
     scenario_name = get_scenario_from_corememory(memo_manager)
 
-    # Create adapter using app.state config
-    adapter = get_cascade_orchestrator(
-        app_state=app_state,
+    if scenario_name or app_state is None:
+        config = resolve_orchestrator_config(session_id=session_id, scenario_name=scenario_name)
+    else:
+        from apps.artagent.backend.voice.shared.config_resolver import resolve_from_app_state
+
+        config = resolve_from_app_state(app_state)
+    runtime_agents = dict(config.agents)
+    for name, session_override in get_session_agents(session_id).items():
+        existing_key, _ = find_agent_by_name(runtime_agents, name)
+        if existing_key is not None:
+            runtime_agents[existing_key] = session_override
+        elif not config.has_scenario:
+            runtime_agents[name] = session_override
+    adapter = CascadeOrchestratorAdapter.create(
+        start_agent=config.start_agent,
+        agents=runtime_agents,
+        handoff_map=config.handoff_map,
         call_connection_id=call_connection_id,
         session_id=session_id,
-        scenario_name=scenario_name,
+        streaming=True,
     )
+    adapter._current_memo_manager = memo_manager
 
     _adapters[session_id] = adapter
 
-    # Check for pre-existing session agent (created via Agent Builder before call started)
-    session_agent = (
-        get_session_agent(session_id) if get_session_scenario(session_id) is None else None
+    # Use the named agent of record, never an unrelated last-created override.
+    # Explicit activation is persisted by the authoring owner before this path.
+    active_agent_name = (
+        memo_manager.get_value_from_corememory("active_agent") if memo_manager else None
     )
+    if active_agent_name:
+        session_agent = get_session_agent(session_id, active_agent_name)
+    else:
+        session_agent = get_session_agent(session_id) if not config.has_scenario else None
+    if (
+        session_agent is not None
+        and config.has_scenario
+        and find_agent_by_name(adapter.agents, session_agent.name)[0] is None
+    ):
+        session_agent = None
     if session_agent:
-        adapter.agents[session_agent.name] = session_agent
-        adapter._active_agent = session_agent.name
+        agent_key, _ = find_agent_by_name(adapter.agents, session_agent.name)
+        agent_key = agent_key or session_agent.name
+        adapter.agents[agent_key] = session_agent
+        adapter._active_agent = agent_key
+        # Persist it as the session's active agent of record, not just on the
+        # adapter. route_turn() calls adapter.sync_from_memo_manager(cm) on the
+        # very next line, and that read is authoritative — so without this write
+        # an ``active_agent`` left in MemoManager by an *earlier* connection on
+        # the same session_id silently undoes the assignment above, and the call
+        # runs with the stale agent's voice and instructions instead of the tuned
+        # ones. (Same root cause as the Voice Live split-brain fixed in 9530f30;
+        # Cascade resolves the model per turn so it degrades to the wrong voice
+        # rather than a mute call, but the tuning is lost either way.)
+        #
+        # Safe to write unconditionally here: this branch only runs when the
+        # adapter is first created — cached adapters return above — so it cannot
+        # stomp a handoff made later in the call, which continues to propagate
+        # through MemoManager exactly as before.
+        if memo_manager is not None:
+            sync_state_to_memo(memo_manager, active_agent=agent_key)
         logger.info(
             "🎨 Injected pre-existing session agent | session=%s agent=%s voice=%s",
             session_id,
@@ -186,8 +231,15 @@ def _get_or_create_adapter(
     return adapter
 
 
-def cleanup_adapter(session_id: str) -> None:
+def cleanup_adapter(session_id: str, *, expected_memo: MemoManager | None = None) -> None:
     """Remove adapter for a completed session."""
+    adapter = _adapters.get(session_id)
+    if (
+        expected_memo is not None
+        and adapter is not None
+        and adapter.memo_manager is not expected_memo
+    ):
+        return
     if session_id in _adapters:
         del _adapters[session_id]
         logger.debug("Cleaned up adapter for session: %s", session_id)
@@ -219,14 +271,14 @@ def update_session_agent(session_id: str, agent: UnifiedAgent, set_active: bool 
 
     adapter = _adapters[session_id]
 
-    # Inject/update the agent in the adapter's agents dict
-    # Use a special key for the session agent so it doesn't conflict with base agents
-    adapter.agents[agent.name] = agent
+    agent_key, _ = find_agent_by_name(adapter.agents, agent.name)
+    agent_key = agent_key or agent.name
+    adapter.agents[agent_key] = agent
 
     # Only update the active agent if explicitly requested
     # This prevents creating a new agent from accidentally becoming the active agent
     if set_active:
-        adapter._active_agent = agent.name
+        adapter._active_agent = agent_key
 
     logger.info(
         "🔄 Session agent updated in adapter | session=%s agent=%s set_active=%s voice=%s model=%s",
@@ -272,54 +324,25 @@ def update_session_scenario(session_id: str, scenario) -> bool:
         scenario_name=scenario.name,
     )
 
-    # Update system prompts with handoff instructions in MemoManager
-    # This ensures agents have handoff instructions immediately, not just on next turn
-    try:
-        from apps.artagent.backend.src.orchestration.session_scenarios import _redis_manager
-        if _redis_manager:
-            memo = MemoManager.from_redis(session_id, _redis_manager)
-            
-            # For each agent in the scenario, update their system prompt with handoff instructions
-            for agent_name in scenario.agents:
-                agent = config.agents.get(agent_name)
-                if agent:
-                    # Build the base system prompt from the agent
-                    base_prompt = agent.render_prompt(config.template_vars) or ""
-                    
-                    # Build handoff instructions from the scenario
-                    handoff_instructions = scenario.build_handoff_instructions(agent_name)
-                    
-                    if handoff_instructions:
-                        full_prompt = f"{base_prompt}\n\n{handoff_instructions}" if base_prompt else handoff_instructions
-                    else:
-                        full_prompt = base_prompt
-                    
-                    # Update the agent's system prompt in MemoManager
-                    if full_prompt:
-                        memo.ensure_system_prompt(agent_name, full_prompt)
-                        logger.debug(
-                            "Updated system prompt with handoff instructions | agent=%s handoff_len=%d",
-                            agent_name,
-                            len(handoff_instructions) if handoff_instructions else 0,
-                        )
-            
-            # Persist updates to Redis
-            import asyncio
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(memo.persist_to_redis_async(_redis_manager))
-            except RuntimeError:
-                # No running loop - use sync persist
-                pass
-            
-            updated_memo = True
-            logger.info(
-                "🔄 Updated system prompts with handoff instructions | session=%s agents=%s",
-                session_id,
-                scenario.agents,
-            )
-    except Exception as e:
-        logger.warning("Failed to update system prompts in MemoManager: %s", e)
+    from apps.artagent.backend.src.orchestration.session_memory import live_memo
+
+    memo = live_memo(session_id)
+    if memo is not None:
+        for agent_name in scenario.agents:
+            _, agent = find_agent_by_name(config.agents, agent_name)
+            if agent is not None:
+                prompt = agent.render_prompt(
+                    {
+                        **config.template_vars,
+                        **cascade_prompt_context(memo, agent_name=agent_name),
+                    }
+                )
+                instructions = scenario.build_handoff_instructions(agent_name)
+                memo.ensure_system_prompt(
+                    agent_name, "\n\n".join(part for part in (prompt, instructions) if part)
+                )
+        # The caller persists this same memo with the scenario mutation.
+        updated_memo = True
 
     # Update CascadeOrchestratorAdapter if present
     if session_id in _adapters:
@@ -332,6 +355,7 @@ def update_session_scenario(session_id: str, scenario) -> bool:
             handoff_map=config.handoff_map,
             start_agent=scenario.start_agent,
             scenario_name=scenario.name,
+            scenario=config.scenario or scenario,
         )
 
         logger.info(
@@ -357,6 +381,7 @@ def update_session_scenario(session_id: str, scenario) -> bool:
                 handoff_map=config.handoff_map,
                 start_agent=scenario.start_agent,
                 scenario_name=scenario.name,
+                scenario=scenario,
             )
             logger.info(
                 "🔄 Session scenario updated in VoiceLive orchestrator | session=%s scenario=%s",
@@ -419,6 +444,8 @@ async def route_turn(
     except Exception:
         run_id = uuid.uuid4().hex[:12]
 
+    canonical_turn_id = cm.get_value_from_corememory("current_turn_id") or run_id
+
     # Store run_id in memory
     cm.set_corememory("current_run_id", run_id)
 
@@ -440,6 +467,7 @@ async def route_turn(
         active_agent=adapter.current_agent or "unknown",
     )
     span_attrs["run.id"] = run_id
+    span_attrs["turn.id"] = canonical_turn_id
 
     with tracer.start_as_current_span(
         "unified_orchestrator.route_turn",
@@ -470,7 +498,9 @@ async def route_turn(
             # Build session context from MemoManager for prompt rendering
             session_context = {
                 "is_acs": is_acs,
-                "run_id": run_id,
+                # CascadeSessionScope uses this value to correlate every event
+                # emitted for the utterance. Keep telemetry's run_id separate.
+                "run_id": canonical_turn_id,
                 "memo_manager": cm,
                 **cascade_prompt_context(cm, agent_name=adapter.current_agent),
             }
@@ -501,7 +531,7 @@ async def route_turn(
 
                 # Update TTSPlayback active agent for correct voice resolution on greetings
                 if hasattr(ws.state, "tts_playback") and ws.state.tts_playback:
-                    ws.state.tts_playback.set_active_agent(new_agent)
+                    ws.state.tts_playback.context.current_agent = adapter.current_agent_config
 
                 # Get new agent's voice configuration for TTS updates
                 # Adapter.agents contains session agent overrides from Agent Builder
@@ -577,7 +607,9 @@ async def route_turn(
                         try:
                             speech_cascade.record_tts_first_audio()
                         except Exception:
-                            logger.debug("Failed to record tts_first_audio on turn span", exc_info=True)
+                            logger.debug(
+                                "Failed to record tts_first_audio on turn span", exc_info=True
+                            )
 
                 normalized = ui_text.strip()
                 stream_cache = _ensure_stream_cache(ws)
@@ -624,13 +656,20 @@ async def route_turn(
                 )
                 payload = envelope.setdefault("payload", {})
                 payload.setdefault("message", ui_text)
-                
-                # Use effective turn_id from CascadeSessionScope if available
-                # This ensures post-tool responses use advanced turn_id
+
+                # Keep one canonical turn ID for the whole user→assistant flow.
+                # Post-tool phases retain a separate segment ID for diagnostics.
                 session_scope = CascadeSessionScope.get_current()
-                effective_turn_id = session_scope.get_effective_turn_id() if session_scope else run_id
-                payload["turn_id"] = effective_turn_id
-                payload["response_id"] = effective_turn_id
+                root_turn_id = (
+                    session_scope.get_root_turn_id() if session_scope else canonical_turn_id
+                )
+                segment_id = (
+                    session_scope.get_effective_turn_id() if session_scope else canonical_turn_id
+                )
+                payload["turn_id"] = root_turn_id
+                payload["segment_id"] = segment_id
+                payload["response_id"] = segment_id
+                payload["content_mode"] = "delta"
                 payload["status"] = "streaming"
                 payload["sender"] = agent_name
                 payload["active_agent"] = agent_name
@@ -661,6 +700,15 @@ async def route_turn(
                         "id": call_id,
                         "started": time.perf_counter(),
                     }
+                    session_scope = CascadeSessionScope.get_current()
+                    root_turn_id = (
+                        session_scope.get_root_turn_id() if session_scope else canonical_turn_id
+                    )
+                    segment_id = (
+                        session_scope.get_effective_turn_id()
+                        if session_scope
+                        else canonical_turn_id
+                    )
                     await push_tool_start(
                         ws,
                         tool_name=tool_name,
@@ -668,6 +716,8 @@ async def route_turn(
                         arguments=args,
                         is_acs=is_acs,
                         session_id=session_id,
+                        turn_id=root_turn_id,
+                        segment_id=segment_id,
                     )
                 except Exception:
                     logger.debug("Failed to emit tool_start frame", exc_info=True)
@@ -681,6 +731,15 @@ async def route_turn(
                     duration_ms = None
                     if info and info.get("started"):
                         duration_ms = (time.perf_counter() - info["started"]) * 1000.0
+                    session_scope = CascadeSessionScope.get_current()
+                    root_turn_id = (
+                        session_scope.get_root_turn_id() if session_scope else canonical_turn_id
+                    )
+                    segment_id = (
+                        session_scope.get_effective_turn_id()
+                        if session_scope
+                        else canonical_turn_id
+                    )
                     await push_tool_end(
                         ws,
                         tool_name=tool_name,
@@ -689,6 +748,8 @@ async def route_turn(
                         is_acs=is_acs,
                         session_id=session_id,
                         duration_ms=duration_ms,
+                        turn_id=root_turn_id,
+                        segment_id=segment_id,
                     )
                 except Exception:
                     logger.debug("Failed to emit tool_end frame", exc_info=True)
@@ -752,20 +813,26 @@ async def route_turn(
                     result.agent_name or adapter.current_agent or memo_agent or "Assistant"
                 )
                 final_label = _resolve_agent_label(final_agent)
-                
-                # Use effective turn_id from CascadeSessionScope to match streaming envelopes
-                # This ensures the final message updates the streaming message rather than
-                # creating a duplicate when turn_id was advanced for tool calls
+
+                # Finalize the canonical turn bubble. The segment ID still shows
+                # which post-tool phase produced the final response.
                 session_scope = CascadeSessionScope.get_current()
-                effective_turn_id = session_scope.get_effective_turn_id() if session_scope else run_id
-                
+                root_turn_id = (
+                    session_scope.get_root_turn_id() if session_scope else canonical_turn_id
+                )
+                segment_id = (
+                    session_scope.get_effective_turn_id() if session_scope else canonical_turn_id
+                )
+
                 payload = {
                     "type": "assistant",
                     "message": result.response_text,
                     "content": result.response_text,
                     "streaming": False,
-                    "turn_id": effective_turn_id,
-                    "response_id": effective_turn_id,
+                    "turn_id": root_turn_id,
+                    "segment_id": segment_id,
+                    "response_id": segment_id,
+                    "content_mode": "final_turn",
                     "status": "error" if result.error else "completed",
                     "sender": final_agent,
                     "speaker": final_agent,
@@ -798,7 +865,7 @@ async def route_turn(
                         "Sent final assistant envelope | agent=%s text_len=%d turn_id=%s (run_id=%s)",
                         final_agent,
                         len(result.response_text),
-                        effective_turn_id,
+                        root_turn_id,
                         run_id,
                     )
                 except Exception:
@@ -819,10 +886,7 @@ async def route_turn(
         finally:
             # Persist conversation state
             try:
-                if hasattr(cm, "persist_to_redis_async"):
-                    await cm.persist_to_redis_async(redis_mgr)
-                elif hasattr(cm, "persist_background"):
-                    await cm.persist_background(redis_mgr)
+                await cm.persist_to_redis_async(redis_mgr, raise_on_failure=True)
             except Exception as persist_exc:
                 logger.warning(
                     "Failed to persist orchestrator memory for session %s: %s",
@@ -864,10 +928,17 @@ def _emit_turn_kpis(
     turn_wall_ms = (time.perf_counter() - turn_start_ts) * 1000
     llm_ttft_ms = getattr(result, "ttft_ms", None)
     final_agent = result.agent_name or adapter.current_agent or "unknown"
+    # Deployment/model that actually processed this turn (resolved per-turn from
+    # the active agent's cascade model). Enables selected-vs-processed validation.
+    turn_model = getattr(adapter, "last_model_name", None) or getattr(
+        getattr(adapter, "config", None), "model_name", None
+    )
 
     first_audio_perf = tts_ttfb_holder[0] if tts_ttfb_holder else None
     # Legacy turn-start-anchored TTFB (kept for span back-compat + record_turn_kpis).
-    tts_ttfb_ms = (first_audio_perf - turn_start_ts) * 1000 if first_audio_perf is not None else None
+    tts_ttfb_ms = (
+        (first_audio_perf - turn_start_ts) * 1000 if first_audio_perf is not None else None
+    )
 
     # End of recognition → first streamed LLM token. The adapter anchors
     # recog_to_llm_first_ms at recog_end_perf when it was provided, so this is the
@@ -909,6 +980,9 @@ def _emit_turn_kpis(
     span.set_attribute(
         "turn.latency_anchor", "recog_end" if recog_end_perf is not None else "turn_start"
     )
+    if turn_model:
+        span.set_attribute("turn.model", turn_model)
+        span.set_attribute("gen_ai.request.model", turn_model)
     if recog_to_ttft_ms is not None:
         span.set_attribute("turn.ttft_ms", round(recog_to_ttft_ms, 1))
     if recog_to_ttfb_ms is not None:
@@ -932,6 +1006,7 @@ def _emit_turn_kpis(
                 agent_name=final_agent,
                 latency_anchor="recog_end" if recog_end_perf is not None else "turn_start",
                 llm_ttft_ms=llm_ttft_ms,
+                model=turn_model,
             )
         except Exception:
             logger.debug("Failed to stamp turn KPIs on headline span", exc_info=True)
@@ -977,10 +1052,11 @@ def _emit_turn_kpis(
     # latencies. ttft = end of speech -> first LLM token; ttfb = end of speech ->
     # first audio byte; synth isolates the TTS render + delivery delta (ttfb-ttft).
     logger.info(
-        "[Cascade] Turn %s complete | agent=%s | ttft=%s ttfb=%s synth=%s "
+        "[Cascade] Turn %s complete | agent=%s model=%s | ttft=%s ttfb=%s synth=%s "
         "| turn_wall=%.0fms | session=%s",
         turn_no if turn_no is not None else "?",
         final_agent,
+        turn_model or "unknown",
         f"{recog_to_ttft_ms:.0f}ms" if recog_to_ttft_ms is not None else "N/A",
         ttfb_display,
         synth_display,

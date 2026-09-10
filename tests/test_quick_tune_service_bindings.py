@@ -16,8 +16,8 @@ and ``test_scenario_authoring_runtime.py`` (scenario-scoped VoiceLive
 startup model, handoff instructions, cached routing). Those are treated
 as already-verified and are not repeated here.
 
-Every test uses the *real* production function (``UnifiedAgent.build_voicelive_voice``,
-``UnifiedAgent.build_voicelive_vad``, ``UnifiedAgent.apply_voicelive_session``,
+Every test uses the *real* production function (``voicelive_session.build_voicelive_voice``,
+``voicelive_session.build_voicelive_vad``, ``voicelive_session.apply_voicelive_session``,
 ``CascadeOrchestratorAdapter._prepare_streaming_params``, ``TTSPlayback.get_agent_voice``
 + ``TTSPlayback._synthesize``, ``apply_scenario_overrides``,
 ``ScenarioConfig.get_generic_handoff_config``) and, where a real Azure SDK
@@ -50,6 +50,7 @@ from apps.artagent.backend.voice.shared.context import VoiceSessionContext
 from apps.artagent.backend.voice.shared.handoff_service import HandoffService
 from apps.artagent.backend.voice.speech_cascade.orchestrator import CascadeOrchestratorAdapter
 from apps.artagent.backend.voice.tts.playback import TTSPlayback
+from apps.artagent.backend.voice.voicelive import session as voicelive_session
 from azure.ai.voicelive.models import (
     AzureSemanticVad,
     AzureStandardVoice,
@@ -62,7 +63,7 @@ from azure.ai.voicelive.models import (
 # 1. VOICE — VoiceLive real SDK construction
 #    UI: QuickTuneAgentEditor.jsx voice name/rate + "Fine controls" style/pitch
 #    Path: DynamicAgentConfig.voice -> build_session_agent (agent_builder.py:1204-1211)
-#          -> UnifiedAgent.voice -> UnifiedAgent.build_voicelive_voice() (base.py:934-967)
+#          -> UnifiedAgent.voice -> voicelive_session.build_voicelive_voice()
 #          -> azure.ai.voicelive.models.AzureStandardVoice
 # =============================================================================
 class TestVoiceLiveVoiceBinding:
@@ -81,9 +82,9 @@ class TestVoiceLiveVoiceBinding:
             ),
         )
 
-        voice_payload = agent.build_voicelive_voice()
+        voice_payload = voicelive_session.build_voicelive_voice(agent)
 
-        # base.py:966-967 only omits a field when it is exactly the "+0%" default;
+        # Only omit a field when it is exactly the "+0%" default;
         # style/pitch/rate here are all non-default, so all three must survive.
         assert isinstance(voice_payload, AzureStandardVoice)
         assert dict(voice_payload) == {
@@ -99,11 +100,11 @@ class TestVoiceLiveVoiceBinding:
             name="Tester", tool_names=[], voice=VoiceConfig(name="en-US-AvaMultilingualNeural")
         )
 
-        voice_payload = agent.build_voicelive_voice()
+        voice_payload = voicelive_session.build_voicelive_voice(agent)
 
         assert isinstance(voice_payload, AzureStandardVoice)
         payload = dict(voice_payload)
-        assert "rate" not in payload  # "+0%" is the skip sentinel (base.py:966)
+        assert "rate" not in payload  # "+0%" is the skip sentinel.
         assert "pitch" not in payload
         # NOTE: VoiceConfigSchema's style default is "chat" (agent_builder.py:63),
         # not "+0%", so style is never skipped by the same sentinel check and is
@@ -117,7 +118,7 @@ class TestVoiceLiveVoiceBinding:
 #        padding sliders (session.turn_detection_threshold / prefix_padding_ms)
 #        and the read-only turn-detection-type chip.
 #    Path: build_session_agent (agent_builder.py:1233-1238) -> UnifiedAgent.session
-#          -> UnifiedAgent.build_voicelive_vad() (base.py:975-1000)
+#          -> voicelive_session.build_voicelive_vad()
 #          -> azure.ai.voicelive.models.AzureSemanticVad / ServerVad
 # =============================================================================
 class TestVoiceLiveTurnDetectionBinding:
@@ -143,7 +144,7 @@ class TestVoiceLiveTurnDetectionBinding:
             },
         )
 
-        vad = agent.build_voicelive_vad()
+        vad = voicelive_session.build_voicelive_vad(agent)
 
         assert isinstance(vad, expected_cls)
         assert dict(vad) == {
@@ -156,7 +157,7 @@ class TestVoiceLiveTurnDetectionBinding:
 
 # =============================================================================
 # 3. apply_voicelive_session — end-to-end session.update payload
-#    Real UnifiedAgent.apply_voicelive_session with a mocked connection (the
+#    Real voicelive_session.apply_voicelive_session with a mocked connection (the
 #    only mocked boundary is the network: conn.session.update).
 # =============================================================================
 class TestApplyVoiceliveSessionPayload:
@@ -220,7 +221,7 @@ class TestApplyVoiceliveSessionPayload:
         agent = self._agent()
         conn = self._mock_conn()
 
-        await agent.apply_voicelive_session(conn, session_id=None)
+        await voicelive_session.apply_voicelive_session(agent, conn, session_id=None)
 
         conn.session.update.assert_awaited_once()
         session_payload = conn.session.update.call_args.kwargs["session"]
@@ -246,7 +247,7 @@ class TestApplyVoiceliveSessionPayload:
         agent = self._agent()
         conn = self._mock_conn()
 
-        await agent.apply_voicelive_session(conn, session_id=None)
+        await voicelive_session.apply_voicelive_session(agent, conn, session_id=None)
 
         session_payload = conn.session.update.call_args.kwargs["session"]
         transcription = session_payload.input_audio_transcription
@@ -260,7 +261,7 @@ class TestApplyVoiceliveSessionPayload:
         agent = self._agent()
         conn = self._mock_conn()
 
-        await agent.apply_voicelive_session(conn, session_id=None)
+        await voicelive_session.apply_voicelive_session(agent, conn, session_id=None)
 
         session_payload = conn.session.update.call_args.kwargs["session"]
         assert session_payload.temperature == 0.9
@@ -278,7 +279,7 @@ class TestApplyVoiceliveSessionPayload:
         agent.voicelive_model.temperature = 1.5
         conn = self._mock_conn()
         with pytest.raises(ValueError, match="between 0.0 and 1.0"):
-            await agent.apply_voicelive_session(conn)
+            await voicelive_session.apply_voicelive_session(agent, conn)
         conn.session.update.assert_not_awaited()
 
 
@@ -332,7 +333,9 @@ class TestCascadeVoiceBinding:
         synth = Mock()
         synth.synthesize_to_pcm = Mock(return_value=b"PCM-BYTES")
 
-        result = await tts._synthesize(synth, "hello world", voice_name, style, rate, pitch, 16000)
+        result = await tts._synthesize(
+            synth, "hello world", voice_name, style, rate, 16000, pitch=pitch
+        )
 
         assert result == b"PCM-BYTES"
         call_kwargs = synth.synthesize_to_pcm.call_args.kwargs

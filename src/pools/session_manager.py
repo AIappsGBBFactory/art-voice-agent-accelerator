@@ -125,9 +125,16 @@ class ThreadSafeSessionManager:
                 len(self._sessions),
             )
 
-    async def remove_session(self, session_id: str) -> bool:
+    async def remove_session(
+        self, session_id: str, *, expected_context: SessionContext | None = None
+    ) -> bool:
         """Remove a conversation session thread-safely. Returns True if removed."""
         async with self._lock:
+            if (
+                expected_context is not None
+                and self._sessions.get(session_id) is not expected_context
+            ):
+                return False
             context = self._sessions.pop(session_id, None)
             if context:
                 try:
@@ -159,6 +166,19 @@ class ThreadSafeSessionManager:
         """Return the SessionContext for an active session."""
         async with self._lock:
             return self._sessions.get(session_id)
+
+    def get_session_context_nowait(self, session_id: str) -> SessionContext | None:
+        """Read on the owning event loop without suspension, including call aliases."""
+        context = self._sessions.get(session_id)
+        if context is not None:
+            return context
+        for context in self._sessions.values():
+            if (
+                getattr(context.memory_manager, "session_id", None) == session_id
+                or getattr(context.websocket.state, "call_connection_id", None) == session_id
+            ):
+                return context
+        return None
 
     async def get_session_count(self) -> int:
         """Get current session count thread-safely."""

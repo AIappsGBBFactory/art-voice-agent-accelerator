@@ -25,6 +25,7 @@ from apps.artagent.backend.voice.speech_cascade.orchestrator import (
 )
 from apps.artagent.backend.voice.voicelive import handler as live_handler
 from apps.artagent.backend.voice.voicelive import orchestrator as live_module
+from apps.artagent.backend.voice.voicelive import session as voicelive_session
 from fastapi import HTTPException
 
 from tests import test_scenario_draft_authoring as authoring_tests
@@ -195,7 +196,9 @@ async def test_voicelive_full_and_context_updates_include_authored_handoff_instr
         memo_manager=snapshot.memo,
     )
     try:
-        await resolved.agents["Concierge"].apply_voicelive_session(connection, session_id=SID)
+        await voicelive_session.apply_voicelive_session(
+            resolved.agents["Concierge"], connection, session_id=SID
+        )
         await live._update_session_context()
         assert connection.session.update.await_count == 2
         for call in connection.session.update.await_args_list:

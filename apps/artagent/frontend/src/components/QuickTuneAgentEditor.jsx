@@ -9,7 +9,8 @@ import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import {
   BYOM_OPTIONS, CASCADE_MODEL_PRESETS, mergeAgentAssignments, parsePercent, toPercent, TRANSCRIPTION_MODELS,
 } from '../utils/quickTune.js';
-import { MANAGED_VOICELIVE_OPTIONS } from '../utils/foundryModels.js';
+import { MANAGED_VOICELIVE_OPTIONS, voiceLiveModelError } from '../utils/foundryModels.js';
+import { crossRegionHint, describeModelSource } from '../utils/foundryRegions.js';
 import {
   authoringSelectProps, authoringSurfaceSx,
 } from '../styles/authoringStyles.js';
@@ -49,7 +50,7 @@ const QuickTuneAgentEditor = memo(function QuickTuneAgentEditor({
   mode = 'voicelive', onModeChange, isNew = false, initialSection = 'voice',
   disabled = false, assignmentAgents = [], toolsAvailable = true, assignmentsAvailable = true,
   sessionId, scenario, contextNotice, onPromptOpen, saveAction, saveError, saveNotice,
-  voiceMetadata, voicesLoading = false, onRefreshVoices,
+  voiceMetadata, voicesLoading = false, onRefreshVoices, modelMetadata,
 }) {
   const [section, setSection] = useState(initialSection);
   const [promptEditorOpen, setPromptEditorOpen] = useState(false);
@@ -62,6 +63,14 @@ const QuickTuneAgentEditor = memo(function QuickTuneAgentEditor({
   const modelId = config[modelKey]?.deployment_id || '';
   const managed = voiceLive && !config.byom?.mode;
   const discovered = models?.[mode];
+  const source = modelMetadata?.[mode];
+  const otherMode = voiceLive ? 'cascade' : 'voicelive';
+  const regionHint = crossRegionHint({
+    active: { ...source, label: voiceLive ? 'VoiceLive' : 'Custom Speech' },
+    other: { ...modelMetadata?.[otherMode], label: voiceLive ? 'Custom Speech' : 'VoiceLive' },
+    app: source?.appRegion,
+  });
+  const modelError = voiceLive ? voiceLiveModelError(config, discovered) : '';
   const modelOptions = managed ? MANAGED_VOICELIVE_OPTIONS
     : discovered?.length ? discovered : CASCADE_MODEL_PRESETS;
   const allModels = modelId && !modelOptions.some((model) => model.id === modelId)
@@ -192,8 +201,9 @@ const QuickTuneAgentEditor = memo(function QuickTuneAgentEditor({
                   ...config[modelKey], deployment_id: event.target.value,
                   name: event.target.value, model_family: null,
                 })}
-                helperText={managed ? 'Managed VoiceLive models' : discovered?.length
-                  ? 'Deployments from your connected resource' : 'Presets shown. Deployment availability could not be confirmed.'}>
+                helperText={(managed ? 'Managed VoiceLive models' : discovered?.length
+                  ? 'Deployments from your connected resource' : 'Presets shown. Deployment availability could not be confirmed.')
+                  + describeModelSource(source, { managed })}>
                 {!modelId && <MenuItem value="">Use configured default</MenuItem>}
                 {allModels.map((model) => <MenuItem key={model.id} value={model.id}>{model.label}</MenuItem>)}
               </TextField>
@@ -234,6 +244,12 @@ const QuickTuneAgentEditor = memo(function QuickTuneAgentEditor({
                 onChange={(value) => voiceLive ? nested('session', 'silence_duration_ms', value)
                   : nested('speech', 'vad_silence_timeout_ms', value)} />
             </Box>
+            {modelError && <Alert severity="warning">{modelError}</Alert>}
+            {regionHint && (
+              <Alert severity="info">
+                {regionHint.lines.map((line) => <Typography key={line} variant="body2">{line}</Typography>)}
+              </Alert>
+            )}
             {maiError && (
               <Alert severity="warning">
                 {maiError}

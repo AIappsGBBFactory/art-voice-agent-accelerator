@@ -117,7 +117,7 @@ export async function installQuickTuneMocks(page) {
       { name: 'en-US-JennyNeural', display_name: 'Jenny' },
     ],
   }));
-  await page.route('**/api/v1/agent-builder/models', (route) => respond(route, {
+  await page.route('**/api/v1/agent-builder/models{,?*}', (route) => respond(route, {
     models: [
       { deployment_id: 'finance-deployment', category: 'chat', modes: ['cascade', 'voicelive'] },
       { deployment_id: 'finance-mini', category: 'chat', modes: ['cascade', 'voicelive'] },

@@ -10,7 +10,6 @@ agents/
 ├── _defaults.yaml             # Shared defaults (model, voice, session)
 ├── base.py                    # UnifiedAgent dataclass & helpers
 ├── loader.py                  # Agent discovery & loading
-├── session_manager.py         # 🔮 Session-level agent management (future)
 │
 ├── concierge/                 # Example: Entry-point agent
 │   ├── agent.yaml             # Agent configuration
@@ -121,47 +120,27 @@ agents = discover_agents()
 
 ---
 
-## 🔮 Session Manager (Future Use)
+## Definition and live-session boundaries
 
-> **Note:** The `SessionAgentManager` is designed for future use and is **not currently integrated** into the Custom Cascade Orchestrators. It provides infrastructure for runtime agent modification.
+The unused `SessionAgentManager` subsystem is removed. Runtime tuning already
+uses `src/orchestration/session_agents.py` and `session_scenarios.py`, builder
+endpoints and native orchestrator update callbacks; there is no second catalog.
+Experiment labels can be stored in ordinary agent metadata.
 
-### Purpose
+`registries/definitions.py` projects and validates the existing dataclasses for
+YAML loading, builder schemas, persisted definitions and editable responses.
+Aliases/presets remain API-specific; declared fields, empty/null values and
+server-side `source_dir` provenance share one codec. Builder updates cannot
+introduce arbitrary client-supplied executable source directories.
 
-The **SessionAgentManager** enables:
-- **Per-session agent overrides** (prompt, voice, model, tools)
-- **Runtime hot-swap** of agent configurations
-- **A/B testing** with experiment tracking
-- **Persistence** via Redis/MemoManager
+Async API/session entry points prime the definition views from the current memo
+or awaited Redis hydration. Live changes reuse the memo held by the existing
+application/engine registries. Redis ordering remains per memo, not distributed
+CAS. Native VoiceLive SDK projection, session updates and greeting requests live
+in `voice/voicelive/session.py`; they are not methods on the neutral agent.
 
-### Future Integration Example
-
-```python
-from apps.artagent.backend.registries.agentstore.session_manager import SessionAgentManager
-
-# Create manager for a session (future pattern)
-session_mgr = SessionAgentManager(
-    session_id="session_123",
-    base_agents=discover_agents(),
-    memo_manager=memo,
-)
-
-# Get agent with session overrides applied
-agent = session_mgr.get_agent("Concierge")
-
-# Modify agent at runtime (without restart)
-session_mgr.update_agent_prompt("Concierge", "New prompt...")
-session_mgr.update_agent_voice("Concierge", VoiceConfig(name="en-US-EmmaNeural"))
-
-# Track A/B experiments
-session_mgr.set_experiment("voice_experiment", "variant_b")
-```
-
-### When This Will Be Used
-
-The SessionAgentManager will be integrated when:
-- Dynamic prompt modification via admin UI is needed
-- A/B testing of agent configurations is implemented
-- Real-time agent tuning during calls is required
+See [the human extension guide](../../../../../docs/voice-extension-guide.md)
+for ordinary field/policy changes and the compatibility retirement map.
 
 ---
 

@@ -83,6 +83,49 @@ def test_get_session_data_raises_without_cluster_support(monkeypatch):
         mgr.get_session_data("session-123")
 
 
+def test_moved_does_not_flip_flop_back_to_standalone(monkeypatch):
+    """A MOVED reply must latch cluster mode.
+
+    Once the endpoint has proven it is an OSS cluster (via MOVED), a failed
+    cluster rebuild must NOT silently fall back to a standalone client — that
+    reintroduces MOVED in an endless ping-pong. The manager should stop retrying
+    on the standalone client and surface the original MOVED instead.
+    """
+    single_node_client = _FakeRedis()
+    cluster_attempts = {"count": 0}
+
+    monkeypatch.setattr(
+        redis_manager.redis,
+        "Redis",
+        lambda *args, **kwargs: single_node_client,
+    )
+
+    def _failing_cluster(*args, **kwargs):
+        cluster_attempts["count"] += 1
+        raise RedisClusterException("topology unreachable")
+
+    monkeypatch.setattr(redis_manager, "RedisCluster", _failing_cluster)
+
+    mgr = AzureRedisManager(
+        host="example.redis.local",
+        port=6380,
+        access_key="dummy",
+        ssl=False,
+        credential=object(),
+    )
+
+    with pytest.raises(MovedError):
+        mgr.get_session_data("session-123")
+
+    # Cluster mode stays latched; we never fell back and re-hammered standalone.
+    assert mgr.use_cluster is True
+    assert mgr._cluster_required is True
+    # One standalone HGETALL raised MOVED, then a single failed cluster rebuild
+    # aborted the loop — no repeated standalone retries.
+    assert single_node_client.hgetall_calls == 1
+    assert cluster_attempts["count"] == 1
+
+
 def test_cluster_initialization_falls_back_to_standalone(monkeypatch):
     standalone_client = _FakeClusterRedis()
     monkeypatch.setattr(
@@ -109,6 +152,17 @@ def test_cluster_initialization_falls_back_to_standalone(monkeypatch):
     assert mgr.use_cluster is False
 
 
+@pytest.mark.parametrize("result", [0, 1])
+def test_non_snapshot_hash_updates_treat_hset_zero_as_success(result):
+    mgr = object.__new__(AzureRedisManager)
+    mgr.redis_client = Mock()
+    mgr.redis_client.hset.return_value = result
+    mgr._redis_span = lambda *args: nullcontext()
+    mgr._execute_with_retry = Mock(side_effect=lambda command, fn: fn())
+    assert mgr.store_session_data("session:one", {"metadata": "value"})
+    mgr.redis_client.hset.assert_called_once_with("session:one", mapping={"metadata": "value"})
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("result", [0, 1])
 async def test_atomic_session_compare_and_set_uses_single_key_and_full_expected_snapshot(result):
@@ -119,7 +173,9 @@ async def test_atomic_session_compare_and_set_uses_single_key_and_full_expected_
     expected = {"corememory": '{"active_agent":"Before"}', "chat_history": "{}"}
     updates = {"corememory": '{"active_agent":"After"}', "chat_history": "{}"}
     mgr.redis_client.eval.side_effect = lambda *args: [
-        result, updates["corememory"], updates["chat_history"]
+        result,
+        updates["corememory"],
+        updates["chat_history"],
     ]
 
     stored = await mgr.compare_and_store_session_data_async(

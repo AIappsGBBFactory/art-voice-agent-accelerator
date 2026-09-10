@@ -23,21 +23,24 @@ import asyncio
 import base64
 import contextlib
 import os
+import threading
 import time
 import uuid
 from collections.abc import Callable
+from contextvars import ContextVar
 from functools import partial
+from queue import Empty, Full, Queue
 from typing import TYPE_CHECKING, Any
 
+from apps.artagent.backend.src.orchestration.naming import find_agent_by_name
+from apps.artagent.backend.src.orchestration.session_agents import get_session_agent
+from apps.artagent.backend.voice.messaging import send_session_envelope
 from fastapi import WebSocket
 from fastapi.websockets import WebSocketState
 from opentelemetry import trace
 from opentelemetry.trace import SpanKind
 from utils.ml_logging import get_logger
 from utils.telemetry_decorators import add_speech_tts_metrics, trace_speech
-
-from apps.artagent.backend.src.orchestration.naming import find_agent_by_name
-from apps.artagent.backend.src.orchestration.session_agents import get_session_agent
 
 if TYPE_CHECKING:
     from apps.artagent.backend.voice.shared.context import VoiceSessionContext
@@ -46,6 +49,7 @@ if TYPE_CHECKING:
 SAMPLE_RATE_BROWSER = 48000  # Browser WebAudio prefers 48kHz
 SAMPLE_RATE_ACS = 16000  # ACS telephony uses 16kHz
 _PCM16_BYTES_PER_SAMPLE = 2
+_PRODUCER_STOP_TIMEOUT_SECONDS = 10.0
 
 # Streaming synthesis: when enabled, audio chunks are sent to the transport as
 # Azure renders them (low time-to-first-audio) instead of waiting for the entire
@@ -114,8 +118,8 @@ class TTSPlayback:
         if isinstance(context, WebSocket):
             # Legacy API: context is actually a websocket
             from apps.artagent.backend.voice.shared.context import (
-                VoiceSessionContext,
                 TransportType,
+                VoiceSessionContext,
             )
 
             websocket = context
@@ -135,6 +139,54 @@ class TTSPlayback:
         self._is_playing = False
         self._transport_playback_until = 0.0
         self._last_transport_audio_sent_at = 0.0
+        self._generation = 0
+        self._generation_context: ContextVar[int | None] = ContextVar(
+            "tts_generation", default=None
+        )
+        self._producers: dict[asyncio.Future, threading.Event] = {}
+        self._closed = False
+
+    def _is_cancelled(self) -> bool:
+        generation = self._generation_context.get()
+        return (
+            self._closed
+            or self._cancel_event.is_set()
+            or (generation is not None and generation != self._generation)
+        )
+
+    async def _join_producer(
+        self, future: asyncio.Future, stop: threading.Event, synth: Any
+    ) -> None:
+        """Stop and join executor work without cancelling its completion future."""
+        if not future.done():
+            stop.set()
+            synth.stop_speaking()
+        try:
+            await asyncio.wait_for(asyncio.shield(future), timeout=_PRODUCER_STOP_TIMEOUT_SECONDS)
+        finally:
+            if future.done():
+                self._producers.pop(future, None)
+
+    async def _run_synthesis(self, synth: Any, function: Callable, *, timeout: float) -> Any:
+        stop = threading.Event()
+        executor = getattr(self._app_state, "speech_executor", None)
+        future = asyncio.get_running_loop().run_in_executor(
+            executor, partial(function, cancel_event=stop)
+        )
+        self._producers[future] = stop
+        try:
+            return await asyncio.wait_for(asyncio.shield(future), timeout=timeout)
+        finally:
+            await self._join_producer(future, stop, synth)
+
+    async def aclose(self) -> None:
+        """Quiesce SDK producers before the session releases its TTS pool lease."""
+        self._closed = True
+        self.cancel()
+        for future, stop in list(self._producers.items()):
+            await self._join_producer(future, stop, self._context.tts_client)
+        if getattr(self._context.tts_client, "has_active_synthesis", False) is True:
+            raise RuntimeError("Speech provider has not acknowledged synthesis stop")
 
     @property
     def context(self) -> VoiceSessionContext:
@@ -184,6 +236,47 @@ class TTSPlayback:
         """Get cancel event from context."""
         return self._context.cancel_event
 
+    async def _report_tts_failure(
+        self,
+        *,
+        voice: str | None,
+        exception: BaseException | None = None,
+        error_details: str | None = None,
+    ) -> None:
+        """Classify a TTS failure and surface it to the client and dashboards.
+
+        The Speech SDK reports a bad voice name or a bad key by cancelling
+        rather than raising, which historically produced silence with nothing in
+        the UI. This turns either signal into a rendered error.
+
+        Keyword Args:
+            voice: The voice name that was requested.
+            exception: The exception raised, when synthesis raised.
+            error_details: ``cancellation_details.error_details``, when it did not.
+        """
+        from apps.artagent.backend.voice.shared.errors import (
+            classify_speech_cancellation,
+            classify_voice_error,
+            emit_voice_error,
+        )
+
+        if exception is not None:
+            info = classify_voice_error(exception, source="tts", voice=voice)
+        else:
+            info = classify_speech_cancellation(error_details, voice=voice, source="tts")
+
+        await emit_voice_error(
+            self._ws,
+            info,
+            session_id=self._session_id,
+            call_id=self._context.call_connection_id,
+        )
+
+    @staticmethod
+    def _synth_error_details(synth: Any) -> str | None:
+        """Read the last cancellation detail recorded by the synthesizer."""
+        return getattr(synth, "last_synthesis_error", None)
+
     async def _get_tts_client(self) -> Any:
         """Return the session-owned TTS client, falling back to pool acquisition."""
         synth = self._context.tts_client
@@ -210,6 +303,10 @@ class TTSPlayback:
         """
         # First try context.current_agent (already resolved, no circular import)
         current_agent = self._context.current_agent
+        if current_agent and getattr(current_agent, "name", None):
+            current_agent = (
+                get_session_agent(self._context.session_id, current_agent.name) or current_agent
+            )
         if current_agent and hasattr(current_agent, "voice") and current_agent.voice:
             voice = current_agent.voice
             if voice.name:
@@ -222,15 +319,11 @@ class TTSPlayback:
                 )
                 return (voice.name, voice.style, voice.rate, voice.pitch)
 
-        # Try session agent (Agent Builder override) - has priority over base agents.
-        # Look up by the active/start agent name first, then fall back to the
-        # session's default agent: an Agent Builder / Quick Tune edit is stored
-        # under the agent's *own* name, which may differ from app_state.start_agent
-        # (e.g. when a scenario is active). Without this fallback the override's
-        # voice silently never applies.
-        start_agent_name = getattr(self._app_state, "start_agent", "Concierge")
+        memo = self._context.memo_manager
+        active_agent_name = memo.get_value_from_corememory("active_agent") if memo else None
+        start_agent_name = active_agent_name or getattr(self._app_state, "start_agent", "Concierge")
         session_agent = get_session_agent(self._context.session_id, start_agent_name)
-        if session_agent is None:
+        if session_agent is None and not active_agent_name:
             session_agent = get_session_agent(self._context.session_id)
         if session_agent and hasattr(session_agent, "voice") and session_agent.voice:
             voice = session_agent.voice
@@ -293,6 +386,14 @@ class TTSPlayback:
                 )
                 return
 
+            current_agent = self._context.current_agent
+            if current_agent is not None:
+                _, resolved_agent = find_agent_by_name(
+                    {getattr(current_agent, "name", ""): current_agent}, agent_name
+                )
+                if resolved_agent is not None:
+                    return
+
             # Fallback to unified_agents (base registry)
             unified_agents = getattr(self._app_state, "unified_agents", {})
             actual_key, agent = find_agent_by_name(unified_agents, agent_name)
@@ -349,8 +450,6 @@ class TTSPlayback:
 
         style = voice_style or "conversational"
         rate = voice_rate or "medium"
-        loop = asyncio.get_running_loop()
-        executor = getattr(self._app_state, "speech_executor", None)
         warm_func = partial(
             synth.warm_connection,
             voice=voice_name,
@@ -361,10 +460,7 @@ class TTSPlayback:
 
         start = time.perf_counter()
         try:
-            result = await asyncio.wait_for(
-                loop.run_in_executor(executor, warm_func),
-                timeout=timeout_sec,
-            )
+            result = await self._run_synthesis(synth, warm_func, timeout=timeout_sec)
         except asyncio.TimeoutError:
             logger.debug(
                 "[%s] TTS voice warmup timed out | voice=%s sample_rate=%s timeout=%.1fs",
@@ -508,7 +604,10 @@ class TTSPlayback:
 
         # Resolve voice from agent if not provided
         if not voice_name:
-            voice_name, voice_style, voice_rate, voice_pitch = self.get_agent_voice()
+            voice_name, agent_style, agent_rate, agent_pitch = self.get_agent_voice()
+            voice_style = voice_style if voice_style is not None else agent_style
+            voice_rate = voice_rate if voice_rate is not None else agent_rate
+            voice_pitch = voice_pitch if voice_pitch is not None else agent_pitch
 
         style = voice_style or "conversational"
         rate = voice_rate or "medium"
@@ -527,11 +626,12 @@ class TTSPlayback:
         # Synthesize under lock, stream without lock to avoid blocking
         # concurrent TTS requests during the (slower) streaming phase.
         pcm_bytes = None
+        generation_token = self._generation_context.set(self._generation)
         try:
             async with self._tts_lock:
                 # Barge-in owns the cancel event; only read it here so a fresh
                 # barge-in signal is not wiped before the handler resets it.
-                if self._cancel_event.is_set():
+                if self._is_cancelled():
                     return False
 
                 self._is_playing = True
@@ -545,6 +645,13 @@ class TTSPlayback:
                         "[%s] TTS synthesizer not initialized (missing speech config) - check Azure credentials",
                         self._session_short,
                     )
+                    await self._report_tts_failure(
+                        voice=voice_name,
+                        error_details=(
+                            "Speech synthesizer is not initialized: the Speech resource "
+                            "key/region or managed identity configuration is missing or invalid."
+                        ),
+                    )
                     return False
 
                 # Streaming path: synthesize and send interleaved (low TTFA).
@@ -552,20 +659,23 @@ class TTSPlayback:
                 # transmission are pipelined together.
                 if _STREAMING_ENABLED and hasattr(synth, "synthesize_to_pcm_stream"):
                     return await self._stream_synth_to_browser(
-                        synth, text, voice_name, style, rate, pitch, on_first_audio, run_id
+                        synth, text, voice_name, style, rate, on_first_audio, run_id, pitch=pitch
                     )
 
                 # Synthesize audio (under lock)
                 pcm_bytes = await self._synthesize(
-                    synth, text, voice_name, style, rate, pitch, SAMPLE_RATE_BROWSER
+                    synth, text, voice_name, style, rate, SAMPLE_RATE_BROWSER, pitch=pitch
                 )
 
             # Lock released — check cancel before streaming (read-only).
-            if self._cancel_event.is_set():
+            if self._is_cancelled():
                 return False
 
             if not pcm_bytes:
                 logger.warning("[%s] TTS returned empty audio", self._session_short)
+                await self._report_tts_failure(
+                    voice=voice_name, error_details=self._synth_error_details(synth)
+                )
                 return False
 
             # Stream to browser (without lock)
@@ -573,12 +683,14 @@ class TTSPlayback:
 
         except asyncio.CancelledError:
             logger.debug("[%s] Browser TTS cancelled", self._session_short)
-            return False
+            raise
         except Exception as e:
             logger.error("[%s] Browser TTS failed: %s", self._session_short, e)
+            await self._report_tts_failure(voice=voice_name, exception=e)
             return False
         finally:
             self._is_playing = False
+            self._generation_context.reset(generation_token)
 
     async def play_to_acs(
         self,
@@ -614,7 +726,10 @@ class TTSPlayback:
 
         # Resolve voice from agent if not provided
         if not voice_name:
-            voice_name, voice_style, voice_rate, voice_pitch = self.get_agent_voice()
+            voice_name, agent_style, agent_rate, agent_pitch = self.get_agent_voice()
+            voice_style = voice_style if voice_style is not None else agent_style
+            voice_rate = voice_rate if voice_rate is not None else agent_rate
+            voice_pitch = voice_pitch if voice_pitch is not None else agent_pitch
 
         style = voice_style or "conversational"
         rate = voice_rate or "medium"
@@ -635,11 +750,12 @@ class TTSPlayback:
         # Synthesize under lock, stream without lock to avoid blocking
         # concurrent TTS requests during the (slower) streaming phase.
         pcm_bytes = None
+        generation_token = self._generation_context.set(self._generation)
         try:
             async with self._tts_lock:
                 # Barge-in owns the cancel event; only read it here so a fresh
                 # barge-in signal is not wiped before the handler resets it.
-                if self._cancel_event.is_set():
+                if self._is_cancelled():
                     return False
 
                 self._is_playing = True
@@ -652,6 +768,13 @@ class TTSPlayback:
                     logger.error(
                         "[%s] TTS synthesizer not initialized (missing speech config) - check Azure credentials",
                         self._session_short,
+                    )
+                    await self._report_tts_failure(
+                        voice=voice_name,
+                        error_details=(
+                            "Speech synthesizer is not initialized: the Speech resource "
+                            "key/region or managed identity configuration is missing or invalid."
+                        ),
                     )
                     return False
 
@@ -670,10 +793,10 @@ class TTSPlayback:
                         voice_name,
                         style,
                         rate,
-                        pitch,
                         blocking,
                         on_first_audio,
                         run_id,
+                        pitch=pitch,
                     )
                     logger.info(
                         "[%s] ACS TTS: Stream complete, result=%s", self._session_short, result
@@ -681,16 +804,19 @@ class TTSPlayback:
                     return result
 
                 pcm_bytes = await self._synthesize(
-                    synth, text, voice_name, style, rate, pitch, SAMPLE_RATE_ACS
+                    synth, text, voice_name, style, rate, SAMPLE_RATE_ACS, pitch=pitch
                 )
 
             # Lock released — check cancel before streaming (read-only).
-            if self._cancel_event.is_set():
+            if self._is_cancelled():
                 return False
 
             if not pcm_bytes:
                 logger.error(
                     "[%s] ACS TTS returned empty audio (synthesis failed)", self._session_short
+                )
+                await self._report_tts_failure(
+                    voice=voice_name, error_details=self._synth_error_details(synth)
                 )
                 return False
 
@@ -707,12 +833,14 @@ class TTSPlayback:
 
         except asyncio.CancelledError:
             logger.debug("[%s] ACS TTS cancelled", self._session_short)
-            return False
+            raise
         except Exception as e:
             logger.error("[%s] ACS TTS failed: %s", self._session_short, e)
+            await self._report_tts_failure(voice=voice_name, exception=e)
             return False
         finally:
             self._is_playing = False
+            self._generation_context.reset(generation_token)
 
     @trace_speech(operation="tts.synthesize")
     async def _synthesize(
@@ -722,8 +850,9 @@ class TTSPlayback:
         voice: str,
         style: str,
         rate: str,
-        pitch: str | None,
         sample_rate: int,
+        *,
+        pitch: str | None = None,
     ) -> bytes | None:
         """Synthesize text to PCM audio bytes."""
         logger.info(
@@ -735,9 +864,6 @@ class TTSPlayback:
             pitch,
             sample_rate,
         )
-
-        loop = asyncio.get_running_loop()
-        executor = getattr(self._app_state, "speech_executor", None)
 
         synth_func = partial(
             synth.synthesize_to_pcm,
@@ -757,14 +883,7 @@ class TTSPlayback:
         synthesis_timeout = min(base_timeout + per_char_timeout, 120.0)  # Cap at 2 minutes
 
         try:
-            if executor:
-                result = await asyncio.wait_for(
-                    loop.run_in_executor(executor, synth_func), timeout=synthesis_timeout
-                )
-            else:
-                result = await asyncio.wait_for(
-                    loop.run_in_executor(None, synth_func), timeout=synthesis_timeout
-                )
+            result = await self._run_synthesis(synth, synth_func, timeout=synthesis_timeout)
         except asyncio.TimeoutError:
             logger.error(
                 "[%s] TTS synthesis timed out after %.1fs (voice=%s, text_len=%d)",
@@ -772,6 +891,10 @@ class TTSPlayback:
                 synthesis_timeout,
                 voice,
                 len(text),
+            )
+            await self._report_tts_failure(
+                voice=voice,
+                error_details=(f"Speech synthesis timed out after {synthesis_timeout:.1f}s."),
             )
             return None
 
@@ -795,8 +918,9 @@ class TTSPlayback:
         voice: str,
         style: str,
         rate: str,
-        pitch: str | None,
         sample_rate: int,
+        *,
+        pitch: str | None = None,
     ):
         """
         Async-iterate raw PCM chunks from the blocking streaming generator.
@@ -809,39 +933,65 @@ class TTSPlayback:
         """
         loop = asyncio.get_running_loop()
         executor = getattr(self._app_state, "speech_executor", None)
-        queue: asyncio.Queue = asyncio.Queue()
+        queue: Queue = Queue(maxsize=8)
+        available = asyncio.Event()
+        stop = threading.Event()
         sentinel = object()
+
+        def _put(item: Any) -> bool:
+            while not stop.is_set():
+                try:
+                    queue.put(item, timeout=0.05)
+                except Full:
+                    continue
+                loop.call_soon_threadsafe(available.set)
+                return True
+            return False
 
         def _producer() -> None:
             try:
-                for chunk in synth.synthesize_to_pcm_stream(
+                chunks = synth.synthesize_to_pcm_stream(
                     text=text,
                     voice=voice,
                     sample_rate=sample_rate,
                     style=style,
                     rate=rate,
                     pitch=pitch,
-                ):
-                    if self._cancel_event.is_set():
-                        break
-                    loop.call_soon_threadsafe(queue.put_nowait, chunk)
+                    cancel_event=stop,
+                )
+                with contextlib.closing(chunks):
+                    for chunk in chunks:
+                        if not _put(chunk):
+                            break
             except Exception as exc:  # surface to consumer
-                loop.call_soon_threadsafe(queue.put_nowait, exc)
+                logger.error("[%s] TTS streaming producer failed: %s", self._session_short, exc)
+                _put(exc)
             finally:
-                loop.call_soon_threadsafe(queue.put_nowait, sentinel)
+                _put(sentinel)
 
         producer_future = loop.run_in_executor(executor, _producer)
+        self._producers[producer_future] = stop
+        # Cancellation deliberately skips a queued sentinel. Completion must
+        # still wake a consumer waiting for its first frame.
+        producer_future.add_done_callback(lambda _: available.set())
         try:
-            while True:
-                item = await queue.get()
+            while not stop.is_set() and not self._is_cancelled():
+                available.clear()
+                try:
+                    item = queue.get_nowait()
+                except Empty:
+                    if producer_future.done():
+                        break
+                    await asyncio.wait_for(available.wait(), timeout=30.0)
+                    continue
                 if item is sentinel:
                     break
                 if isinstance(item, Exception):
                     raise item
                 yield item
         finally:
-            with contextlib.suppress(Exception):
-                await producer_future
+            stop.set()
+            await self._join_producer(producer_future, stop, synth)
 
     async def _stream_synth_to_browser(
         self,
@@ -850,9 +1000,10 @@ class TTSPlayback:
         voice: str,
         style: str,
         rate: str,
-        pitch: str | None,
         on_first_audio: Callable[[], None] | None,
         run_id: str,
+        *,
+        pitch: str | None = None,
     ) -> bool:
         """Synthesize and stream PCM to the browser WebSocket as it is produced."""
         chunk_size = 4800  # 100ms at 48kHz mono 16-bit
@@ -865,12 +1016,14 @@ class TTSPlayback:
 
         async def _send_frame(frame: bytes, is_final: bool) -> bool:
             nonlocal first_sent, frame_index
+            if self._is_cancelled():
+                return False
             if not _ws_is_connected(self._ws):
                 logger.warning(
                     "[%s] Browser stream aborted: WebSocket disconnected", self._session_short
                 )
                 return False
-            await self._ws.send_json(
+            sent = await self._send_transport_json(
                 {
                     "type": "audio_data",
                     "data": base64.b64encode(frame).decode("utf-8"),
@@ -882,6 +1035,8 @@ class TTSPlayback:
                     "is_final": is_final,
                 }
             )
+            if not sent:
+                return False
             self._mark_browser_audio_queued(len(frame))
             frame_index += 1
             if not first_sent:
@@ -892,11 +1047,12 @@ class TTSPlayback:
             await asyncio.sleep(0)
             return True
 
+        chunks = self._iter_synth_chunks(
+            synth, text, voice, style, rate, SAMPLE_RATE_BROWSER, pitch=pitch
+        )
         try:
-            async for pcm in self._iter_synth_chunks(
-                synth, text, voice, style, rate, pitch, SAMPLE_RATE_BROWSER
-            ):
-                if self._cancel_event.is_set():
+            async for pcm in chunks:
+                if self._is_cancelled():
                     logger.debug("[%s] Browser stream cancelled", self._session_short)
                     return False
                 buffer.extend(pcm)
@@ -908,8 +1064,13 @@ class TTSPlayback:
                         return False
         except Exception as e:
             logger.error("[%s] Browser streaming synthesis failed: %s", self._session_short, e)
+            await self._report_tts_failure(voice=voice, exception=e)
             return False
+        finally:
+            await chunks.aclose()
 
+        if self._is_cancelled():
+            return False
         # Flush remaining tail as the final frame.
         if buffer:
             if not await _send_frame(bytes(buffer), is_final=True):
@@ -930,6 +1091,12 @@ class TTSPlayback:
             frame_index,
             run_id,
         )
+        if not total_bytes and not self._is_cancelled():
+            # Synthesis "succeeded" but produced nothing, which the caller only
+            # experiences as silence. Report the cancellation the SDK recorded.
+            await self._report_tts_failure(
+                voice=voice, error_details=self._synth_error_details(synth)
+            )
         return total_bytes > 0
 
     async def _stream_synth_to_acs(
@@ -939,10 +1106,11 @@ class TTSPlayback:
         voice: str,
         style: str,
         rate: str,
-        pitch: str | None,
         blocking: bool,
         on_first_audio: Callable[[], None] | None,
         run_id: str,
+        *,
+        pitch: str | None = None,
     ) -> bool:
         """Synthesize and stream PCM to the ACS WebSocket as it is produced."""
         chunk_size = 1280  # 40ms at 16kHz mono 16-bit
@@ -971,7 +1139,7 @@ class TTSPlayback:
                 )
                 return False
             try:
-                sent = await self._send_acs_json(
+                sent = await self._send_transport_json(
                     {
                         "kind": "AudioData",
                         "audioData": {
@@ -993,9 +1161,7 @@ class TTSPlayback:
             if not sent:
                 # Barge-in StopAudio is in effect; stop streaming immediately so
                 # no AudioData reaches ACS after the stop.
-                logger.debug(
-                    "[%s] ACS stream suppressed (barge-in StopAudio)", self._session_short
-                )
+                logger.debug("[%s] ACS stream suppressed (barge-in StopAudio)", self._session_short)
                 return False
             self._mark_acs_audio_queued(len(frame))
             chunks_sent += 1
@@ -1008,17 +1174,18 @@ class TTSPlayback:
             await asyncio.sleep(0.04 if blocking else 0)
             return True
 
+        chunks = self._iter_synth_chunks(
+            synth, text, voice, style, rate, SAMPLE_RATE_ACS, pitch=pitch
+        )
         try:
-            async for pcm in self._iter_synth_chunks(
-                synth, text, voice, style, rate, pitch, SAMPLE_RATE_ACS
-            ):
-                if self._cancel_event.is_set():
+            async for pcm in chunks:
+                if self._is_cancelled():
                     logger.debug("[%s] ACS stream cancelled", self._session_short)
                     return False
                 buffer.extend(pcm)
                 total_bytes += len(pcm)
                 while len(buffer) >= chunk_size:
-                    if self._cancel_event.is_set():
+                    if self._is_cancelled():
                         logger.debug("[%s] ACS stream cancelled", self._session_short)
                         return False
                     frame = bytes(buffer[:chunk_size])
@@ -1027,8 +1194,13 @@ class TTSPlayback:
                         return False
         except Exception as e:
             logger.error("[%s] ACS streaming synthesis failed: %s", self._session_short, e)
+            await self._report_tts_failure(voice=voice, exception=e)
             return False
+        finally:
+            await chunks.aclose()
 
+        if self._is_cancelled():
+            return False
         # Flush remaining tail (sent as-is, matching the blocking path).
         if buffer:
             if not await _send_frame(bytes(buffer)):
@@ -1049,6 +1221,10 @@ class TTSPlayback:
             total_bytes,
             run_id,
         )
+        if not total_bytes and not self._is_cancelled():
+            await self._report_tts_failure(
+                voice=voice, error_details=self._synth_error_details(synth)
+            )
         return total_bytes > 0
 
     async def _stream_to_browser(
@@ -1072,7 +1248,7 @@ class TTSPlayback:
         )
 
         for i in range(0, len(pcm_bytes), chunk_size):
-            if self._cancel_event.is_set():
+            if self._is_cancelled():
                 logger.debug("[%s] Browser stream cancelled", self._session_short)
                 return False
 
@@ -1088,7 +1264,7 @@ class TTSPlayback:
             frame_index = chunks_sent
             is_final = (i + chunk_size) >= len(pcm_bytes)
 
-            await self._ws.send_json(
+            sent = await self._send_transport_json(
                 {
                     "type": "audio_data",
                     "data": b64_chunk,
@@ -1098,6 +1274,8 @@ class TTSPlayback:
                     "is_final": is_final,
                 }
             )
+            if not sent:
+                return False
             self._mark_browser_audio_queued(len(chunk))
             chunks_sent += 1
 
@@ -1149,7 +1327,7 @@ class TTSPlayback:
         )
 
         for i in range(0, len(pcm_bytes), chunk_size):
-            if self._cancel_event.is_set():
+            if self._is_cancelled():
                 logger.debug("[%s] ACS stream cancelled", self._session_short)
                 return False
 
@@ -1174,7 +1352,7 @@ class TTSPlayback:
             }
 
             try:
-                sent = await self._send_acs_json(message)
+                sent = await self._send_transport_json(message)
             except Exception as e:
                 logger.error(
                     "[%s] ACS stream ERROR sending chunk %d/%d: %s",
@@ -1187,16 +1365,12 @@ class TTSPlayback:
             if not sent:
                 # Barge-in StopAudio is in effect; stop streaming immediately so
                 # no AudioData reaches ACS after the stop.
-                logger.debug(
-                    "[%s] ACS stream suppressed (barge-in StopAudio)", self._session_short
-                )
+                logger.debug("[%s] ACS stream suppressed (barge-in StopAudio)", self._session_short)
                 return False
             self._mark_acs_audio_queued(len(chunk))
             chunks_sent += 1
             if chunks_sent == 1:
-                logger.info(
-                    "[%s] ACS stream: First chunk sent successfully", self._session_short
-                )
+                logger.info("[%s] ACS stream: First chunk sent successfully", self._session_short)
 
             if not first_sent:
                 first_sent = True
@@ -1220,10 +1394,10 @@ class TTSPlayback:
         )
         return True
 
-    async def _send_acs_json(
+    async def _send_transport_json(
         self, message: dict[str, Any], *, allow_during_cancel: bool = False
     ) -> bool:
-        """Serialize ACS media websocket writes across audio and StopAudio control.
+        """Serialize media websocket writes across audio and stop controls.
 
         Returns True if the message was written. ``AudioData`` writes are
         suppressed (return False) once a barge-in cancel is in effect, so no
@@ -1234,7 +1408,7 @@ class TTSPlayback:
         to bypass the gate so the stop itself is never suppressed.
         """
         async with self._transport_send_lock:
-            if not allow_during_cancel and self._cancel_event.is_set():
+            if not allow_during_cancel and self._is_cancelled():
                 return False
             await self._ws.send_json(message)
             return True
@@ -1264,9 +1438,27 @@ class TTSPlayback:
         self._last_transport_audio_sent_at = 0.0
 
     async def stop_transport_playback(self, *, reason: str = "barge_in") -> bool:
-        """Actively stop ACS-side playback and clear any buffered media."""
+        """Actively stop transport playback after any in-flight audio write."""
         self.cancel()
         self.reset_transport_playback_tracking()
+
+        if self._context.is_browser:
+            if self._ws is None or not _ws_is_connected(self._ws):
+                return False
+            async with self._transport_send_lock:
+                await send_session_envelope(
+                    self._ws,
+                    {
+                        "type": "control",
+                        "action": "audio_stop",
+                        "reason": reason,
+                        "session_id": self._session_id,
+                    },
+                    session_id=self._session_id,
+                    conn_id=self._context.conn_id,
+                    event_label="barge_in_audio_stop",
+                )
+            return True
 
         if not (self._context.is_acs or self._context.is_voicelive):
             return False
@@ -1282,7 +1474,7 @@ class TTSPlayback:
         }
         try:
             # Bypass the AudioData cancel-gate: the stop itself must always go out.
-            await self._send_acs_json(stop_message, allow_during_cancel=True)
+            await self._send_transport_json(stop_message, allow_during_cancel=True)
         except Exception as exc:
             logger.debug("[%s] Failed to send ACS StopAudio: %s", self._session_short, exc)
             return False
@@ -1292,7 +1484,13 @@ class TTSPlayback:
 
     def cancel(self) -> None:
         """Signal TTS cancellation (for barge-in)."""
+        self._generation += 1
         self._cancel_event.set()
+        for stop in self._producers.values():
+            stop.set()
+        synth = self._context.tts_client
+        if synth is not None:
+            synth.stop_speaking()
 
 
 # Backward compatibility: also export from old location

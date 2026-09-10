@@ -20,6 +20,10 @@ locals {
   aisearch_name_from_id = ((var.ai_search_id != null && var.ai_search_id != "")
     ? try(element(split("/", var.ai_search_id), length(split("/", var.ai_search_id)) - 1), "")
   : "")
+
+  appinsights_name_from_id = ((var.application_insights_id != null && var.application_insights_id != "")
+    ? try(element(split("/", var.application_insights_id), length(split("/", var.application_insights_id)) - 1), "")
+  : "")
 }
 
 resource "azapi_resource" "conn_cosmosdb" {
@@ -107,6 +111,49 @@ resource "azapi_resource" "conn_aisearch" {
   response_export_values = [
     "identity.principalId"
   ]
+}
+
+# Application Insights connection: lights up the Foundry portal's Traces and
+# Monitoring (Application analytics) blades for this project and lets continuous /
+# online evaluation read the GenAI (invoke_agent) spans the app emits. This is the
+# PROJECT-level observability wiring — distinct from the account-level Azure Monitor
+# diagnostic settings (RequestResponse / AzureOpenAIRequestUsage / Trace). Both are
+# needed for full end-to-end model-processing validation.
+resource "azapi_resource" "conn_appinsights" {
+  count                     = var.enable_application_insights_connection ? 1 : 0
+  type                      = "Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01"
+  name                      = local.appinsights_name_from_id
+  parent_id                 = azapi_resource.ai_foundry_project.id
+  schema_validation_enabled = false
+
+  lifecycle {
+    precondition {
+      condition     = var.application_insights_id != null && var.application_insights_id != "" && var.application_insights_connection_string != null && var.application_insights_connection_string != ""
+      error_message = "enable_application_insights_connection is true but application_insights_id / application_insights_connection_string were not supplied."
+    }
+  }
+
+  depends_on = [
+    azapi_resource.ai_foundry_project
+  ]
+
+  body = {
+    name = local.appinsights_name_from_id
+    properties = {
+      category = "AppInsights"
+      target   = var.application_insights_id
+      authType = "ApiKey"
+      credentials = {
+        key = var.application_insights_connection_string
+      }
+      isSharedToAll = true
+      metadata = {
+        ApiType    = "Azure"
+        ResourceId = var.application_insights_id
+        location   = var.location
+      }
+    }
+  }
 }
 
 resource "azurerm_role_assignment" "cosmosdb_operator_ai_foundry_project" {

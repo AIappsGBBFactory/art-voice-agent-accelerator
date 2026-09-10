@@ -28,7 +28,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import src.speech.text_to_speech as tts_module
 from apps.artagent.backend.registries.agentstore.base import UnifiedAgent, VoiceConfig
-from apps.artagent.backend.voice.shared.context import VoiceSessionContext
+from apps.artagent.backend.voice.shared.context import TransportType, VoiceSessionContext
+from apps.artagent.backend.voice.tts import playback as playback_module
 from apps.artagent.backend.voice.tts.playback import TTSPlayback
 from fastapi.websockets import WebSocketState
 
@@ -88,6 +89,9 @@ class _CapturingSpeechSynthesizer:
     def start_speaking_ssml_async(self, ssml: str) -> _FakeAsyncOp:
         CAPTURED_SSML.append(ssml)
         return _FakeAsyncOp(SimpleNamespace())
+
+    def stop_speaking_async(self) -> _FakeAsyncOp:
+        return _FakeAsyncOp(None)
 
 
 @pytest.fixture(autouse=True)
@@ -252,7 +256,9 @@ class TestTTSPlaybackEndToEndPitch:
         playback = _playback_for(agent, synth)
         voice_name, style, rate, pitch = playback.get_agent_voice()
 
-        pcm = await playback._synthesize(synth, "Hello", voice_name, style, rate, pitch, 16000)
+        pcm = await playback._synthesize(
+            synth, "Hello", voice_name, style, rate, 16000, pitch=pitch
+        )
 
         assert pcm == b"PCM-BYTES"
         assert '<prosody rate="+8%" pitch="-20%">Hello</prosody>' in CAPTURED_SSML[-1]
@@ -267,7 +273,7 @@ class TestTTSPlaybackEndToEndPitch:
         chunks = [
             chunk
             async for chunk in playback._iter_synth_chunks(
-                synth, "Hello", voice_name, style, rate, pitch, 16000
+                synth, "Hello", voice_name, style, rate, 16000, pitch=pitch
             )
         ]
 
@@ -286,7 +292,7 @@ class TestTTSPlaybackEndToEndPitch:
         playback = _playback_for(agent, synth)
         voice_name, style, rate, pitch = playback.get_agent_voice()
 
-        await playback._synthesize(synth, "Hello", voice_name, style, rate, pitch, 16000)
+        await playback._synthesize(synth, "Hello", voice_name, style, rate, 16000, pitch=pitch)
 
         assert "pitch=" not in CAPTURED_SSML[-1]
 
@@ -300,12 +306,14 @@ class TestTTSPlaybackEndToEndPitch:
         agent_a = _agent(pitch="-25%")
         playback_a = _playback_for(agent_a, synth)
         voice_a, style_a, rate_a, pitch_a = playback_a.get_agent_voice()
-        await playback_a._synthesize(synth, "First", voice_a, style_a, rate_a, pitch_a, 16000)
+        await playback_a._synthesize(synth, "First", voice_a, style_a, rate_a, 16000, pitch=pitch_a)
 
         agent_b = _agent(pitch="+0%")  # different session, default (no) pitch override
         playback_b = _playback_for(agent_b, synth)
         voice_b, style_b, rate_b, pitch_b = playback_b.get_agent_voice()
-        await playback_b._synthesize(synth, "Second", voice_b, style_b, rate_b, pitch_b, 16000)
+        await playback_b._synthesize(
+            synth, "Second", voice_b, style_b, rate_b, 16000, pitch=pitch_b
+        )
 
         assert 'pitch="-25%"' in CAPTURED_SSML[0]
         assert "pitch=" not in CAPTURED_SSML[1]
@@ -313,7 +321,7 @@ class TestTTSPlaybackEndToEndPitch:
     @pytest.mark.asyncio
     async def test_stream_synth_to_browser_and_acs_both_forward_pitch(self) -> None:
         """Both transports call the same _stream_synth_to_* helpers with the
-        newly threaded pitch positional argument; verify neither dropped it."""
+        pitch keyword argument; verify neither dropped it."""
         synth = _make_synth()
         agent = _agent(pitch="-9%")
         playback = _playback_for(agent, synth)
@@ -325,13 +333,59 @@ class TestTTSPlaybackEndToEndPitch:
         voice_name, style, rate, pitch = playback.get_agent_voice()
 
         browser_ok = await playback._stream_synth_to_browser(
-            synth, "Browser text", voice_name, style, rate, pitch, None, "run-browser"
+            synth, "Browser text", voice_name, style, rate, None, "run-browser", pitch=pitch
         )
         acs_ok = await playback._stream_synth_to_acs(
-            synth, "ACS text", voice_name, style, rate, pitch, False, None, "run-acs"
+            synth, "ACS text", voice_name, style, rate, False, None, "run-acs", pitch=pitch
         )
 
         assert browser_ok is True
         assert acs_ok is True
         assert 'pitch="-9%">Browser text' in CAPTURED_SSML[0]
         assert 'pitch="-9%">ACS text' in CAPTURED_SSML[1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("transport", [TransportType.BROWSER, TransportType.ACS])
+async def test_public_playback_preserves_explicit_pitch_without_a_voice_name(
+    monkeypatch, streaming, transport
+):
+    monkeypatch.setattr(playback_module, "_STREAMING_ENABLED", streaming)
+    playback = _playback_for(_agent(pitch="-25%"), _make_synth())
+    playback.context.transport = transport
+    playback.context._websocket = SimpleNamespace(
+        send_json=AsyncMock(),
+        client_state=WebSocketState.CONNECTED,
+        application_state=WebSocketState.CONNECTED,
+    )
+    pitch = '"+5%&'
+    assert await playback.speak("Hello", voice_pitch=pitch)
+    assert f'pitch="{html.escape(pitch, quote=True)}"' in CAPTURED_SSML[0]
+    assert 'pitch="-25%"' not in CAPTURED_SSML[0]
+    assert not playback.context.tts_client.has_active_synthesis
+    await playback.aclose()
+
+
+def test_pitch_refresh_reads_only_the_current_named_override(monkeypatch):
+    original = _agent(pitch="-5%")
+    edited = _agent(pitch="-25%")
+    unrelated = UnifiedAgent(name="Other", voice=VoiceConfig(pitch="+50%"))
+    monkeypatch.setattr(
+        playback_module,
+        "get_session_agent",
+        lambda sid, name=None: edited if name == "Tester" else unrelated,
+    )
+    playback = _playback_for(original, _make_synth())
+    assert playback.get_agent_voice()[3] == "-25%"
+    assert original.voice.pitch == "-5%"
+
+
+def test_initial_tts_binding_preserves_the_resolved_scenario_agent(monkeypatch):
+    monkeypatch.setattr(playback_module, "get_session_agent", lambda *args: None)
+    scenario_agent = _agent(pitch="-25%")
+    playback = _playback_for(scenario_agent, _make_synth())
+    playback._app_state.unified_agents = {"Tester": _agent(pitch="+3%")}
+    playback.set_active_agent("Tester")
+    assert playback.context.current_agent is scenario_agent
+    assert playback.get_agent_voice()[3] == "-25%"
