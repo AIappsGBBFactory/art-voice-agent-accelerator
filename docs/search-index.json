@@ -15,7 +15,7 @@
     {
       "url": "architecture.html",
       "title": "Architecture",
-      "sections": 11
+      "sections": 13
     },
     {
       "url": "certification.html",
@@ -31,6 +31,11 @@
       "url": "index.html",
       "title": "ART Agent",
       "sections": 6
+    },
+    {
+      "url": "quick-tune.html",
+      "title": "Quick Tune",
+      "sections": 10
     }
   ],
   "sections": [
@@ -243,6 +248,14 @@
       "text": "Both modes use the same agents, tools, and handoff logic. The difference is how audio gets processed — and how much of the turn loop you control versus hand to Azure. Both modes branch off the same ACS_STREAMING_MODE dispatch and converge on the same shared core — agents, tools, handoffs, and MemoManager state. Only the audio surface in the middle differs. Click to expand. Pick the mode per deployment with one env var. Everything below the audio surface — agent definitions, the tool registry, HandoffService , and session-state sync into MemoManager — is byte-for-byte identical across modes, so an agent built for Cascade runs unchanged on VoiceLive. SpeechCascade VoiceLive You orchestrate each component separately. Full control over every step. Numbered arrows show the per-turn flow: transcribe → reason → synthesize. Audio In → Azure Speech STT → Transcript → Azure OpenAI → Text → Azure Speech TTS → Audio Out Component Options STT Azure Speech, Whisper, Custom Speech models LLM Any Azure OpenAI model, or bring your own TTS 400+ Azure neural voices, custom styles & prosody VAD Custom silence thresholds, barge-in control Best for: on-prem/hybrid, strict compliance, per-component debugging, model flexibility. Azure-hosted pipeline handles audio in one hop. Lowest latency, managed operations. One managed call replaces STT + LLM + TTS — fewer hops, lower latency. Audio In → Azure VoiceLive SDK (STT + LLM + TTS managed) → Audio Out Feature Details Latency ~200ms end-to-end VAD Server-side automatic turn detection + noise reduction Tools Native function calling via Realtime API Voices HD voices like en-US-Ava:DragonHDLatestNeural Best for: speed to production, lowest latency requirements. # Sets the DEFAULT orchestration mode for ACS telephony calls export ACS_STREAMING_MODE=MEDIA # SpeechCascade export ACS_STREAMING_MODE=VOICE_LIVE # VoiceLive ACS_STREAMING_MODE only sets the default pipeline that inbound ACS phone calls use; the agent framework is identical across both modes. Control & tradeoffs at a glance The two modes are not feature-equivalent. Cascade hands you every component to tune; VoiceLive hands the whole audio loop to Azure for the lowest latency. Pick per workload. Dimension SpeechCascade you control VoiceLive Azure-managed Latency ~400 ms end-to-end (3 hops) ~200–250 ms (single hop) Components Swap STT, LLM, TTS independently One managed pipeline — no swapping LLM surface Chat Completions or Responses API ( _process_llm ) Realtime API only ( gpt-realtime ) VAD / barge-in Client-side thresholds + ThreadBridge cancellation Server-side automatic — not tunable STT models Custom Speech + phrase lists Built-in only Voices 400+ neural voices, per-agent styles HD voices only (e.g. DragonHDLatest ) Deployment On-prem / hybrid endpoints supported Azure cloud only Turn model Synchronous per-turn ( process_user_input ) Event-driven ( ServerEventType.* ) How each mode manages turn context & state Both modes read and write the same MemoManager via sync_state_from_memo() / sync_state_to_memo() — so active agent, visited agents, profile, and handoff context survive across turns and container restarts. They differ in how the model sees that context on each turn: SpeechCascade assembles the prompt itself — current agent's per-agent thread plus de-duplicated cross-agent context ( _get_conversation_history ), then ships it to Azure OpenAI. You decide exactly what the model sees, so this is where the planned compaction levers (rolling window, summarizer) plug in. VoiceLive keeps conversation state inside the realtime connection. The orchestrator re-injects a throttled session recap (recent user messages, slots, last assistant turn) via session.update(instructions=…) before responses, and history is per-connection only — visited_agents is intentionally not replayed to avoid stale context on a fresh call. Shared truth. Slots, tool outputs, and the user profile always land in MemoManager regardless of mode, so a handoff or a Cosmos archive looks identical either way."
     },
     {
+      "url": "architecture.html#voicelive-internals",
+      "anchor": "voicelive-internals",
+      "level": 2,
+      "page": "Architecture",
+      "title": "VoiceLive: native vs cascaded  common confusion",
+      "text": "\"VoiceLive\" isn't a single architecture — the model you pick decides how audio is handled. This trips people up constantly, especially around what the transcript actually represents. Explore it below — toggle modes and the Inside VoiceLive options to see how the audio flows. ⚠️ Don't treat the native transcript as ground truth. Because the model reasoned on audio — not the transcribed text — the transcript can differ from what actually drove the reply. Avoid using it for routing decisions, compliance records, or evals. If you need the text the model truly acted on, use a cascaded path (Custom Speech, or cascaded-inside-VoiceLive), where a real STT step produces the actual recognized text. Realtime models can't be fine-tuned and bill premium audio tokens. Before committing to native speech-to-speech in production, benchmark it against higher-throughput text LLMs (the cascade) with a robust eval suite in Azure AI Foundry ."
+    },
+    {
       "url": "architecture.html#agent-framework",
       "anchor": "agent-framework",
       "level": 2,
@@ -264,7 +277,15 @@
       "level": 2,
       "page": "Architecture",
       "title": "Session Runtime",
-      "text": "How the runtime keeps many concurrent calls isolated, how session memory moves through MemoManager / Redis / Cosmos, and what hooks fire on every turn. Everything below is grounded in the current implementation — the names map 1:1 to functions and events in apps/artagent/backend/voice/ . Concurrent session handling and speech-channel isolation Each call is isolated by session_id + call_connection_id , with per-session handlers, per-session turn state, and per-session outbound envelopes. This prevents cross-talk when many conversations run concurrently on the same container. Three concurrent calls on the same container — each owns its handler, queue, MemoManager state, and Redis namespace. Animated lanes show audio flowing per session with no shared path. Isolation boundary How isolation is enforced Why it matters for concurrency Turn ownership Every user/assistant message carries turn identifiers; tool/handoff boundaries advance effective turn IDs instead of reusing stale IDs. Prevents transcript and UI frame collisions across overlapping tool calls. Speech event lanes Speech Cascade uses a dedicated queue and thread bridge per handler instance; Voice Live tracks active response IDs per session. Audio/control events from one call cannot drain or cancel another call's audio lane. Session state Session metadata is stored in MemoManager and synchronized to Redis, then restored into orchestrator state on demand. Stateless container scaling works without losing active agent/context. WebSocket envelopes Outbound events include session-scoped metadata and turn IDs before broadcast. UI and telemetry streams stay correctly partitioned under load. Session memory lifecycle (what persists, when) The hot path stays in MemoManager . Redis is the cross-container source of truth. Cosmos is cold archive only — never read on the hot path. Reads happen once on session start; writes happen on tool/turn boundaries and on cleanup. Five phases of session memory — read on start, in-memory turn updates, opportunistic Redis writes at tool boundaries, async flush on stop, and Cosmos archival after the call ends. Session starts: orchestrator reads prior state (active agent, visited agents, profile, handoff context) from MemoManager/Redis. Each turn: orchestrator updates active agent and session vars, then writes back to MemoManager as turn state evolves. Turn/tool boundaries: effective turn IDs are advanced for post-tool segments to keep message history coherent. Session stop/cleanup: handler flushes MemoManager to Redis asynchronously; cold archival to Cosmos remains post-call oriented."
+      "text": "How the runtime keeps many concurrent calls isolated, how session memory moves through MemoManager / Redis / Cosmos, and what hooks fire on every turn. Everything below is grounded in the current implementation — the names map 1:1 to functions and events in apps/artagent/backend/voice/ ."
+    },
+    {
+      "url": "architecture.html#shared-contracts",
+      "anchor": "shared-contracts",
+      "level": 3,
+      "page": "Architecture",
+      "title": "Shared contracts, native execution",
+      "text": "Browser and ACS support Cascade and VoiceLive; Genesys remains VoiceLive-only. Both engines use voice/shared/tool_policy.py for tool inputs and committed identity/profile/slot effects, and HandoffService for authoritative scenario routing. registries/definitions.py derives definition projection, validation and builder schema fields from the existing dataclasses. VoiceLive SDK operations live in voice/voicelive/session.py , not neutral agent definitions. Each native handler retains a shielded close task. Concurrent callers observe its completion or failure; cancellation does not abandon cleanup. Producers stop before a strict final snapshot and strict pending flush. Unacknowledged native work is quarantined without claiming a stable snapshot or recycling speech leases, while safe independent cleanup still runs. The unused SessionAgentManager, aggregate SpeechCascadeHandler and alternate test-only VoiceLive output path are retired. See the human extension guide and storage contract . Concurrent session handling and speech-channel isolation Each call is isolated by session_id + call_connection_id , with per-session handlers, per-session turn state, and per-session outbound envelopes. This prevents cross-talk when many conversations run concurrently on the same container. Three concurrent calls on the same container — each owns its handler, queue, MemoManager state, and Redis namespace. Animated lanes show audio flowing per session with no shared path. Isolation boundary How isolation is enforced Why it matters for concurrency Turn ownership Every user/assistant message carries turn identifiers; tool/handoff boundaries advance effective turn IDs instead of reusing stale IDs. Prevents transcript and UI frame collisions across overlapping tool calls. Speech event lanes Speech Cascade uses a dedicated queue and thread bridge per handler instance; Voice Live tracks active response IDs per session. Audio/control events from one call cannot drain or cancel another call's audio lane. Session state Session metadata is stored in MemoManager and synchronized to Redis, then restored into orchestrator state on demand. Stateless container scaling works without losing active agent/context. WebSocket envelopes Outbound events include session-scoped metadata and turn IDs before broadcast. UI and telemetry streams stay correctly partitioned under load. Session memory lifecycle (what persists, when) The hot path stays in the current MemoManager . Startup and offline definition loading hydrate asynchronously; live API/event mutations reuse the existing application/engine registry's memo. Redis stores snapshots and Cosmos is cold archive. Ordering is per memo on its owning event loop, not distributed CAS: independent workers/writers can still overwrite whole-state snapshots. Five phases of session memory — read on start, in-memory turn updates, opportunistic Redis writes at tool boundaries, async flush on stop, and Cosmos archival after the call ends. Session starts: orchestrator reads prior state (active agent, visited agents, profile, handoff context) from MemoManager/Redis. Each turn: orchestrator updates active agent and session vars, then writes back to MemoManager as turn state evolves. Turn/tool boundaries: effective turn IDs are advanced for post-tool segments to keep message history coherent. Session stop/cleanup: quiesced producers precede an awaited strict snapshot and a strict pending flush in finally . Native stop failure skips the stable snapshot, not draining submitted writes or attempting safe cleanup. Cold archival remains post-call oriented."
     },
     {
       "url": "architecture.html#per-turn-memory",
@@ -649,6 +670,86 @@
       "page": "ART Agent",
       "title": "Next Steps",
       "text": "Understand Architecture Data flows, orchestration modes, agent framework, storage tiers. Build Guides Create agents, add tools, deploy to production, run locally. Explore Agents & Scenarios Pre-built agents for banking, insurance, healthcare. Scenario wiring. Reference API Reference REST endpoints, WebSocket protocol, MCP integration."
+    },
+    {
+      "url": "quick-tune.html#top",
+      "anchor": "top",
+      "level": 1,
+      "page": "Quick Tune",
+      "title": "Quick Tune",
+      "text": "A live, in-call authoring workspace for tuning agents and scenarios — without redeploying, and without leaving the conversation you're testing. What's new: Quick Tune now shows which Foundry resource/region backs each model list, blocks BYOM/model mismatches before Apply, preserves the active scenario across an apply, and — most recently — lets you preview a whole scenario's agents, tools, and handoffs before jumping into the full graphical editor. Quick Tune is the panel behind the tune icon in the call console. It edits a session-scoped copy of an agent or scenario — changes are draft-only until you press Save changes , and they never mutate the shared YAML catalog in registries/agentstore/ or registries/scenariostore/ ."
+    },
+    {
+      "url": "quick-tune.html#opening",
+      "anchor": "opening",
+      "level": 2,
+      "page": "Quick Tune",
+      "title": "Opening Quick Tune",
+      "text": "Quick Tune opens as a docked drawer alongside the active call. It always shows the current session id, the active scenario, and a status pill ( Ready to try / Unsaved draft ) so you always know whether what you're looking at has been applied yet. Quick Tune docked next to a live call. The Tune agent tab is selected; Edit scenario and Create scenario sit alongside it. Three tabs cover the whole authoring surface: Tab Edits Backend endpoint Tune agent The selected agent's model, voice, BYOM mode, tools, prompt, and turn-detection/VAD knobs PUT /api/v1/agent-builder/session/{session_id} Edit scenario Handoff routes between agents already in the active scenario PUT /api/v1/scenario-builder/session/{session_id} Create scenario A brand-new draft scenario, generated from a prompt or template, previewed before it becomes the active one /api/v1/scenario-drafts/*"
+    },
+    {
+      "url": "quick-tune.html#tune-agent",
+      "anchor": "tune-agent",
+      "level": 2,
+      "page": "Quick Tune",
+      "title": "Tune Agent",
+      "text": "The Tune agent tab is scoped to one agent at a time (shown in the Agent to tune selector) — not the whole scenario. It's organized into collapsible cards: Behavior , Tools , and Voice & model , plus fine-grained sliders for speaking rate and pause-before-reply. Fields map to a fixed set of properties on the session agent payload: UI field Payload field Used by Model source / Model cascade_model (Cascade) or voicelive_model (VoiceLive) Both orchestrators BYOM selector byom.mode VoiceLive only Input transcription session.input_audio_transcription_settings.model VoiceLive only Voice / Voice style voice.name , voice.style Both Speaking rate / Pitch voice.rate , voice.pitch Both Pause before reply / VAD sliders (Fine controls) session.turn_detection.* (VoiceLive) or speech.vad_silence_timeout_ms / speech.use_semantic_segmentation (Cascade) Mode-specific Tools tools[] Both Behavior / prompt prompt , greeting , handoff_trigger Both Two save paths exist, chosen automatically: Live-settings fast path — if only VAD/voice changed on an active VoiceLive call, Quick Tune calls POST /api/v1/agent-builder/session/{session_id}/live-settings , which pushes a session.update over the open VoiceLive socket with no reconnect. Full persist path — any model, BYOM, transcription, tool, or prompt change goes through the full PUT /api/v1/agent-builder/session/{session_id} , which forces a reconnect so the new model/BYOM binding takes effect at connect time."
+    },
+    {
+      "url": "quick-tune.html#voice-model",
+      "anchor": "voice-model",
+      "level": 2,
+      "page": "Quick Tune",
+      "title": "Voice & Model Catalog",
+      "text": "The model and voice dropdowns are populated live from GET /api/v1/agent-builder/voices and the connected Foundry account's deployment list — not a hardcoded catalog. The panel also states which Azure resource and region served that list, because Cascade reads the primary AI Foundry account while VoiceLive reads the separate Voice Live (AVL) account, and the two are often provisioned in different regions. Searching the live voice catalog. The helper text under the field states the source region and voice count — “568 voices from northcentralus (cached)” — so a latency-sensitive mismatch between the app, Cascade Foundry, and Voice Live regions is visible instead of silent. Why this matters: before this attribution was added, the panel only showed a bare deployment count. In one deployment the backend ran in westus2 , Cascade's Foundry account in northcentralus , and Voice Live in swedencentral — a trans-Atlantic hop on the realtime audio path that fully explained observed 1100–1300ms VoiceLive time-to-first-token, with nothing in the UI to explain why."
+    },
+    {
+      "url": "quick-tune.html#tools",
+      "anchor": "tools",
+      "level": 2,
+      "page": "Quick Tune",
+      "title": "Tool Catalog",
+      "text": "The Tools card lists every tool registered in registries/toolstore/registry.py , searchable by purpose, filterable to just the agent's current selection, and annotated with which agent(s) each tool is already assigned to — so you can see cross-agent tool sharing before changing it. Tool catalog filtered to “fraud”. Each result shows its registered name, category badge, and current agent assignment ( Assigned to FraudAgent ) pulled straight from the live registry."
+    },
+    {
+      "url": "quick-tune.html#prompt-editor",
+      "anchor": "prompt-editor",
+      "level": 2,
+      "page": "Quick Tune",
+      "title": "Prompt Editor",
+      "text": "The prompt editor opens the agent's Jinja/Markdown prompt template with a live Preview pane. Preview renders the template with the session's current context variables (like {{ agent_name }} ) — it is explicitly a read-only snapshot, because the runtime also appends scenario handoff instructions and conversation recap at connect/turn time that the static preview cannot reproduce. Prompt editor for Concierge / VoiceLive / Session context . The right pane renders {{ agent_name }} against the live session and calls out that scenario handoff instructions are added by the runtime, not the preview."
+    },
+    {
+      "url": "quick-tune.html#scenarios",
+      "anchor": "scenarios",
+      "level": 2,
+      "page": "Quick Tune",
+      "title": "Scenario Preview & Editor",
+      "text": "Before d1c0994 , previewing a scenario meant jumping straight into the full drag-and-drop graph editor. Scenario preview now shows a bounded, read-only view of the selected scenario's agents and handoffs first, with a clickable path into the full editor only when you need it. Bounded preview of the Banking scenario — start agent, handoff count, and an Open graphical editor escape hatch — rendered without leaving the Tune agent context. Clicking through (or using Create scenario / Edit scenario directly) opens the full graph: draggable agent nodes, handoff edges, and a per-node/per-edge inspector. Nothing here is saved until Apply scenario . Full graphical editor. Agents from the catalog (left) can be dragged onto the canvas; the Scenario Flow panel summarizes start agent, agent count, and handoff routes before Apply scenario ."
+    },
+    {
+      "url": "quick-tune.html#apply",
+      "anchor": "apply",
+      "level": 2,
+      "page": "Quick Tune",
+      "title": "Apply & Session Binding",
+      "text": "Pressing Save changes (agent) or Apply scenario (scenario) is the moment a draft becomes a real, session-scoped runtime object. The backend never edits the shared catalog — it clones into a per-session copy via session_agent_for_edit() and stores it keyed by session_id , so the change only affects the call you're tuning, and survives a reconnect on that same session. Confirmation toast after Apply — it echoes back exactly what the backend persisted ( Model gpt-4o · Voice Ava · 1 tool ), so the UI never claims success without confirming the session-scoped write. Where each field lands, end to end Layer What happens Code Frontend Apply Validates the payload (see guardrails ), then PUT /api/v1/agent-builder/session/{session_id} or the live-settings fast path. utils/quickTune.js ( quickTuneRequest ), components/QuickTuneWorkspace.jsx Endpoint _upsert_session_agent(...) validates the merged agent, then stores it. api/v1/endpoints/agent_builder.py Session store session_agent_for_edit() deep-copies the base/scenario agent into session scope (or reuses the session's existing copy); the registry keeps the per-session map plus which agent is active, mirrored into Redis. src/orchestration/session_agents.py Cascade pickup _get_or_create_adapter() injects the session agent into adapter.agents and writes active_agent to MemoManager before sync_from_memo_manager() runs, so a stale memo value can't silently override the just-tuned agent. src/orchestration/unified/__init__.py , voice/speech_cascade/orchestrator.py VoiceLive pickup _update_session_context() rebuilds prompt instructions from the active session agent and the scenario's handoff instructions, and sends session.update only when the resulting fingerprint actually changed. voice/voicelive/orchestrator.py"
+    },
+    {
+      "url": "quick-tune.html#runtime-contract",
+      "anchor": "runtime-contract",
+      "level": 2,
+      "page": "Quick Tune",
+      "title": "Runtime Contract: Cascade vs. VoiceLive",
+      "text": "Both orchestrators read the same session-scoped agent object, but bind it to the live call differently: SpeechCascade VoiceLive When the tuned agent is bound Resolved per turn — route_turn() re-checks the session agent every turn, so most edits apply without a reconnect. Bound at connect time — model, BYOM, and transcription changes require the socket to reconnect. Model field cascade_model.deployment_id voicelive_model.deployment_id , gated by byom.mode Turn detection speech.vad_silence_timeout_ms , speech.use_semantic_segmentation (Azure Speech STT, cannot change mid-stream) session.turn_detection.* , pushable live via apply_live_session_settings() Handoff routing HandoffService , built from the scenario resolved for the session Same HandoffService contract, plus handoff instructions folded into session.update Scenario resolution resolve_orchestrator_config(session_id=...) must be given the session's scenario name, or handoff routing silently falls back to declarative scenariostore/*/orchestration.yaml defaults Same requirement — an earlier bug ( b8972f7 ) dropped the session scenario on every VoiceLive reconnect until this was fixed The practical effect: on Cascade, most Quick Tune edits are visible on the caller's very next turn. On VoiceLive, anything beyond voice/VAD forces a short reconnect, because the model and BYOM profile are properties of the realtime socket itself, not something that can be renegotiated mid-session."
+    },
+    {
+      "url": "quick-tune.html#guardrails",
+      "anchor": "guardrails",
+      "level": 2,
+      "page": "Quick Tune",
+      "title": "Validation Guardrails",
+      "text": "Quick Tune enforces the same two rules on both the client and the server, so a bad combination is rejected before Apply rather than connecting a session that silently can't speak: Managed model requires BYOM off. A non-managed VoiceLive model selected while byom.mode is empty is blocked ( needsByomForModel client-side; is_managed_voicelive_model(...) server-side). BYOM profile must match the model's API family. Pairing a realtime model (e.g. gpt-realtime ) with a chat-completions BYOM profile ( byom-azure-openai-chat-completion ) is blocked ( byomProfileConflict client-side; byom_profile_model_conflict(...) server-side). Why this was worth guarding: before this validation existed, that exact mismatch let a tuned session connect and report session_contract_ok while the LLM leg of the realtime socket never actually answered — STT kept transcribing into a model deployment that only serves /chat/completions , not /realtime . App Insights showed real pre-tune turns ( ttft=1121ms ) followed by post-tune turns with every latency metric reading N/A , because no response ever came back. Quick tick-list for picking a valid combination: Mode Model BYOM Cascade Any cascade_model deployment on the primary Foundry account Not applicable VoiceLive, managed A managed VoiceLive model from the connected AVL account Off VoiceLive, BYOM A deployment that exists on the BYOM-connected Foundry resource On, matching the model's API family (realtime vs. chat completion)"
     }
   ]
 }
