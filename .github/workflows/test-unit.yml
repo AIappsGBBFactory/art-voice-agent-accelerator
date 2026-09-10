@@ -66,6 +66,12 @@ jobs:
       - name: 📦 Install dependencies
         run: uv pip install --system -e ".[dev]"
 
+      - name: Install Redis for persistence regressions
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends redis-server
+          redis-server --version
+
       - name: 🧪 Run unit tests
         env:
           PYTHONPATH: .
