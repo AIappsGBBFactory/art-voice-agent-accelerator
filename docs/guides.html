@@ -48,6 +48,7 @@
     </div>
     <div class="sidebar-section">
       <h4>Extend</h4>
+      <a href="telephony-options.html">Choose a Telephony Architecture</a>
       <a href="#create-agent">Create an Agent</a>
       <a href="#add-tool">Add a Tool</a>
       <a href="#create-scenario">Create a Scenario</a>
@@ -687,6 +688,9 @@ manager = AoaiClientManager(<span class="tok-attr">factory</span>=my_client_fact
       <hr>
 
       <h2 id="add-channel">Add a Channel</h2>
+      <div class="callout">
+        <p><strong>Choose the control and media architecture first.</strong> <a href="telephony-options.html">Telephony Options</a> compares ACS, Teams via TPE, Graph calling bots, SIP gateways, and managed agents. Teams Direct Routing alone is not a duplex media API. Current support is browser/ACS with either engine, and Genesys AudioHook with VoiceLive only; see the <a href="voice-extension-guide.md">runtime extension ownership guide</a>.</p>
+      </div>
       <p>The accelerator already ships two independent telephony bridges — <a href="#enable-phone-calling">Azure Communication Services</a> and <a href="#genesys">Genesys Cloud</a> — that both terminate into the exact same agent/tool/scenario/handoff core. Use them as the reference contract for a third channel (Twilio, Vonage, a custom SIP trunk, a web-chat widget with voice, etc.).</p>
 
       <p>Both existing bridges do the same three jobs; a new channel needs to do the same:</p>

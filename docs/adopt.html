@@ -48,6 +48,7 @@
     </div>
     <div class="sidebar-section">
       <h4>Related</h4>
+      <a href="telephony-options.html">Telephony Options: ACS &amp; Teams</a>
       <a href="guides.html#swap-provider">Swap a Provider</a>
       <a href="guides.html#add-channel">Add a Channel</a>
       <a href="architecture.html">Key Design Decisions</a>
@@ -126,6 +127,9 @@ flowchart TD
       <hr>
 
       <h2 id="extension-points">Extension Points Matrix</h2>
+      <div class="callout">
+        <p><strong>Choosing telephony?</strong> Read <a href="telephony-options.html">Telephony Options</a> before swapping a channel. Teams Phone via TPE retains ACS; Graph and SIP-gateway alternatives require new control/media integrations. The guide separates the public code baseline, proposed integration designs, and publicly documented product previews.</p>
+      </div>
       <p>Whichever mode you pick, these are the seams the codebase was designed to be cut along. Each row is a real interface or factory you can swap without touching the orchestrators.</p>
 
       <table>
