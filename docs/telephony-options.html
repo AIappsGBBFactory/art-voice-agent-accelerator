@@ -34,7 +34,7 @@
   <aside class="sidebar" aria-label="Guide sections">
     <div class="sidebar-section">
       <h4>Decide</h4>
-      <a href="#workstreams">Start with your workstream</a>
+      <a href="#workstreams">Pick a configuration</a>
       <a href="#choose">Compare options</a>
       <a href="#lifecycle">Lifecycle evidence</a>
     </div>
@@ -50,7 +50,7 @@
       <h4>Check the prerequisites</h4>
       <a href="#permissions">Licenses &amp; permissions</a>
       <a href="#handoffs">Human handoff</a>
-      <a href="#migration">ACS exit workstreams</a>
+      <a href="#migration">Component swaps</a>
       <a href="#sources">Sources &amp; dates</a>
     </div>
     <div class="sidebar-section">
@@ -64,7 +64,7 @@
     <div class="content-inner">
       <nav class="section-jump" aria-label="Guide navigation">
         <a href="#choose">Compare</a>
-        <a href="#workstreams">Workstreams</a>
+        <a href="#migration">Swap components</a>
         <a href="#permissions">Licenses</a>
         <a href="#sources">Sources</a>
       </nav>
@@ -72,30 +72,31 @@
         <p class="eyebrow">Architecture decision guide / 20 September 2026</p>
         <h1 id="top">Teams Phone <span class="not-equal" aria-label="does not mean">&ne;</span> ACS-free</h1>
         <p class="subtitle">Teams Phone changes the telephony identity. TPE still uses ACS for call control and audio.</p>
-        <p>Keep that integration, replace it with Graph or a SIP gateway, or move the conversation into a managed product. <strong>These are different workstreams, not interchangeable provider settings.</strong></p>
+        <p>Keep the ACS bridge, replace its control/media layer, or move the conversation into a managed product. <strong>See exactly which components change for each configuration.</strong></p>
         <p class="source-note">Microsoft's integration models: <a href="https://learn.microsoft.com/en-us/microsoftteams/teams-contact-center#integration-models-for-solution-providers">Unify = ACS, Extend = Graph, Connect = certified SBC + Direct Routing</a>.</p>
       </div>
 
-      <h2 id="workstreams">Start with the work you need to deliver</h2>
-      <nav class="workstream-nav" aria-label="Workstreams">
-        <a href="#tpe"><span class="eyebrow">Teams integration</span><strong>Reuse the ACS bridge</strong><span>Provision the resource account (RA), authorize access, and prove the call flows.</span></a>
-        <a href="#migration"><span class="eyebrow">Complete ACS removal</span><strong>Replace voice + messaging</strong><span>Choose Graph or a gateway; migrate email/SMS separately.</span></a>
-        <a href="#managed"><span class="eyebrow">Managed alternative</span><strong>Evaluate runtime migration</strong><span>Check preview eligibility and basic-voice limits before replacing the app.</span></a>
+      <h2 id="workstreams">Pick a configuration</h2>
+      <nav class="configuration-nav" aria-label="Configuration shortcuts">
+        <a href="#swap-tpe"><span class="eyebrow">Teams via ACS</span><strong>Change the phone identity</strong><span>Keep ACS control/media and the Python engine.</span></a>
+        <a href="#swap-graph"><span class="eyebrow">Graph bot</span><strong>Replace the ACS bridge</strong><span>Add Windows/.NET media in front of Python.</span></a>
+        <a href="#swap-sip"><span class="eyebrow">SIP gateway</span><strong>Replace the ACS bridge</strong><span>Add a vendor gateway and a new channel bridge.</span></a>
+        <a href="#swap-managed"><span class="eyebrow">Managed agent</span><strong>Replace the voice runtime</strong><span>Move conversation logic into the product.</span></a>
       </nav>
 
       <h2 id="choose">Choose a direction</h2>
-      <p>Compare the application boundary and the next proof required. Open an option for its diagram, call flows, and implementation detail.</p>
+      <p>Compare the application boundary. Open an option for its diagram, call flows, and implementation detail.</p>
       <div class="table-scroll" tabindex="0" role="region" aria-label="Architecture comparison; scroll horizontally on small screens">
         <table class="comparison">
-          <caption>Five architectures, three workstreams</caption>
+          <caption>Current ACS and four target configurations</caption>
           <colgroup><col class="option-column"><col class="acs-column"><col class="runtime-column"><col class="proof-column"></colgroup>
-          <thead><tr><th scope="col">Option / status</th><th scope="col">ACS in your app</th><th scope="col">Runtime boundary</th><th scope="col">Next proof</th></tr></thead>
+          <thead><tr><th scope="col">Option / status</th><th scope="col">ACS in your app</th><th scope="col">Runtime boundary</th><th scope="col">Component change</th></tr></thead>
           <tbody>
-            <tr><th scope="row"><div class="option-cell"><a href="#baseline">1. Standalone ACS</a><span class="status baseline">Baseline</span></div></th><td><strong>Retained</strong></td><td>Python + ACS control/media</td><td>Inventory current dependencies and lifecycle exposure.</td></tr>
-            <tr><th scope="row"><div class="option-cell"><a href="#tpe">2. Teams via ACS/TPE</a><span class="status proposed">Proposed</span></div></th><td><strong>Retained</strong></td><td>Reuse Python + ACS bridge</td><td>Teams RA, access assignment, and supported call flows.</td></tr>
-            <tr><th scope="row"><div class="option-cell"><a href="#graph">3. Graph calling bot</a><span class="status proposed">Proposed</span></div></th><td><strong>Replaced for voice</strong></td><td>Python behind new Windows/.NET media service</td><td>Consent, media-host support, and duplex bridge.</td></tr>
-            <tr><th scope="row"><div class="option-cell"><a href="#sip">4. SIP gateway + Teams</a><span class="status proposed">Proposed</span></div></th><td><strong>Replaced for voice</strong></td><td>Python behind new gateway bridge</td><td>Selected vendor's duplex and transfer contract.</td></tr>
-            <tr><th scope="row"><div class="option-cell"><a href="#managed">5. Managed agents</a><span class="status preview">Preview</span></div></th><td><strong>No custom ACS setup*</strong></td><td>Conversation moves to the product</td><td>Basic-voice fit and preview eligibility.</td></tr>
+            <tr><th scope="row"><div class="option-cell"><a href="#baseline">1. Standalone ACS</a><span class="status baseline">Baseline</span></div></th><td><strong>Retained</strong></td><td>Python + ACS control/media</td><td>No swap: reference architecture.</td></tr>
+            <tr><th scope="row"><div class="option-cell"><a href="#tpe">2. Teams via ACS/TPE</a><span class="status proposed">Proposed</span></div></th><td><strong>Retained</strong></td><td>Reuse Python + ACS bridge</td><td><a href="#swap-tpe">ACS number &rarr; Teams resource account</a></td></tr>
+            <tr><th scope="row"><div class="option-cell"><a href="#graph">3. Graph calling bot</a><span class="status proposed">Proposed</span></div></th><td><strong>Replaced for voice</strong></td><td>Python behind new Windows/.NET media service</td><td><a href="#swap-graph">ACS &rarr; Graph control + .NET media</a></td></tr>
+            <tr><th scope="row"><div class="option-cell"><a href="#sip">4. SIP gateway + Teams</a><span class="status proposed">Proposed</span></div></th><td><strong>Replaced for voice</strong></td><td>Python behind new gateway bridge</td><td><a href="#swap-sip">ACS &rarr; gateway control + duplex audio</a></td></tr>
+            <tr><th scope="row"><div class="option-cell"><a href="#managed">5. Managed agents</a><span class="status preview">Preview</span></div></th><td><strong>No custom ACS setup*</strong></td><td>Conversation moves to the product</td><td><a href="#swap-managed">Custom voice runtime &rarr; managed agent</a></td></tr>
           </tbody>
         </table>
       </div>
@@ -103,7 +104,7 @@
       <details class="reference-detail status-key">
         <summary>Public-source scope &amp; status definitions</summary>
         <p><strong>Baseline:</strong> the linked public code, not proof of deployment. <strong>Proposed:</strong> this guide's integration design, not an implemented feature in that baseline or a product announcement. <strong>Preview:</strong> status in the cited public Microsoft documentation.</p>
-        <p class="source-note">Sources are public Microsoft documentation and the <a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/tree/09ecdfcf5b04622e91d06eb3b12a25ef64e7e6a0">public accelerator snapshot (09ecdfc)</a>. Proposed architecture and delivery checkpoints are recommendations, not claims about unannounced work.</p>
+        <p class="source-note">Sources are public Microsoft documentation and the <a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/tree/09ecdfcf5b04622e91d06eb3b12a25ef64e7e6a0">public accelerator snapshot (09ecdfc)</a>. Proposed component mappings are design recommendations, not claims about unannounced work.</p>
       </details>
 
       <h2 id="lifecycle">Lifecycle evidence</h2>
@@ -127,7 +128,7 @@
       <section class="architecture-option" aria-labelledby="baseline">
         <h2 id="baseline"><span class="option-number">01</span> Current standalone ACS</h2>
         <p class="option-summary"><span class="status baseline">Baseline</span> ACS owns call control and duplex audio. <a href="#license-acs">License checklist</a></p>
-        <p class="next-proof"><strong>Workstream: current-state inventory.</strong> App owners should trace call setup, callbacks, media, and messaging dependencies before selecting a replacement.</p>
+        <p class="component-change"><strong>Reference stack:</strong> ACS number, Call Automation, Event Grid/callbacks, and media WSS feeding the Python engine. <a href="#migration">Compare component swaps</a>.</p>
         <details class="architecture-detail" data-section="baseline">
           <summary>ACS architecture, call flows &amp; runtime support</summary>
         <p>The outbound helper uses an ACS source phone number and <code>CallAutomationClient.create_call</code>. Inbound calls arrive through Event Grid; the app answers and receives subsequent ACS callbacks directly. The media socket is a separate, bidirectional WSS path. In this implementation it carries <strong>PCM16, mono, 16 kHz</strong>; the VoiceLive bridge handles the 24 kHz service audio boundary. <a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/blob/09ecdfcf5b04622e91d06eb3b12a25ef64e7e6a0/src/acs/acs_helper.py">Call setup and media options</a> &middot; <a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/blob/09ecdfcf5b04622e91d06eb3b12a25ef64e7e6a0/apps/artagent/backend/voice/voicelive/handler.py">VoiceLive bridge</a>.</p>
@@ -183,7 +184,7 @@
         <h2 id="tpe"><span class="option-number">02</span> Teams Phone via ACS / TPE</h2>
         <p class="option-summary"><span class="status proposed">Proposed</span> Accelerator integration design based on public TPE documentation. <a href="#license-tpe">License checklist</a></p>
         <p><strong>Reuse the ACS bridge; add Teams identity.</strong> TPE connects a licensed resource account and service number to ACS Call Automation. The design shown here aims to retain the Python runtime, callbacks, and media protocol; that reuse must be implemented and validated. <a href="https://learn.microsoft.com/en-us/azure/communication-services/concepts/interop/tpe/teams-phone-extensibility-overview">TPE architecture</a> &middot; <a href="https://learn.microsoft.com/en-us/azure/communication-services/concepts/interop/tpe/teams-phone-extensibility-faq">GA scope</a>.</p>
-        <p class="next-proof"><strong>Next proof: Teams admin + app owner.</strong> Provision the RA, assign server access, and exercise inbound/outbound calls and the intended human-handoff route against the public prerequisites.</p>
+        <p class="component-change"><strong>Swap:</strong> ACS source-number identity &rarr; Teams resource account. <strong>Add:</strong> TPE association and access. <a href="#swap-tpe">See what stays</a>.</p>
         <p class="decision-limit"><strong>Known limit:</strong> Teams &rarr; third-party agent &rarr; external-number transfer/conference is documented as failing. <a href="https://learn.microsoft.com/en-us/microsoftteams/aa-cq-setup-third-party-voice-agents#known-issues">Exact scenario</a>.</p>
         <details class="architecture-detail" data-section="tpe">
           <summary>Teams/TPE architecture, call flows &amp; public prerequisites</summary>
@@ -245,7 +246,7 @@
         <h2 id="graph"><span class="option-number">03</span> ACS-independent Graph calling bot</h2>
         <p class="option-summary"><span class="status proposed">Proposed</span> New calling bot, media host, and bridge. <a href="#license-graph">License checklist</a></p>
         <p><strong>Keep Python behind a Windows/.NET media service.</strong> Graph controls calls, including documented PSTN scenarios; its REST API does not stream PCM. <a href="https://learn.microsoft.com/en-us/graph/api/application-post-calls?view=graph-rest-1.0">Graph v1.0 calling</a> &middot; <a href="https://learn.microsoft.com/en-us/microsoftteams/platform/bots/calls-and-meetings/requirements-considerations-application-hosted-media-bots">Media requirements</a>.</p>
-        <p class="next-proof"><strong>Next proof: identity + media-platform owners.</strong> Obtain the relevant <a href="#graph-grants">Graph consent</a>, validate Azure Windows hosting/support, then prototype a duplex bridge to the existing engine.</p>
+        <p class="component-change"><strong>Swap:</strong> ACS control/media &rarr; Graph call control + Windows/.NET media. <strong>Add:</strong> a custom Python bridge. <a href="#swap-graph">See the component mapping</a>.</p>
         <p class="decision-limit"><strong>Support gate:</strong> Graph REST is v1.0; the separate real-time media platform page still says developer preview. This is not a Linux-only drop-in.</p>
         <details class="architecture-detail" data-section="graph">
           <summary>Graph architecture, call flows &amp; media-host requirements</summary>
@@ -293,7 +294,7 @@
         <h2 id="sip"><span class="option-number">04</span> SIP gateway + Teams Direct Routing</h2>
         <p class="option-summary"><span class="status proposed">Proposed</span> Gateway vendor and interface not selected. <a href="#license-sip">License checklist</a></p>
         <p><strong>Keep Python behind a programmable SIP/contact-center gateway.</strong> The gateway owns call control and duplex audio; a certified SBC supplies Teams connectivity. <a href="https://learn.microsoft.com/en-us/microsoftteams/teams-contact-center#integration-models-for-solution-providers">Connect model</a> &middot; <a href="https://learn.microsoft.com/en-us/microsoftteams/direct-routing-plan">Direct Routing prerequisites</a>.</p>
-        <p class="next-proof"><strong>Next proof: telephony vendor + app owner.</strong> Confirm simultaneous audio receive/injection, auth/codecs, and blind/consultative transfer in the selected topology before building the channel bridge.</p>
+        <p class="component-change"><strong>Swap:</strong> ACS control/media &rarr; vendor gateway. <strong>Add:</strong> a channel bridge for its duplex audio contract. <a href="#swap-sip">See the component mapping</a>.</p>
         <p class="decision-limit"><strong>Not sufficient:</strong> a certified SBC alone is not an AI media API, and does not certify the whole voice-agent solution.</p>
         <details class="architecture-detail" data-section="sip">
           <summary>SIP architecture, call flows &amp; vendor transfer contract</summary>
@@ -340,7 +341,7 @@
         <h2 id="managed"><span class="option-number">05</span> Managed Teams Phone Agent / Copilot Studio</h2>
         <p class="option-summary"><span class="status preview">Preview</span> Replace the conversational runtime, not just the phone provider. <a href="#license-managed">Teams Phone Agent licenses</a> &middot; <a href="#license-copilot">Copilot Studio licenses</a></p>
         <p><strong>Move the conversation into a managed product.</strong> The native setup lists no custom ACS resource or PCM bridge to this accelerator; Microsoft's internal stack is undisclosed. <a href="https://learn.microsoft.com/en-us/microsoftteams/aa-cq-setup-teams-phone-agent">Teams Phone Agent</a> &middot; <a href="https://learn.microsoft.com/en-us/microsoftteams/aa-cq-direct-mcs">Direct-dial Copilot Studio</a>.</p>
-        <p class="next-proof"><strong>Next proof: Teams/Power Platform admins + agent owner.</strong> Confirm preview eligibility and test one representative conversation, tool call, and supported human transfer.</p>
+        <p class="component-change"><strong>Swap:</strong> custom telephony and conversation runtime &rarr; managed product. Prompts and tools need migration, not just a new transport. <a href="#swap-managed">See the component mapping</a>.</p>
         <p class="decision-limit"><strong>Fit gate:</strong> the Copilot Teams channel is basic-voice only, not real-time, with classic orchestration and tenant enablement. Do not assume Cascade/VoiceLive or outbound-automation parity. <a href="https://learn.microsoft.com/en-us/microsoft-copilot-studio/voice-teams-phone-agent">Channel limits</a>.</p>
         <details class="architecture-detail" data-section="managed">
           <summary>Managed architecture, call flows &amp; preview boundaries</summary>
@@ -602,18 +603,96 @@
       <p><strong>Context is a separate data path.</strong> A summary, authentication state, transcript, and CRM reference do not automatically travel with a phone call. Use an authorized integration, scoped identifiers, and explicit retention/access policy. SIP headers or TPE context headers are not a universal human-desktop context protocol. <a href="https://learn.microsoft.com/en-us/azure/communication-services/concepts/interop/tpe/teams-phone-extensibility-capabilities">TPE context and feature scope</a>.</p>
       </details>
 
-      <h2 id="migration">ACS exit workstreams</h2>
-      <p>These are proposed delivery checkpoints, not assigned tasks or a release schedule. Reuse the current business logic; replace and prove each ACS-specific boundary.</p>
-      <div class="callout">
-        <p><strong>Voice migration is not complete ACS removal.</strong> If your application also uses ACS Email or SMS, migrate those dependencies separately. Teams Phone telephony does not replace transactional email or programmable messaging.</p>
-      </div>
-      <dl class="workstream-checkpoints">
-        <div><dt>Voice control + media</dt><dd><strong>Choose a voice path:</strong> <a href="#graph">Graph media bot</a> or <a href="#sip">SIP gateway</a>. App/media owners replace create/answer/transfer, callbacks, framing, identity, and cleanup. <a href="voice-extension-guide.md">Runtime extension boundary</a>.</dd></div>
-        <div><dt>Call-lifecycle proof</dt><dd><strong>App + telephony owners:</strong> prove inbound/outbound, duplex audio, barge-in, DTMF, <a href="#handoffs">human handoff</a>, failure recovery, and hangup; recording/announcements where required.</dd></div>
-        <div><dt>Email + SMS</dt><dd><strong>Choose replacements where needed:</strong> migrate tools, templates, credentials, delivery tracking, and consent/compliance independently of the voice path.</dd></div>
-        <div><dt>Commercial + admin approval</dt><dd><strong>Tenant + service owners:</strong> confirm <a href="#permissions">licenses/consent</a>, carrier and solution support, preview limits, and applicable <a href="#lifecycle">public lifecycle guidance</a> before a production commitment.</dd></div>
-        <div><dt>Final dependency audit</dt><dd><strong>Release owner:</strong> verify no remaining ACS consumers before removing resources, secrets, numbers, roles, or deployment configuration. No removal is performed by this guide.</dd></div>
-      </dl>
+      <h2 id="migration">What changes in each configuration</h2>
+      <p>Start with the current ACS stack on the left. Pick a target to see what stays, what is replaced, and the new connection to build.</p>
+      <section id="component-map" class="component-map" aria-label="Current-to-target component map">
+        <nav class="component-picker" aria-label="Choose a target configuration">
+          <a href="#swap-tpe">Teams via ACS</a>
+          <a href="#swap-graph">Graph bot</a>
+          <a href="#swap-sip">SIP gateway</a>
+          <a href="#swap-managed">Managed agent</a>
+        </nav>
+        <p id="component-selection" class="sr-only" role="status" aria-live="polite"></p>
+        <p class="swap-key"><span class="swap-action keep">Keep</span> Existing component <span class="swap-action replace">Replace</span> New owner <span class="swap-action adapt">Adapt</span> Reuse behind a new interface</p>
+        <p class="source-note">Design mappings, not implemented configurations. &ldquo;Keep&rdquo; means intended reuse, not automatic compatibility. Baseline: <a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/blob/09ecdfcf5b04622e91d06eb3b12a25ef64e7e6a0/apps/artagent/backend/voice/README.md">public runtime</a>.</p>
+
+        <section class="swap-scenario" data-swap-panel="swap-tpe" aria-labelledby="swap-tpe">
+          <h3 id="swap-tpe">Teams via ACS: change identity, keep the voice stack</h3>
+          <table class="swap-table">
+            <caption class="sr-only">Current ACS components mapped to Teams Phone via ACS/TPE</caption>
+            <thead><tr><th scope="col">Component</th><th scope="col">Current ACS</th><th scope="col">Teams via ACS/TPE</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">Number / identity</th><td>ACS phone number</td><td><span class="swap-action replace">Replace</span>Teams service number + resource account</td></tr>
+              <tr><th scope="row">Call control</th><td>ACS Call Automation</td><td><span class="swap-action adapt">Adapt</span>Same API, with TeamsAppSource identity</td></tr>
+              <tr><th scope="row">Call events</th><td>Event Grid + ACS callbacks</td><td><span class="swap-action keep">Keep</span>Event Grid + ACS callbacks</td></tr>
+              <tr><th scope="row">Audio bridge</th><td>ACS duplex media WSS</td><td><span class="swap-action keep">Keep</span>ACS duplex media WSS</td></tr>
+              <tr><th scope="row">Conversation</th><td>Python Cascade / VoiceLive</td><td><span class="swap-action keep">Keep</span>Same native engine</td></tr>
+              <tr><th scope="row">Agents / tools</th><td>YAML + tool registry</td><td><span class="swap-action keep">Keep</span>Same business definitions</td></tr>
+              <tr><th scope="row">App state</th><td>Redis / Cosmos</td><td><span class="swap-action keep">Keep</span>Same app persistence</td></tr>
+            </tbody>
+          </table>
+          <p class="swap-addition"><strong>Add:</strong> Teams RA provisioning + TPE/ACS access assignment + PSTN route. Direct Routing also needs a certified SBC.</p>
+          <p class="swap-note"><strong>ACS is still in both control and media.</strong> <a href="https://learn.microsoft.com/en-us/azure/communication-services/concepts/interop/tpe/teams-phone-extensibility-overview">TPE model</a> &middot; <a href="https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/tpe/teams-phone-extensibility-server-outbound-call">Call identity</a> &middot; <a href="#tpe">Flows &amp; limits</a> &middot; <a href="#license-tpe">Licenses</a>.</p>
+        </section>
+
+        <section class="swap-scenario" data-swap-panel="swap-graph" aria-labelledby="swap-graph">
+          <h3 id="swap-graph">Graph bot: replace the ACS control and media layer</h3>
+          <table class="swap-table">
+            <caption class="sr-only">Current ACS components mapped to a Graph calling bot</caption>
+            <thead><tr><th scope="col">Component</th><th scope="col">Current ACS</th><th scope="col">Graph calling bot</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">Number / identity</th><td>ACS phone number</td><td><span class="swap-action replace">Replace</span>Numbered Teams application instance / RA</td></tr>
+              <tr><th scope="row">Call control</th><td>ACS Call Automation</td><td><span class="swap-action replace">Replace</span>Graph calling bot + REST control</td></tr>
+              <tr><th scope="row">Call events</th><td>Event Grid + ACS callbacks</td><td><span class="swap-action replace">Replace</span>Graph call notifications to bot callback</td></tr>
+              <tr><th scope="row">Audio bridge</th><td>ACS duplex media WSS</td><td><span class="swap-action replace">Replace</span>Windows/.NET media SDK + custom bridge</td></tr>
+              <tr><th scope="row">Conversation</th><td>Python Cascade / VoiceLive</td><td><span class="swap-action adapt">Adapt</span>Retain engine behind the new bridge</td></tr>
+              <tr><th scope="row">Agents / tools</th><td>YAML + tool registry</td><td><span class="swap-action adapt">Adapt</span>Keep agent definitions; swap telephony tools</td></tr>
+              <tr><th scope="row">App state</th><td>Redis / Cosmos</td><td><span class="swap-action adapt">Adapt</span>Retain storage; map bot/call identities</td></tr>
+            </tbody>
+          </table>
+          <p class="swap-addition"><strong>Add:</strong> Azure Windows media host with per-call affinity, public endpoints, Graph consent, and a Python control/audio bridge.</p>
+          <p class="swap-note"><strong>Graph REST carries control, not PCM.</strong> Media-platform preview/support constraints still apply. <a href="https://learn.microsoft.com/en-us/graph/api/application-post-calls?view=graph-rest-1.0">Call control</a> &middot; <a href="https://learn.microsoft.com/en-us/microsoftteams/platform/bots/calls-and-meetings/requirements-considerations-application-hosted-media-bots">Media host</a> &middot; <a href="#graph">Flows &amp; limits</a> &middot; <a href="#license-graph">Licenses</a>.</p>
+        </section>
+
+        <section class="swap-scenario" data-swap-panel="swap-sip" aria-labelledby="swap-sip">
+          <h3 id="swap-sip">SIP gateway: replace ACS with a vendor-owned bridge</h3>
+          <table class="swap-table">
+            <caption class="sr-only">Current ACS components mapped to a SIP gateway with Teams Direct Routing</caption>
+            <thead><tr><th scope="col">Component</th><th scope="col">Current ACS</th><th scope="col">SIP gateway + Teams</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">Number / identity</th><td>ACS phone number</td><td><span class="swap-action replace">Replace</span>Carrier / Teams number and routing</td></tr>
+              <tr><th scope="row">Call control</th><td>ACS Call Automation</td><td><span class="swap-action replace">Replace</span>Gateway / B2BUA call-control contract</td></tr>
+              <tr><th scope="row">Call events</th><td>Event Grid + ACS callbacks</td><td><span class="swap-action replace">Replace</span>Vendor call-state events</td></tr>
+              <tr><th scope="row">Audio bridge</th><td>ACS duplex media WSS</td><td><span class="swap-action replace">Replace</span>Gateway RTP/SRTP + confirmed duplex API</td></tr>
+              <tr><th scope="row">Conversation</th><td>Python Cascade / VoiceLive</td><td><span class="swap-action adapt">Adapt</span>Retain engine behind new channel bridge</td></tr>
+              <tr><th scope="row">Agents / tools</th><td>YAML + tool registry</td><td><span class="swap-action adapt">Adapt</span>Keep agent definitions; swap telephony tools</td></tr>
+              <tr><th scope="row">App state</th><td>Redis / Cosmos</td><td><span class="swap-action adapt">Adapt</span>Retain storage; map vendor session IDs</td></tr>
+            </tbody>
+          </table>
+          <p class="swap-addition"><strong>Add:</strong> selected gateway + certified SBC/Direct Routing + a codec, pacing, interruption, and control bridge.</p>
+          <p class="swap-note"><strong>The SBC alone is not the bridge.</strong> Duplex media and transfers depend on the vendor/topology. <a href="https://learn.microsoft.com/en-us/microsoftteams/teams-contact-center#integration-models-for-solution-providers">Connect model</a> &middot; <a href="#sip">Flows &amp; limits</a> &middot; <a href="#license-sip">Licenses</a>.</p>
+        </section>
+
+        <section class="swap-scenario" data-swap-panel="swap-managed" aria-labelledby="swap-managed">
+          <h3 id="swap-managed">Managed agent: replace the conversational runtime too</h3>
+          <table class="swap-table">
+            <caption class="sr-only">Current ACS components mapped to a managed Teams Phone Agent or Copilot Studio voice agent</caption>
+            <thead><tr><th scope="col">Component</th><th scope="col">Current ACS</th><th scope="col">Managed Teams / Copilot agent</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">Number / identity</th><td>ACS phone number</td><td><span class="swap-action replace">Replace</span>Teams voice-app / AI Agent RA + number</td></tr>
+              <tr><th scope="row">Call control</th><td>ACS Call Automation</td><td><span class="swap-action replace">Replace</span>Product-managed call routing</td></tr>
+              <tr><th scope="row">Call events</th><td>Event Grid + ACS callbacks</td><td><span class="swap-action replace">Replace</span>Product event/connector surface, if supported</td></tr>
+              <tr><th scope="row">Audio bridge</th><td>ACS duplex media WSS</td><td><span class="swap-action replace">Replace</span>Managed audio; no custom PCM endpoint</td></tr>
+              <tr><th scope="row">Conversation</th><td>Python Cascade / VoiceLive</td><td><span class="swap-action replace">Replace</span>Product-hosted voice agent</td></tr>
+              <tr><th scope="row">Agents / tools</th><td>YAML + tool registry</td><td><span class="swap-action adapt">Adapt</span>Rebuild prompts / knowledge / connectors</td></tr>
+              <tr><th scope="row">App state</th><td>Redis / Cosmos</td><td><span class="swap-action replace">Replace</span>Product conversation state; external data via supported connectors</td></tr>
+            </tbody>
+          </table>
+          <p class="swap-addition"><strong>Add:</strong> product configuration + supported tools/connectors. The Python voice loop is not connected to this path.</p>
+          <p class="swap-note"><strong>Preview and channel limits remain.</strong> Copilot Teams voice is basic-only; Microsoft's internal service stack is not disclosed. <a href="https://learn.microsoft.com/en-us/microsoftteams/aa-cq-direct-mcs">Native setup</a> &middot; <a href="#managed">Flows &amp; limits</a> &middot; <a href="#license-managed">Native licenses</a> &middot; <a href="#license-copilot">Copilot licenses</a>.</p>
+        </section>
+      </section>
+      <p class="source-note"><strong>Outside these voice swaps:</strong> existing email/SMS integrations do not change automatically. Replacing voice components does not replace other ACS dependencies. For retained Python code, use the <a href="voice-extension-guide.md">runtime extension boundaries</a>.</p>
 
       <h2 id="sources">Sources &amp; revision dates</h2>
       <p>Public sources retrieved <strong>20 September 2026</strong>. Page-update dates are not release dates. Product claims below rely on public documentation; proposed integration designs remain recommendations.</p>
@@ -651,6 +730,6 @@
 </div>
 <script src="js/main.js?v=2"></script>
 <script src="js/search.js?v=2"></script>
-<script src="js/telephony.js?v=4"></script>
+<script src="js/telephony.js?v=5"></script>
 </body>
 </html>
