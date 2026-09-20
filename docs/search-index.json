@@ -45,7 +45,7 @@
     {
       "url": "telephony-options.html",
       "title": "Telephony Options",
-      "sections": 18
+      "sections": 26
     }
   ],
   "sections": [
@@ -919,7 +919,71 @@
       "level": 2,
       "page": "Telephony Options",
       "title": "Licenses & permissions",
-      "text": "Read the requirements in four layers: human user / tenant , resource account , PSTN connectivity , and application consumption . An admin grant or preview invitation is not a license. E7 is not a blanket prerequisite. Microsoft 365 E7 bundles E5, Microsoft Copilot, Microsoft Entra Suite, and Agent 365. E5 includes Phone System rights; check the assigned Teams and Phone System service plans before adding a separate Teams Phone Standard license. The cited voice prerequisites do not specify E7 as a universal requirement. E7 bundle · Teams Phone licensing . Human phone-user entitlement below means access to both Microsoft Teams and Microsoft 365 Phone System, supplied through a qualifying bundle or add-on. See E7, E5, and E3 examples . Resource accounts use their own license, not a human E7/E5 seat. Which licenses belong to which architecture? Architecture Human user / tenant Application identity Connectivity + consumption 1. Standalone ACS No E7 or Teams Phone requirement in the ACS-only prerequisites. Added Teams recipients need Teams Phone and voice enablement. Azure subscription and ACS resource; an ACS phone number for the documented PSTN flow. No Teams RA for the ACS-only path. ACS usage, AI services, and app hosting. Public ACS prerequisites . 2. Teams via ACS/TPE Teams + Teams Phone entitlement for each human agent, plus Enterprise Voice enablement. See the bundle/add-on examples . Teams Phone Resource Account license for the designated RA, plus its ACS association and server access assignment. Selected PSTN route/funding and ACS/AI consumption. RA-originated Calling Plan calls have specific PAYG requirements. TPE licensing and charges . 3. Graph PSTN bot E7 is not listed as a bot prerequisite. Human Teams users follow their scenario's licensing rules; Graph admin consent is separate . A numbered application instance/RA with the Teams Phone Resource Account license (called “virtual user” in the bot guide). The bot guide specifies a Calling Plan; validate current funding and the selected topology. Budget Azure Windows/.NET media hosting and AI separately. Bot number licensing . 4. SIP / Connect Teams + Teams Phone for Teams Direct Routing users. Other contact-center agents follow the vendor's licensing terms. An RA license is needed if the design uses Teams voice-app resource accounts; it is not a per-SBC license. Carrier/SBC/gateway and app/AI charges. Direct Routing does not require buying a Microsoft Calling Plan for that route. Direct Routing licenses · PSTN licensing . 5a. Native Teams Phone Agent Tenant: at least one Teams Phone license . Base Teams Phone Agent requires no extra Teams Phone licensing during Frontier Public Preview. Teams Phone Resource Account license for each RA. Preview eligibility and configuration still apply. Number/PSTN connectivity and applicable outbound funding. Bookings, Power Automate, and other optional features have their own entitlements. Voice-app licensing . 5b. Copilot Studio on Teams Phone Channel: Copilot Studio tenant + user licenses , plus applicable Teams Phone licenses. Confirm bundle entitlements; do not assume E7 alone covers the channel. Teams Phone Resource Account license for the AI Agent RA, and Microsoft-enabled preview access. Copilot Studio funding (Copilot Credits / applicable PAYG) plus PSTN costs. Internal Copilot-agent benefits are not a blanket allowance for anonymous phone traffic. Channel requirements · RA setup · Consumption licensing . Teams Phone supplies Phone System/PBX rights, not PSTN minutes. Choose Calling Plans, Operator Connect, or Direct Routing and fund that connectivity separately. E7's “Frontier Suite” name is not admission to the Frontier Public Preview. Check the product's actual eligibility and tenant enablement. Licenses also do not grant TPE server access or Graph application consent . E7/E5/E3 examples, add-ons, admin ownership & exact permissions Use this as a scenario checklist, not a pricing quote or universal role recipe. Confirm the exact SKU, service plans, region, carrier, and commercial agreement."
+      "text": "Choose what you want to enable. These are the building blocks to arrange — not a check of your tenant's entitlements."
+    },
+    {
+      "url": "telephony-options.html#license-acs",
+      "anchor": "license-acs",
+      "level": 3,
+      "page": "Telephony Options",
+      "title": "Make ACS-only phone calls",
+      "text": "People No Teams / E7 license For the ACS-only path + App / service Azure + ACS resource No Teams resource account + Connectivity / usage ACS number + calling AI and hosting billed separately If you add a Teams recipient: Teams Phone and voice enablement are required. Microsoft prerequisites · Full requirements"
+    },
+    {
+      "url": "telephony-options.html#license-tpe",
+      "anchor": "license-tpe",
+      "level": 3,
+      "page": "Telephony Options",
+      "title": "Connect the Python agent to Teams via ACS",
+      "text": "People Teams + Phone System Human agents: Enterprise Voice enabled + App / service Teams Phone Resource Account Acquire and assign the RA license + Connectivity / usage PSTN route + ACS usage AI and hosting billed separately Calling Plan outbound: the RA needs PAYG + funding. ACS association and server authorization still apply. Microsoft requirements · Full requirements"
+    },
+    {
+      "url": "telephony-options.html#license-graph",
+      "anchor": "license-graph",
+      "level": 3,
+      "page": "Telephony Options",
+      "title": "Build a Graph PSTN bot",
+      "text": "People Teams user rights Depends on the calling scenario + App / service Teams Phone Resource Account For the numbered bot instance + Connectivity / usage PSTN + Azure media hosting Windows/.NET media service + AI Check topology: the bot number guide uses a Calling Plan. Graph admin consent is separate. Microsoft requirements · Full requirements"
+    },
+    {
+      "url": "telephony-options.html#license-sip",
+      "anchor": "license-sip",
+      "level": 3,
+      "page": "Telephony Options",
+      "title": "Connect a SIP gateway to Teams",
+      "text": "People Teams + Phone System For Teams Direct Routing users + App / service Vendor platform terms RA license only if using Teams voice-app RAs + Connectivity / usage Carrier + SBC + gateway App and AI usage are separate Direct Routing: no Microsoft Calling Plan required for that route. Confirm the vendor's media/API licensing. Microsoft requirements · Full requirements"
+    },
+    {
+      "url": "telephony-options.html#license-managed",
+      "anchor": "license-managed",
+      "level": 3,
+      "page": "Telephony Options",
+      "title": "Enable a native Teams Phone Agent",
+      "text": "Tenant At least one Teams Phone license Voice-app base requirement + App / service Teams Phone Resource Account One license per RA + Connectivity / usage Number + PSTN funding Preview admission is separate Frontier preview: no extra Teams Phone licensing for base features. Optional features have separate entitlements. Microsoft requirements · Full requirements"
+    },
+    {
+      "url": "telephony-options.html#license-copilot",
+      "anchor": "license-copilot",
+      "level": 3,
+      "page": "Telephony Options",
+      "title": "Put a Copilot Studio agent on the phone",
+      "text": "Tenant / maker Teams Phone + Copilot Studio Studio tenant + user entitlements + App / service Teams Phone Resource Account For the AI Agent RA + Connectivity / usage Copilot Credits / PAYG + PSTN Don't assume E7 funds anonymous calls Channel gate: basic voice only, with Microsoft-enabled preview access. Microsoft requirements · Full requirements"
+    },
+    {
+      "url": "telephony-options.html#license-bundles",
+      "anchor": "license-bundles",
+      "level": 3,
+      "page": "Telephony Options",
+      "title": "Already have a user suite?",
+      "text": "E7 is not a blanket prerequisite. E5 / E7 → Phone System included Base without Phone System, e.g. E3 → Add Teams Phone Standard E5 (no Teams) → Add Teams access; keep Phone System Confirm assigned service plans. Phone System is not PSTN minutes; RA licenses are separate. E7 source · Phone licensing · Exact suite combinations . Adding queues, bookings, automation, or recording? Queues App Teams Premium for its users Bookings tools Appropriate Bookings entitlement Power Automate Appropriate flow licensing Recording SharePoint/storage or compliance-partner terms Microsoft feature-specific requirements . Full licensing requirements, permissions & Microsoft sources"
+    },
+    {
+      "url": "telephony-options.html#license-details",
+      "anchor": "license-details",
+      "level": 3,
+      "page": "Telephony Options",
+      "title": "Detailed requirements by architecture",
+      "text": "E7 is not a blanket prerequisite. Microsoft 365 E7 bundles E5, Microsoft Copilot, Microsoft Entra Suite, and Agent 365. E5 includes Phone System rights; check the assigned Teams and Phone System service plans before adding a separate Teams Phone Standard license. The cited voice prerequisites do not specify E7 as a universal requirement. E7 bundle · Teams Phone licensing . Human phone-user entitlement below means access to both Microsoft Teams and Microsoft 365 Phone System, supplied through a qualifying bundle or add-on. See E7, E5, and E3 examples . Resource accounts use their own license, not a human E7/E5 seat. Which licenses belong to which architecture? Architecture Human user / tenant Application identity Connectivity + consumption 1. Standalone ACS No E7 or Teams Phone requirement in the ACS-only prerequisites. Added Teams recipients need Teams Phone and voice enablement. Azure subscription and ACS resource; an ACS phone number for the documented PSTN flow. No Teams RA for the ACS-only path. ACS usage, AI services, and app hosting. Public ACS prerequisites . 2. Teams via ACS/TPE Teams + Teams Phone entitlement for each human agent, plus Enterprise Voice enablement. See the bundle/add-on examples . Teams Phone Resource Account license for the designated RA, plus its ACS association and server access assignment. Selected PSTN route/funding and ACS/AI consumption. RA-originated Calling Plan calls have specific PAYG requirements. TPE licensing and charges . 3. Graph PSTN bot E7 is not listed as a bot prerequisite. Human Teams users follow their scenario's licensing rules; Graph admin consent is separate . A numbered application instance/RA with the Teams Phone Resource Account license (called “virtual user” in the bot guide). The bot guide specifies a Calling Plan; validate current funding and the selected topology. Budget Azure Windows/.NET media hosting and AI separately. Bot number licensing . 4. SIP / Connect Teams + Teams Phone for Teams Direct Routing users. Other contact-center agents follow the vendor's licensing terms. An RA license is needed if the design uses Teams voice-app resource accounts; it is not a per-SBC license. Carrier/SBC/gateway and app/AI charges. Direct Routing does not require buying a Microsoft Calling Plan for that route. Direct Routing licenses · PSTN licensing . 5a. Native Teams Phone Agent Tenant: at least one Teams Phone license . Base Teams Phone Agent requires no extra Teams Phone licensing during Frontier Public Preview. Teams Phone Resource Account license for each RA. Preview eligibility and configuration still apply. Number/PSTN connectivity and applicable outbound funding. Bookings, Power Automate, and other optional features have their own entitlements. Voice-app licensing . 5b. Copilot Studio on Teams Phone Channel: Copilot Studio tenant + user licenses , plus applicable Teams Phone licenses. Confirm bundle entitlements; do not assume E7 alone covers the channel. Teams Phone Resource Account license for the AI Agent RA, and Microsoft-enabled preview access. Copilot Studio funding (Copilot Credits / applicable PAYG) plus PSTN costs. Internal Copilot-agent benefits are not a blanket allowance for anonymous phone traffic. Channel requirements · RA setup · Consumption licensing . Teams Phone supplies Phone System/PBX rights, not PSTN minutes. Choose Calling Plans, Operator Connect, or Direct Routing and fund that connectivity separately. E7's “Frontier Suite” name is not admission to the Frontier Public Preview. Check the product's actual eligibility and tenant enablement. Licenses also do not grant TPE server access or Graph application consent . Use this as a scenario checklist, not a pricing quote or universal role recipe. Confirm the exact SKU, service plans, region, carrier, and commercial agreement."
     },
     {
       "url": "telephony-options.html#license-users",

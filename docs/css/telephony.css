@@ -1,4 +1,5 @@
 /* Page-local extensions of the shared ART documentation tokens. */
+html:has(.telephony-page) { scroll-behavior: auto; }
 .telephony-page {
   --flow-control: #0964c2;
   --flow-media: #087d71;
@@ -18,7 +19,7 @@
   outline: 3px solid var(--c-accent);
   outline-offset: 4px;
 }
-.telephony-page :is(h1, h2, h3, section, tr[id], [tabindex]) {
+.telephony-page :is(h1, h2, h3, section, summary[id], tr[id], [tabindex]) {
   scroll-margin-top: calc(var(--header-h) + 72px);
 }
 .telephony-page :is(button, select, summary, a) { touch-action: manipulation; }
@@ -100,6 +101,44 @@
 .license-matrix .license-user { width: 29%; }
 .license-matrix .license-account { width: 22%; }
 .license-matrix .license-usage { width: 31%; }
+.license-map { border: 1px solid var(--c-border); border-radius: 12px; padding: 20px; background: var(--c-surface); }
+.license-sprite { position: absolute; overflow: hidden; }
+.license-picker { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.license-picker a {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 44px; padding: 8px 12px;
+  border: 1px solid var(--c-border); border-radius: 6px;
+  color: var(--c-text); background: var(--c-bg);
+  text-align: center; font-size: 13px; font-weight: 600; text-decoration: none;
+}
+.license-picker a:hover { border-color: var(--c-accent); }
+.license-picker a[aria-current="true"] { border-color: var(--c-accent); color: var(--c-accent); background: var(--c-accent-bg); box-shadow: inset 0 0 0 1px var(--c-accent); }
+.license-scenario[hidden] { display: none; }
+.license-scenario h3 { font-size: 19px; margin: 24px 0 18px; }
+.license-recipe { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr); align-items: stretch; gap: 10px; }
+.license-block { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 18px; border: 1px solid var(--c-border); border-radius: var(--radius); background: var(--c-bg); }
+.license-block-label { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 600; }
+.license-block-label svg { width: 22px; height: 22px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.license-block.people .license-block-label { color: var(--flow-control); }
+.license-block.account .license-block-label { color: var(--flow-context); }
+.license-block.usage .license-block-label { color: var(--flow-media); }
+.license-block > strong { font-size: 16px; line-height: 1.4; text-wrap: balance; }
+.license-block small { font-size: 12px; line-height: 1.5; color: var(--c-text-2); }
+.license-plus { align-self: center; color: var(--c-text-2); font-size: 24px; font-weight: 500; }
+.license-caveat { margin: 16px 0 10px; font-size: 13px; }
+.license-links { margin: 0; font-size: 12px; }
+.license-bundles { padding: 18px 0; }
+.license-bundles h3 { margin: 0 0 4px; font-size: 15px; }
+.license-bundles > p:first-of-type { margin-bottom: 12px; }
+.license-bundles dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 12px; }
+.license-bundles dt { font-size: 13px; font-weight: 600; }
+.license-bundles dd { margin-top: 4px; font-size: 13px; color: var(--c-text-2); }
+.license-bundles dd span { color: var(--c-accent); margin-right: 5px; }
+.license-bundles p:last-child { margin: 0; }
+.feature-unlocks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin: 14px 0; }
+.feature-unlocks > div { padding: 14px; background: var(--c-surface); border-radius: 6px; }
+.feature-unlocks dt { font-weight: 600; font-size: 14px; }
+.feature-unlocks dd { margin-top: 6px; font-size: 13px; color: var(--c-text-2); }
 .table-scroll caption { text-align: left; padding: 12px; font-weight: 600; background: var(--c-surface); }
 .table-scroll thead th { color: var(--c-text-2); }
 .table-scroll tbody th { text-align: left; vertical-align: top; padding: 12px; border-bottom: 1px solid var(--c-border); font-size: 13px; }
@@ -230,6 +269,14 @@
   .telephony-page .logo { font-size: 14px; }
   .telephony-page .header-actions { gap: 8px; }
   .telephony-page .search-trigger-label { display: none; }
+  .license-map { padding: 14px; }
+  .license-picker { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .license-recipe, .license-bundles dl { grid-template-columns: 1fr; gap: 8px; }
+  .license-block { padding: 14px; gap: 6px; }
+  .license-plus { justify-self: center; font-size: 18px; line-height: 1; }
+  .license-block > strong { font-size: 15px; text-wrap: pretty; }
+  .license-bundles dl { gap: 14px; }
+  .feature-unlocks { grid-template-columns: 1fr; }
   .workstream-nav, .delta-grid, .handoff-contract { grid-template-columns: 1fr; }
   .workstream-nav a { padding: 16px; gap: 4px; }
   .section-jump { gap: 0; justify-content: space-between; }
@@ -241,7 +288,6 @@
   .flow-readout { grid-template-columns: 1fr; min-height: 160px; padding: 16px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  html:has(.telephony-page) { scroll-behavior: auto; }
   .telephony-page *, .telephony-page *::before, .telephony-page *::after { animation: none !important; transition: none !important; }
   .telephony-page .flow-packet { display: none !important; }
 }
@@ -253,4 +299,7 @@
   .table-scroll { overflow: visible; }
   .table-scroll table { min-width: 0; }
   .flow-player { break-inside: avoid; }
+  .license-picker { display: none; }
+  .license-scenario[hidden] { display: block; }
+  .license-scenario { break-inside: avoid; }
 }
