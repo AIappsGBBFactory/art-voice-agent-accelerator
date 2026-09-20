@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Compare ACS, Teams Phone Extensibility, Graph calling bots, SIP gateways, and managed Teams voice agents. Follow control, audio, and context flows without confusing Teams telephony with ACS removal.">
+  <title>Telephony Options - ART Agent Docs</title>
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/telephony.css">
+</head>
+<body class="telephony-page">
+<a class="skip-link" href="#main">Skip to the guide</a>
+<header class="site-header">
+  <a href="index.html" class="logo"><span aria-hidden="true">&#9670;</span> <span>ART</span> Agent Docs</a>
+  <nav class="header-nav" aria-label="Documentation">
+    <a href="index.html">Home</a>
+    <a href="architecture.html">Architecture</a>
+    <a href="guides.html">Guides</a>
+    <a href="adopt.html">Adopt</a>
+    <a href="agents.html">Agents</a>
+    <a href="quick-tune.html">Quick Tune</a>
+    <a href="api.html">API</a>
+    <a href="certification.html">Certify</a>
+  </nav>
+  <div class="header-actions">
+    <button class="search-trigger" type="button" aria-label="Search docs">
+      <span class="search-trigger-icon" aria-hidden="true">&#8981;</span>
+      <span class="search-trigger-label">Search docs</span>
+    </button>
+    <button class="theme-toggle" type="button" aria-label="Toggle theme">Theme</button>
+  </div>
+</header>
+<div class="layout">
+  <aside class="sidebar" aria-label="Guide sections">
+    <div class="sidebar-section">
+      <h4>Decide</h4>
+      <a href="#workstreams">Start with your workstream</a>
+      <a href="#choose">Compare options</a>
+      <a href="#lifecycle">Lifecycle evidence</a>
+    </div>
+    <div class="sidebar-section">
+      <h4>Explore an architecture</h4>
+      <a href="#baseline">01 / Current ACS</a>
+      <a href="#tpe">02 / Teams via ACS</a>
+      <a href="#graph">03 / Graph calling bot</a>
+      <a href="#sip">04 / SIP + Direct Routing</a>
+      <a href="#managed">05 / Managed agents</a>
+    </div>
+    <div class="sidebar-section">
+      <h4>Check the prerequisites</h4>
+      <a href="#permissions">Licenses &amp; permissions</a>
+      <a href="#handoffs">Human handoff</a>
+      <a href="#migration">ACS exit workstreams</a>
+      <a href="#sources">Sources &amp; dates</a>
+    </div>
+    <div class="sidebar-section">
+      <h4>Related</h4>
+      <a href="adopt.html">Adopt &amp; Extend</a>
+      <a href="guides.html#add-channel">Add a Channel</a>
+      <a href="voice-extension-guide.md">Current runtime ownership</a>
+    </div>
+  </aside>
+  <main class="content" id="main" tabindex="-1">
+    <div class="content-inner">
+      <nav class="section-jump" aria-label="Guide navigation">
+        <a href="#choose">Compare</a>
+        <a href="#workstreams">Workstreams</a>
+        <a href="#permissions">Licenses</a>
+        <a href="#sources">Sources</a>
+      </nav>
+      <div class="telephony-hero">
+        <p class="eyebrow">Architecture decision guide / 20 September 2026</p>
+        <h1 id="top">Teams Phone <span class="not-equal" aria-label="does not mean">&ne;</span> ACS-free</h1>
+        <p class="subtitle">Teams Phone changes the telephony identity. TPE still uses ACS for call control and audio.</p>
+        <p>Keep that integration, replace it with Graph or a SIP gateway, or move the conversation into a managed product. <strong>These are different workstreams, not interchangeable provider settings.</strong></p>
+        <p class="source-note">Microsoft's integration models: <a href="https://learn.microsoft.com/en-us/microsoftteams/teams-contact-center#integration-models-for-solution-providers">Unify = ACS, Extend = Graph, Connect = certified SBC + Direct Routing</a>.</p>
+      </div>
+
+      <h2 id="workstreams">Start with the work you need to deliver</h2>
+      <nav class="workstream-nav" aria-label="Workstreams">
+        <a href="#tpe"><span class="eyebrow">Teams integration</span><strong>Reuse the ACS bridge</strong><span>Provision the resource account (RA), authorize access, and prove the call flows.</span></a>
+        <a href="#migration"><span class="eyebrow">Complete ACS removal</span><strong>Replace voice + messaging</strong><span>Choose Graph or a gateway; migrate email/SMS separately.</span></a>
+        <a href="#managed"><span class="eyebrow">Managed alternative</span><strong>Evaluate runtime migration</strong><span>Check preview eligibility and basic-voice limits before replacing the app.</span></a>
+      </nav>
+
+      <h2 id="choose">Choose a direction</h2>
+      <p>Compare the application boundary and the next proof required. Open an option for its diagram, call flows, and implementation detail.</p>
+      <div class="table-scroll" tabindex="0" role="region" aria-label="Architecture comparison; scroll horizontally on small screens">
+        <table class="comparison">
+          <caption>Five architectures, three workstreams</caption>
+          <colgroup><col class="option-column"><col class="acs-column"><col class="runtime-column"><col class="proof-column"></colgroup>
+          <thead><tr><th scope="col">Option / status</th><th scope="col">ACS in your app</th><th scope="col">Runtime boundary</th><th scope="col">Next proof</th></tr></thead>
+          <tbody>
+            <tr><th scope="row"><div class="option-cell"><a href="#baseline">1. Standalone ACS</a><span class="status baseline">Baseline</span></div></th><td><strong>Retained</strong></td><td>Python + ACS control/media</td><td>Inventory current dependencies and lifecycle exposure.</td></tr>
+            <tr><th scope="row"><div class="option-cell"><a href="#tpe">2. Teams via ACS/TPE</a><span class="status proposed">Proposed</span></div></th><td><strong>Retained</strong></td><td>Reuse Python + ACS bridge</td><td>Teams RA, access assignment, and supported call flows.</td></tr>
+            <tr><th scope="row"><div class="option-cell"><a href="#graph">3. Graph calling bot</a><span class="status proposed">Proposed</span></div></th><td><strong>Replaced for voice</strong></td><td>Python behind new Windows/.NET media service</td><td>Consent, media-host support, and duplex bridge.</td></tr>
+            <tr><th scope="row"><div class="option-cell"><a href="#sip">4. SIP gateway + Teams</a><span class="status proposed">Proposed</span></div></th><td><strong>Replaced for voice</strong></td><td>Python behind new gateway bridge</td><td>Selected vendor's duplex and transfer contract.</td></tr>
+            <tr><th scope="row"><div class="option-cell"><a href="#managed">5. Managed agents</a><span class="status preview">Preview</span></div></th><td><strong>No custom ACS setup*</strong></td><td>Conversation moves to the product</td><td>Basic-voice fit and preview eligibility.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="source-note">*The cited managed setup lists no custom ACS resource; Microsoft's internal stack is undisclosed. Graph/SIP replace the voice path, not other ACS dependencies.</p>
+      <details class="reference-detail status-key">
+        <summary>Public-source scope &amp; status definitions</summary>
+        <p><strong>Baseline:</strong> the linked public code, not proof of deployment. <strong>Proposed:</strong> this guide's integration design, not an implemented feature in that baseline or a product announcement. <strong>Preview:</strong> status in the cited public Microsoft documentation.</p>
+        <p class="source-note">Sources are public Microsoft documentation and the <a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/tree/09ecdfcf5b04622e91d06eb3b12a25ef64e7e6a0">public accelerator snapshot (09ecdfc)</a>. Proposed architecture and delivery checkpoints are recommendations, not claims about unannounced work.</p>
+      </details>
+
+      <h2 id="lifecycle">Lifecycle evidence</h2>
+      <div class="callout warn">
+        <p><strong>Microsoft's public statement:</strong> <q>Azure Communication Services is introducing breaking changes, and some services are being retired.</q> This guide does not infer service-specific deadlines or migration entitlements from that warning. <a href="https://github.com/MicrosoftDocs/azure-docs/blob/main/articles/communication-services/includes/acs-retirement-breakingchange-callout.md">Public Microsoft notice</a>.</p>
+      </div>
+      <details class="evidence-detail" data-section="lifecycle">
+        <summary>Publicly documented integration and routing distinctions</summary>
+        <p><strong>An SDK upgrade is not a Teams integration.</strong> Public TPE setup also requires a licensed resource account, its association with an ACS resource, configured connectivity, and access authorization. <a href="https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/tpe/teams-phone-extensibility-server-outbound-call">TPE prerequisites</a>.</p>
+        <p><strong>ACS Direct Routing and Teams Phone Direct Routing are different services.</strong> Microsoft's documentation requires different SBC FQDNs when the same SBC serves both. Do not treat documentation for one as the support contract for the other. <a href="https://learn.microsoft.com/en-us/azure/communication-services/concepts/telephony/direct-routing-infrastructure#sbc-certificates-and-domain-names">ACS/Teams domain separation</a> &middot; <a href="https://learn.microsoft.com/en-us/microsoftteams/direct-routing-plan">Teams Direct Routing planning</a>.</p>
+      </details>
+
+      <h2 id="reading-flows">Read the diagrams</h2>
+      <div class="diagram-key">
+        <span class="key-item control">Solid blue / call control</span>
+        <span class="key-item media">Dashed teal / audio</span>
+        <span class="key-item context">Dotted purple / context</span>
+      </div>
+      <p class="source-note">Expand an option to play or step through its flows. Node labels show reused/added/replaced components; double-ended media arrows mean receive + injection. Control never carries PCM. These are logical designs, not deployment or support claims.</p>
+
+      <section class="architecture-option" aria-labelledby="baseline">
+        <h2 id="baseline"><span class="option-number">01</span> Current standalone ACS</h2>
+        <p class="option-summary"><span class="status baseline">Baseline</span> ACS owns call control and duplex audio.</p>
+        <p class="next-proof"><strong>Workstream: current-state inventory.</strong> App owners should trace call setup, callbacks, media, and messaging dependencies before selecting a replacement.</p>
+        <details class="architecture-detail" data-section="baseline">
+          <summary>ACS architecture, call flows &amp; runtime support</summary>
+        <p>The outbound helper uses an ACS source phone number and <code>CallAutomationClient.create_call</code>. Inbound calls arrive through Event Grid; the app answers and receives subsequent ACS callbacks directly. The media socket is a separate, bidirectional WSS path. In this implementation it carries <strong>PCM16, mono, 16 kHz</strong>; the VoiceLive bridge handles the 24 kHz service audio boundary. <a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/blob/09ecdfcf5b04622e91d06eb3b12a25ef64e7e6a0/src/acs/acs_helper.py">Call setup and media options</a> &middot; <a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/blob/09ecdfcf5b04622e91d06eb3b12a25ef64e7e6a0/apps/artagent/backend/voice/voicelive/handler.py">VoiceLive bridge</a>.</p>
+        <figure class="flow-player" data-architecture="acs" aria-labelledby="acs-caption">
+          <div class="diagram-host"></div>
+          <figcaption id="acs-caption">ACS has two distinct paths into FastAPI: HTTPS call events/control and duplex WSS audio. Event Grid delivers incoming-call events, not the media stream.</figcaption>
+          <details class="flow-transcript">
+            <summary>Text equivalent &amp; all flow steps</summary>
+            <h3>Inbound call</h3>
+            <ol data-flow="inbound">
+              <li data-paths="ingress incoming event">A PSTN caller reaches the ACS number. ACS emits an IncomingCall event through Event Grid to the app.</li>
+              <li data-paths="command callback">FastAPI answers through Call Automation. ACS callbacks report the evolving connection state.</li>
+              <li data-paths="carrierAudio audio engine">ACS opens duplex media WSS. The native Cascade or VoiceLive engine consumes audio and streams the response back.</li>
+              <li data-paths="policy state">YAML agents, tools, and scenarios drive the conversation; Redis and Cosmos retain the configured session and persistence data.</li>
+            </ol>
+            <h3>Outbound call</h3>
+            <ol data-flow="outbound">
+              <li data-paths="command">The app requests create_call using an ACS-purchased source number and the selected recipient.</li>
+              <li data-paths="callback">ACS attempts the call and reports outcomes by callback. Request acceptance does not mean the recipient answered.</li>
+              <li data-paths="carrierAudio audio engine">Once connected, duplex ACS media reaches the same native engine as an inbound call.</li>
+              <li data-paths="policy state">The same agent definitions, tool policy, and configured persistence apply.</li>
+            </ol>
+            <h3>Human handoff</h3>
+            <ol data-flow="handoff">
+              <li data-paths="policy">The agent resolves an allowed human destination. This is a telephony transfer, not a YAML agent-to-agent handoff.</li>
+              <li data-paths="command human">The app requests the configured ACS transfer. ACS attempts a new human call leg; it is not instantaneous.</li>
+              <li data-paths="callback">Correlate success or failure callbacks. Do not tell the caller the transfer completed just because the request was accepted.</li>
+              <li data-paths="state">Retain authorized context and apply explicit failure/cleanup policy. Context is not automatically delivered to a human desktop by the phone call.</li>
+            </ol>
+          </details>
+        </figure>
+        <div class="delta-grid">
+          <div><h3>Keep</h3><p>Python/FastAPI, native engines, YAML registries, tool policy, Redis/Cosmos, ACS callbacks and media framing.</p></div>
+          <div><h3>Add</h3><p>Nothing for this diagram. It documents the reviewed baseline, not an endorsement of future standalone lifecycle support.</p></div>
+          <div><h3>Remove</h3><p>Nothing. ACS numbers, call control, and media remain dependencies to inventory.</p></div>
+        </div>
+        <div class="table-scroll" tabindex="0" role="region" aria-label="Current runtime support matrix">
+          <table>
+            <caption>Actual channel support in this snapshot</caption>
+            <thead><tr><th scope="col">Channel</th><th scope="col">Cascade</th><th scope="col">VoiceLive</th><th scope="col">Important boundary</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">Browser direct audio</th><td>Supported</td><td>Supported</td><td>A separate browser/app audio path; do not infer use of the ACS Calling SDK.</td></tr>
+              <tr><th scope="row">ACS</th><td>Supported</td><td>Supported</td><td>ACS telephony and media bridge.</td></tr>
+              <tr><th scope="row">Genesys AudioHook</th><td><strong>Not supported</strong></td><td>Supported</td><td>An existing specific integration, not a generic SIP gateway or a commitment to Cascade support.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="source-note">Authoritative current-code references: <a href="https://github.com/AIappsGBBFactory/art-voice-agent-accelerator/blob/09ecdfcf5b04622e91d06eb3b12a25ef64e7e6a0/apps/artagent/backend/voice/README.md">voice runtime ownership</a> and <a href="voice-extension-guide.md">extension guide</a>. Historical <code>docs/legacy</code> material is not current API guidance.</p>
+        </details>
+      </section>
+
+      <section class="architecture-option" aria-labelledby="tpe">
+        <h2 id="tpe"><span class="option-number">02</span> Teams Phone via ACS / TPE</h2>
+        <p class="option-summary"><span class="status proposed">Proposed</span> Accelerator integration design based on public TPE documentation.</p>
+        <p><strong>Reuse the ACS bridge; add Teams identity.</strong> TPE connects a licensed resource account and service number to ACS Call Automation. The design shown here aims to retain the Python runtime, callbacks, and media protocol; that reuse must be implemented and validated. <a href="https://learn.microsoft.com/en-us/azure/communication-services/concepts/interop/tpe/teams-phone-extensibility-overview">TPE architecture</a> &middot; <a href="https://learn.microsoft.com/en-us/azure/communication-services/concepts/interop/tpe/teams-phone-extensibility-faq">GA scope</a>.</p>
+        <p class="next-proof"><strong>Next proof: Teams admin + app owner.</strong> Provision the RA, assign server access, and exercise inbound/outbound calls and the intended human-handoff route against the public prerequisites.</p>
+        <p class="decision-limit"><strong>Known limit:</strong> Teams &rarr; third-party agent &rarr; external-number transfer/conference is documented as failing. <a href="https://learn.microsoft.com/en-us/microsoftteams/aa-cq-setup-third-party-voice-agents#known-issues">Exact scenario</a>.</p>
+        <details class="architecture-detail" data-section="tpe">
+          <summary>Teams/TPE architecture, call flows &amp; public prerequisites</summary>
+        <figure class="flow-player" data-architecture="tpe" aria-labelledby="tpe-caption">
+          <div class="diagram-host"></div>
+          <figcaption id="tpe-caption">Proposed accelerator integration using the public TPE model, shown with Direct Routing: carrier &rarr; certified SBC &rarr; Teams Phone RA, optionally through an auto attendant/call queue &rarr; TPE/ACS &rarr; accelerator. Calling Plans and Operator Connect are alternative PSTN connectivity choices.</figcaption>
+          <details class="flow-transcript">
+            <summary>Text equivalent &amp; all flow steps</summary>
+            <h3>Inbound call</h3>
+            <ol data-flow="inbound">
+              <li data-paths="carrier carrierAudio routing routingAudio">The carrier and certified SBC route a PSTN call into Teams Direct Routing and the configured resource-account number.</li>
+              <li data-paths="tpe tpeAudio event">The configured Teams/AA/CQ path reaches the TPE application. ACS delivers the incoming event through Event Grid.</li>
+              <li data-paths="command audio">FastAPI answers with ACS Call Automation. Audio still arrives over the existing ACS duplex WSS protocol.</li>
+              <li data-paths="engine state">The same Cascade or VoiceLive engine, agents, tools, and persistence serve the conversation.</li>
+            </ol>
+            <h3>Outbound call</h3>
+            <ol data-flow="outbound">
+              <li data-paths="command">The app calls ACS create_call with the Teams resource-account object ID as teams_app_source, after server-side access assignment.</li>
+              <li data-paths="tpe routing carrier">Teams telephony originates the PSTN leg using the RA's service identity and configured carrier route, not an ACS-purchased source number.</li>
+              <li data-paths="event">ACS callbacks report connection or failure. Missing licensing, authorization, or route configuration must surface as errors.</li>
+              <li data-paths="audio engine state">After connection, the reused ACS socket, engine, and session stack handle audio and context.</li>
+            </ol>
+            <h3>Human handoff</h3>
+            <ol data-flow="handoff">
+              <li data-paths="state">Resolve the destination and check the exact originating topology against the documented transfer limitations.</li>
+              <li data-paths="command human">For a supported scenario, request transfer through ACS/TPE toward the Teams or PSTN human destination.</li>
+              <li data-paths="event">Wait for the actual outcome. The specific Teams-to-third-party-agent-to-external-number scenario below is documented as failing.</li>
+              <li data-paths="state">If transfer fails, retain or recover the caller under a designed fallback. Share only authorized context through a separate integration.</li>
+            </ol>
+          </details>
+        </figure>
+        <div class="delta-grid">
+          <div><h3>Reuse</h3><p>ACS Call Automation, Event Grid/callbacks, duplex media, both engines, hangup, YAML agents/tools/scenarios, Redis/Cosmos.</p></div>
+          <div><h3>Add</h3><p>Teams RA, service number, licensing, app identity, RA-to-ACS association, server access assignment, carrier route; SBC/DNS/certificates when using Direct Routing.</p></div>
+          <div><h3>Replace, not remove</h3><p>Replace the ACS-purchased source-number assumption with Teams RA identity. <strong>Do not remove ACS control or media.</strong></p></div>
+        </div>
+        <h3 id="tpe-prerequisites">What the public TPE setup requires</h3>
+        <p>These are documented Microsoft prerequisites, not a description of an accelerator provider selector or release.</p>
+        <div class="table-scroll" tabindex="0" role="region" aria-label="Public TPE prerequisites">
+          <table>
+            <thead><tr><th scope="col">Boundary</th><th scope="col">Publicly documented requirement</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">Resource account</th><td>Provision the RA, assign the Teams Phone Resource Account license and service number, and associate it with the ACS resource. <a href="https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/tpe/teams-phone-extensibility-quickstart">Provisioning</a>.</td></tr>
+              <tr><th scope="row">Server access</th><td>Authorize the RA through the Teams Phone access assignment API. This is separate from client-user consent. <a href="https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/tpe/teams-phone-extensibility-access-teams-phone">Access assignment</a>.</td></tr>
+              <tr><th scope="row">Outbound call</th><td>Use the RA object ID as <code>TeamsAppSource</code>, configure outbound-capable PSTN connectivity, and provide a public HTTPS callback URI. <a href="https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/tpe/teams-phone-extensibility-server-outbound-call">Server outbound quickstart</a>.</td></tr>
+              <tr><th scope="row">Python SDK</th><td>The public <code>create_call</code> API exposes <code>teams_app_source</code>; the SDK changelog records TeamsAppSource support in stable 1.5.0. Use a currently supported version. <a href="https://learn.microsoft.com/en-us/python/api/azure-communication-callautomation/azure.communication.callautomation.callautomationclient?view=azure-python#azure-communication-callautomation-callautomationclient-create-call">API</a> &middot; <a href="https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/communication/azure-communication-callautomation/CHANGELOG.md#150-2025-09-10">Changelog</a>.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout warn">
+          <p><strong>Transfer support is scenario-specific.</strong> The TPE capability matrix lists supported transfers, but the third-party voice-agent setup page separately states: when a call is transferred <strong>from Teams into a third-party voice agent</strong>, a subsequent conference/transfer to an <strong>external phone number fails</strong>. Preserve both statements; neither &ldquo;all transfers work&rdquo; nor &ldquo;all transfers fail&rdquo; is accurate. <a href="https://learn.microsoft.com/en-us/microsoftteams/aa-cq-setup-third-party-voice-agents#known-issues">Known issue</a> &middot; <a href="https://learn.microsoft.com/en-us/azure/communication-services/concepts/interop/tpe/teams-phone-extensibility-capabilities">Capability matrix</a>.</p>
+        </div>
+        <p>Additional limits include forwarding/simultaneous-ring behavior and location-based routing. The server outbound guide also notes that its participant-move latency optimization does not yet apply to Direct Routing at publication. Do not promise identical latency or feature parity across routes. <a href="https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/tpe/teams-phone-extensibility-server-outbound-call">Server outbound prerequisites and limitations</a>.</p>
+        <p><strong>Build permission is not production certification.</strong> The FAQ permits starting development without certification; Microsoft's voice-agent support boundary is certified-partner solutions. The third-party integration page's June 15 GA entry is not blanket GA for managed agents or every transfer scenario. <a href="https://learn.microsoft.com/en-us/microsoftteams/teams-voice-agents#support-boundaries">Support boundary</a> &middot; <a href="https://learn.microsoft.com/en-us/microsoftteams/aa-cq-setup-third-party-voice-agents">Third-party setup explicitly requires ACS and Event Grid</a>.</p>
+        </details>
+      </section>
+
+      <section class="architecture-option" aria-labelledby="graph">
+        <h2 id="graph"><span class="option-number">03</span> ACS-independent Graph calling bot</h2>
+        <p class="option-summary"><span class="status proposed">Proposed</span> New calling bot, media host, and bridge.</p>
+        <p><strong>Keep Python behind a Windows/.NET media service.</strong> Graph controls calls, including documented PSTN scenarios; its REST API does not stream PCM. <a href="https://learn.microsoft.com/en-us/graph/api/application-post-calls?view=graph-rest-1.0">Graph v1.0 calling</a> &middot; <a href="https://learn.microsoft.com/en-us/microsoftteams/platform/bots/calls-and-meetings/requirements-considerations-application-hosted-media-bots">Media requirements</a>.</p>
+        <p class="next-proof"><strong>Next proof: identity + media-platform owners.</strong> Obtain the relevant <a href="#graph-grants">Graph consent</a>, validate Azure Windows hosting/support, then prototype a duplex bridge to the existing engine.</p>
+        <p class="decision-limit"><strong>Support gate:</strong> Graph REST is v1.0; the separate real-time media platform page still says developer preview. This is not a Linux-only drop-in.</p>
+        <details class="architecture-detail" data-section="graph">
+          <summary>Graph architecture, call flows &amp; media-host requirements</summary>
+        <figure class="flow-player" data-architecture="graph" aria-labelledby="graph-caption">
+          <div class="diagram-host"></div>
+          <figcaption id="graph-caption">Graph HTTPS controls calls; the separate .NET real-time media SDK receives/injects audio. New bot, affinity, and bridge components sit in front of the retained Python runtime. No ACS node is part of this proposed path.</figcaption>
+          <details class="flow-transcript">
+            <summary>Text equivalent &amp; all flow steps</summary>
+            <h3>Inbound call</h3>
+            <ol data-flow="inbound">
+              <li data-paths="pstn graph events">A supported Teams/PSTN call reaches the bot's application instance. Graph delivers the incoming-call notification to its registered callback.</li>
+              <li data-paths="events affinity">The bot answers with the appropriate permissions and application-hosted media configuration; pin the call to its media instance.</li>
+              <li data-paths="carrierAudio media bridge">The Windows/.NET media SDK handles audio. A newly engineered duplex bridge exchanges it with Python, not through Graph REST.</li>
+              <li data-paths="state">Retain the native engine and business definitions; map identities, formats, backpressure, interruption, and lifecycle explicitly.</li>
+            </ol>
+            <h3>Outbound call</h3>
+            <ol data-flow="outbound">
+              <li data-paths="custom events">Custom orchestration asks the bot service to create a Graph call using an authorized application identity.</li>
+              <li data-paths="graph pstn">A provisioned, numbered application instance can originate documented PSTN scenarios; Graph is not limited to internal Teams calls.</li>
+              <li data-paths="events affinity">Track asynchronous call state and the chosen media host. A successful API response is not proof the destination answered.</li>
+              <li data-paths="carrierAudio media bridge state">After connection, the .NET media leg and custom bridge carry audio to/from the retained AI runtime.</li>
+            </ol>
+            <h3>Human handoff</h3>
+            <ol data-flow="handoff">
+              <li data-paths="state custom">Resolve destination identity and tenant/number constraints; pass a correlated transfer request to the bot service.</li>
+              <li data-paths="events graph human">Request a documented Graph transfer. Same-tenant Teams restrictions and application-instance PSTN requirements apply.</li>
+              <li data-paths="events">Treat HTTP 202 as acceptance, then observe asynchronous outcomes. Consultative transfer requires its own supported call topology.</li>
+              <li data-paths="affinity state">Release media only when the call lifecycle permits it; retain context and a failure path if the handoff does not complete.</li>
+            </ol>
+          </details>
+        </figure>
+        <div class="delta-grid">
+          <div><h3>Reuse</h3><p>Python AI engines, YAML definitions/tools, and storage behind an explicit new bridge. Reuse is a design goal, not current channel compatibility.</p></div>
+          <div><h3>Add</h3><p>Entra app/calling bot, application instance, Graph consent, Azure Windows/.NET media hosts, per-call affinity, callbacks, and a custom duplex/control bridge.</p></div>
+          <div><h3>Remove from this path</h3><p>ACS Call Automation, ACS Event Grid integration, ACS media framing, and ACS-number identity. Audit email/SMS separately before claiming complete ACS removal.</p></div>
+        </div>
+        <p><strong>Graph supports PSTN origination, inbound, and transfer scenarios.</strong> Follow the application-instance/number prerequisites, rather than assuming every identity can call any destination. The transfer API notes a same-tenant Teams scope and PSTN transfer only for application instances. <a href="https://learn.microsoft.com/en-us/graph/cloud-communications-phone-number">Bot number management</a> &middot; <a href="https://learn.microsoft.com/en-us/graph/api/call-answer?view=graph-rest-1.0">Answer</a> &middot; <a href="https://learn.microsoft.com/en-us/graph/api/call-transfer?view=graph-rest-1.0">Transfer and asynchronous response</a>.</p>
+        <div class="callout warn">
+          <p><strong>REST v1.0 is not the media platform's release label.</strong> The application-hosted media article still calls the real-time media platform developer preview. It requires the <code>Microsoft.Graph.Communications.Calls.Media</code> .NET library, production Windows Server hosting in Azure (not Azure Web App), publicly reachable per-instance IP/port mapping, and call affinity. Calls remain pinned to their media host. The SDK must be current or no more than three months old. Confirm the operational and support boundary before committing. <a href="https://learn.microsoft.com/en-us/microsoftteams/platform/bots/calls-and-meetings/requirements-considerations-application-hosted-media-bots">Exact media-host constraints</a>.</p>
+        </div>
+        </details>
+      </section>
+
+      <section class="architecture-option" aria-labelledby="sip">
+        <h2 id="sip"><span class="option-number">04</span> SIP gateway + Teams Direct Routing</h2>
+        <p class="option-summary"><span class="status proposed">Proposed</span> Gateway vendor and interface not selected.</p>
+        <p><strong>Keep Python behind a programmable SIP/contact-center gateway.</strong> The gateway owns call control and duplex audio; a certified SBC supplies Teams connectivity. <a href="https://learn.microsoft.com/en-us/microsoftteams/teams-contact-center#integration-models-for-solution-providers">Connect model</a> &middot; <a href="https://learn.microsoft.com/en-us/microsoftteams/direct-routing-plan">Direct Routing prerequisites</a>.</p>
+        <p class="next-proof"><strong>Next proof: telephony vendor + app owner.</strong> Confirm simultaneous audio receive/injection, auth/codecs, and blind/consultative transfer in the selected topology before building the channel bridge.</p>
+        <p class="decision-limit"><strong>Not sufficient:</strong> a certified SBC alone is not an AI media API, and does not certify the whole voice-agent solution.</p>
+        <details class="architecture-detail" data-section="sip">
+          <summary>SIP architecture, call flows &amp; vendor transfer contract</summary>
+        <figure class="flow-player" data-architecture="sip" aria-labelledby="sip-caption">
+          <div class="diagram-host"></div>
+          <figcaption id="sip-caption">Illustrative topology, not a selected vendor design. SIP/TLS is signaling; RTP/SRTP is media (Teams-side media uses SRTP). The gateway must anchor the required audio and expose a confirmed duplex interface. Media bypass can change the actual media route.</figcaption>
+          <details class="flow-transcript">
+            <summary>Text equivalent &amp; all flow steps</summary>
+            <h3>Inbound call</h3>
+            <ol data-flow="inbound">
+              <li data-paths="carrier routing">The configured carrier/SBC/Teams route sends an incoming call to the chosen gateway. The exact entry route is a vendor design decision.</li>
+              <li data-paths="gateway">The gateway answers using its documented SIP/call-control interface; the SBC does not supply a generic answer API to Python.</li>
+              <li data-paths="carrierAudio gatewayAudio bridge">The gateway anchors RTP/SRTP and simultaneously receives/injects audio through its confirmed app interface.</li>
+              <li data-paths="engine state">A new channel bridge maps formats, pacing, barge-in, and lifecycle into the retained engine, tools, and state.</li>
+            </ol>
+            <h3>Outbound call</h3>
+            <ol data-flow="outbound">
+              <li data-paths="bridgeControl gateway">Python requests origination through the selected gateway's documented control contract, not through Teams Direct Routing alone.</li>
+              <li data-paths="carrier routing">The gateway/SBC uses the authorized carrier or Teams route and permitted caller identity. Routing and commercial arrangements must be confirmed.</li>
+              <li data-paths="gateway">Track provisional, answered, failed, and disconnected states through the vendor's event contract.</li>
+              <li data-paths="gatewayAudio bridge engine">After answer, the gateway bridges two-way audio. A one-way recording feed cannot serve this architecture.</li>
+            </ol>
+            <h3>Human handoff</h3>
+            <ol data-flow="handoff">
+              <li data-paths="state">Choose blind or consultative transfer, a validated destination, and a least-data context handoff contract.</li>
+              <li data-paths="transfer routing human">Invoke the vendor-supported transfer flow. Validate SIP REFER/NOTIFY direction and any new INVITE legs for this topology.</li>
+              <li data-paths="gateway">Observe signaling and final call outcomes. REFER acceptance, ringing, and human answer are different milestones.</li>
+              <li data-paths="gatewayAudio state">Retain or recover media on failure and close only the correct legs. Validate media-bypass and failure-recovery behavior explicitly.</li>
+            </ol>
+          </details>
+        </figure>
+        <div class="delta-grid">
+          <div><h3>Reuse</h3><p>Python/Linux hosting, AI engines and business definitions, tools, and state behind a purpose-built channel bridge.</p></div>
+          <div><h3>Add</h3><p>Selected gateway/control service, confirmed duplex API, certified SBC, carrier/Teams routing, DNS/certificates/networking, monitoring, and vendor operations.</p></div>
+          <div><h3>Remove from this path</h3><p>ACS control, callbacks/Event Grid, ACS framing, and ACS number dependency. The gateway replaces these responsibilities; they do not disappear.</p></div>
+        </div>
+        <p><strong>No invented endpoint:</strong> this guide deliberately does not name a generic <code>wss://</code> SIP media URL. Transport, authentication, codecs, pacing, interruption, concurrency, and commercial rights remain <strong>vendor-dependent and unconfirmed</strong>.</p>
+        <p><strong>Transfer direction matters.</strong> Microsoft's Direct Routing article describes the Teams SIP proxy either handling a transfer locally with a new INVITE, or sending REFER <em>to the SBC</em>, which handles a new INVITE using the provided context. SBC NOTIFY support is required; SBC REFER handling is required for the documented media-bypass transfer case. This is not a guarantee that an arbitrary bot-originated REFER into Teams will work. Validate REFER-TO/REFERRED-BY, Replaces behavior, and blind/consultative flows with the SBC/gateway vendor. <a href="https://learn.microsoft.com/en-us/microsoftteams/direct-routing-protocols-sip#call-transfer">Official SIP transfer contract</a>.</p>
+        <p>A <strong>certified SBC</strong> establishes the Direct Routing device boundary, not certification of the entire voice-agent solution. Agree which party owns carrier incidents, Teams routing, gateway media, and the AI runtime. <a href="https://learn.microsoft.com/en-us/microsoftteams/teams-contact-center#contact-center-for-microsoft-teams-certification-program">Contact-center solution certification</a>.</p>
+        </details>
+      </section>
+
+      <section class="architecture-option" aria-labelledby="managed">
+        <h2 id="managed"><span class="option-number">05</span> Managed Teams Phone Agent / Copilot Studio</h2>
+        <p class="option-summary"><span class="status preview">Preview</span> Replace the conversational runtime, not just the phone provider.</p>
+        <p><strong>Move the conversation into a managed product.</strong> The native setup lists no custom ACS resource or PCM bridge to this accelerator; Microsoft's internal stack is undisclosed. <a href="https://learn.microsoft.com/en-us/microsoftteams/aa-cq-setup-teams-phone-agent">Teams Phone Agent</a> &middot; <a href="https://learn.microsoft.com/en-us/microsoftteams/aa-cq-direct-mcs">Direct-dial Copilot Studio</a>.</p>
+        <p class="next-proof"><strong>Next proof: Teams/Power Platform admins + agent owner.</strong> Confirm preview eligibility and test one representative conversation, tool call, and supported human transfer.</p>
+        <p class="decision-limit"><strong>Fit gate:</strong> the Copilot Teams channel is basic-voice only, not real-time, with classic orchestration and tenant enablement. Do not assume Cascade/VoiceLive or outbound-automation parity. <a href="https://learn.microsoft.com/en-us/microsoft-copilot-studio/voice-teams-phone-agent">Channel limits</a>.</p>
+        <details class="architecture-detail" data-section="managed">
+          <summary>Managed architecture, call flows &amp; preview boundaries</summary>
+        <figure class="flow-player" data-architecture="managed" aria-labelledby="managed-caption">
+          <div class="diagram-host"></div>
+          <figcaption id="managed-caption">A Teams RA routes to a product-hosted agent. The custom accelerator voice loop is not in this path; prompts, tools, knowledge, and handoff behavior must be mapped to the chosen product's supported features.</figcaption>
+          <details class="flow-transcript">
+            <summary>Text equivalent &amp; all flow steps</summary>
+            <h3>Inbound call</h3>
+            <ol data-flow="inbound">
+              <li data-paths="pstn route">A configured Teams service number and AI Agent resource account route the call to the enabled product/channel.</li>
+              <li data-paths="callerAudio productAudio channel">Teams Phone Agent or the supported Copilot Studio voice channel runs the conversation in the managed runtime.</li>
+              <li data-paths="knowledge tools">The managed agent uses its configured knowledge and allowed tools. Existing YAML/toolstore definitions do not automatically become product assets.</li>
+              <li data-paths="channel">This path has no documented custom PCM bridge to Cascade or VoiceLive. Evaluate the supported product experience instead.</li>
+            </ol>
+            <h3>Outbound automation boundary</h3>
+            <ol data-flow="outbound">
+              <li data-paths="">The cited native setup is not documentation for arbitrary app-originated outbound calls or SIP automation.</li>
+              <li data-paths="">Do not reinterpret a product's call-transfer tool as a generic create_call API for this accelerator.</li>
+              <li data-paths="">Confirm a separately documented product capability before designing proactive outbound scenarios. No outbound call is animated here because no such integration is established.</li>
+            </ol>
+            <h3>Human handoff</h3>
+            <ol data-flow="handoff">
+              <li data-paths="knowledge">Configure only destinations and transfer behavior supported by the selected managed product.</li>
+              <li data-paths="handoff human">The managed agent invokes its supported transfer workflow through Teams telephony.</li>
+              <li data-paths="handoff">Observe product outcomes and handle unsuccessful routing using the product's supported fallbacks, not assumed ACS/Graph hooks.</li>
+              <li data-paths="tools">Any human-facing summary or business context needs a supported connector and appropriate permissions; it is not implied by the call transfer.</li>
+            </ol>
+          </details>
+        </figure>
+        <div class="delta-grid">
+          <div><h3>Carry forward</h3><p>Business requirements, reviewed prompts, knowledge, and allowed tools as migration inputs, not drop-in YAML/runtime reuse.</p></div>
+          <div><h3>Add</h3><p>Product eligibility, tenant/channel enablement, licensed RA/number configuration, managed agent configuration, governance, and product-specific testing.</p></div>
+          <div><h3>Replace</h3><p>This application's telephony integration and conversational runtime. External business services may be connected only through supported product mechanisms.</p></div>
+        </div>
+        <div class="callout warn">
+          <p><strong>Basic voice is not real-time channel parity.</strong> The linked Copilot Studio Teams channel supports <strong>basic voice agents only</strong>; real-time voice agents are explicitly unsupported. It calls for classic orchestration (not generative orchestration), tenant enablement by Microsoft, and Copilot Studio tenant/user licensing. Do not use Dynamics 365 real-time voice-agent documentation as proof of Teams channel support. <a href="https://learn.microsoft.com/en-us/microsoft-copilot-studio/voice-teams-phone-agent">Teams channel prerequisites and limitations</a> &middot; <a href="https://learn.microsoft.com/en-us/microsoft-copilot-studio/voice-realtime-voice-agents">Separate Dynamics 365 real-time offering</a>.</p>
+        </div>
+        <p>Teams Phone Agent remains <strong>Frontier Public Preview</strong>; direct-dial Copilot Studio is also preview. Native RA transfer, tools, and recording features have their own boundaries. These are not GA replacements with automatic parity for Cascade, VoiceLive, arbitrary outbound calls, or SIP automation. <a href="https://learn.microsoft.com/en-us/microsoftteams/aa-cq-setup-teams-phone-agent">Product status and limitations</a>.</p>
+        </details>
+      </section>
+
+      <h2 id="permissions">Licenses &amp; permissions</h2>
+      <p>RA licensing, number assignment, app consent, and server access are separate prerequisites. A selector cannot grant them. Start with <a href="#tpe-grants">TPE server access</a> or <a href="#graph-grants">Graph application permissions</a>.</p>
+      <details class="reference-detail" data-section="permissions">
+        <summary>Licensing, admin ownership &amp; exact permission tables</summary>
+        <p>Use this as a scenario checklist, not a pricing quote or universal role recipe. Confirm the selected carrier, cloud, SKU, and commercial agreement.</p>
+      <div class="table-scroll" tabindex="0" role="region" aria-label="Licensing and ownership comparison">
+        <table>
+          <caption>Who needs to supply what?</caption>
+          <thead><tr><th scope="col">Path</th><th scope="col">Licensing / commercial prerequisites</th><th scope="col">Elevated administration</th><th scope="col">Hosting and operational owner</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Standalone ACS</th><td>Azure subscription, ACS number/calling and selected AI services; confirm lifecycle eligibility.</td><td>Azure resource, number, Event Grid, identity and app operators. Use roles scoped to each operation.</td><td>Customer operates Python/Linux app, callbacks, WSS, and state; Microsoft supplies ACS service.</td></tr>
+            <tr><th scope="row">Teams via TPE</th><td>Teams Phone Resource Account license, service number and PSTN connectivity. Human agents: Teams + Teams Phone and Enterprise Voice. Calling Plan outbound funding is scenario-specific. <a href="https://learn.microsoft.com/en-us/azure/communication-services/concepts/interop/tpe/teams-phone-extensibility-connectivity-cost#teams-licenses-requirements">TPE licensing</a>.</td><td>Teams admin provisions RA/app association; Azure/ACS resource owner authorizes server access. User/role administration is separate. <a href="https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/tpe/teams-phone-extensibility-access-teams-phone">Access assignments</a>.</td><td>Customer retains ACS/app operations and adds Teams tenant/number/routing ownership; carrier or customer operates SBC when using Direct Routing.</td></tr>
+            <tr><th scope="row">Graph bot</th><td>Application instance/RA, assigned number and supported PSTN configuration. Validate current RA/outbound funding, not just older &ldquo;virtual user&rdquo; terminology. <a href="https://learn.microsoft.com/en-us/graph/cloud-communications-phone-number">Number prerequisites</a>.</td><td>Bot/Entra registration, Graph <strong>application</strong> permissions with tenant admin consent; Teams/number administration.</td><td>Customer operates Windows Server/.NET media fleet in Azure, public instance endpoints and call affinity, plus Python bridge/runtime. Not Linux-only hosting.</td></tr>
+            <tr><th scope="row">SIP / Connect</th><td>Carrier contract, certified SBC, gateway/platform contract and Teams Phone licensing for relevant users/voice apps. Gateway API/media licensing <strong>unconfirmed</strong>.</td><td>Teams voice admin plus SBC, DNS, certificates, network and gateway administrators; vendor app access is contract-specific. <a href="https://learn.microsoft.com/en-us/microsoftteams/direct-routing-plan">Planning requirements</a>.</td><td>Explicitly allocate SBC/carrier, gateway, Teams routing, and Python operations. Gateway location/hosting is <strong>vendor-dependent</strong>.</td></tr>
+            <tr><th scope="row">Managed agents</th><td>Applicable Teams Phone/RA licenses and preview eligibility. Copilot Studio additionally requires tenant + user licenses and applicable consumption funding. <a href="https://learn.microsoft.com/en-us/microsoftteams/aa-cq-reference-prerequisites-licensing">Voice-app licensing</a>.</td><td>Teams admin configures voice app/RA; Copilot/Power Platform admins and Microsoft preview enablement where specified.</td><td>Microsoft hosts conversation product; customer owns configuration, governance and external tools. Direct Routing still requires its SBC/carrier operations if selected.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><strong>RA license &ne; a human Teams Phone license.</strong> Acquire and assign the dedicated Microsoft Teams Phone Resource Account license even when included at no cost; do not assign Teams Phone Standard to an RA. The dedicated licensing page and older allocation language are not fully aligned, so confirm current procurement terms. <a href="https://learn.microsoft.com/en-us/microsoftteams/teams-add-on-licensing/virtual-user">RA licensing</a> &middot; <a href="https://learn.microsoft.com/en-us/microsoftteams/aa-cq-manage-resource-accounts#assign-permissions-for-managing-a-resource-account">RA administration roles</a> &middot; <a href="https://learn.microsoft.com/en-us/microsoftteams/using-admin-roles">Teams role boundaries</a>.</p>
+      <p><strong>Plan an admin handoff, not permanent broad access.</strong> RA management guidance requires User Administrator plus an appropriate Teams role, with operation-specific editing restrictions. Teams Administrator, Teams Communications Administrator, and Teams Telephony Administrator have different voice-management scopes. Assign the documented roles for the provisioning task; application runtime credentials are a separate concern.</p>
+      <p><strong>Outbound Calling Plan funding:</strong> TPE guidance specifies PAYG Calling Plan plus appropriate funding for RA-originated Calling Plan traffic after 1 November 2025; Direct Routing numbers are unaffected by that change, while Operator Connect requires carrier coordination. Other voice-app pages use different funding phrasing. Validate the exact commercial scenario rather than promising free outbound calls. <a href="https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/tpe/teams-phone-extensibility-server-outbound-call">TPE server guidance</a> &middot; <a href="https://learn.microsoft.com/en-us/microsoftteams/aa-cq-reference-prerequisites-licensing#outbound-calls-from-teams-phone-agent-auto-attendant-or-call-queue">Current voice-app outbound guidance</a>.</p>
+
+      <h3 id="graph-grants">Graph: consent to the operations you actually implement</h3>
+      <div class="table-scroll" tabindex="0" role="region" aria-label="Graph application permission matrix">
+        <table>
+          <thead><tr><th scope="col">Operation</th><th scope="col">Application permission</th><th scope="col">Scope note / source</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Create outgoing 1:1/PSTN call; transfer</th><td><code>Calls.Initiate.All</code></td><td><a href="https://learn.microsoft.com/en-us/graph/api/application-post-calls?view=graph-rest-1.0#permissions">Create</a> / <a href="https://learn.microsoft.com/en-us/graph/api/call-transfer?view=graph-rest-1.0#permissions">transfer</a>; number and scenario prerequisites still apply.</td></tr>
+            <tr><th scope="row">Create a group call</th><td><code>Calls.InitiateGroupCall.All</code></td><td>Choose only if implementing the group scenario. The name uses singular <code>GroupCall</code>.</td></tr>
+            <tr><th scope="row">Answer; group/meeting join as applicable</th><td><code>Calls.JoinGroupCall.All</code>; <code>Calls.JoinGroupCallAsGuest.All</code> for the documented guest/higher-privilege case</td><td><a href="https://learn.microsoft.com/en-us/graph/api/call-answer?view=graph-rest-1.0#permissions">Answer permission table</a>. Do not substitute a chat-scoped RSC grant for tenant-wide PSTN authorization.</td></tr>
+            <tr><th scope="row">Application-hosted media access</th><td><strong>Add <code>Calls.AccessMedia.All</code></strong></td><td>Required in addition to relevant call permissions, not instead of them.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>These tenant-wide application grants require <strong>admin consent</strong>. Delegated permissions are not supported for the cited create/answer/transfer operations. Request only the relevant set; the bot-number tutorial is not a reason to grant every example permission. <a href="https://learn.microsoft.com/en-us/graph/permissions-reference#callsaccessmediaall">Graph permissions reference</a>.</p>
+      <h3 id="tpe-grants">TPE: server access is not client-user consent</h3>
+      <p>The documented server flow associates the RA with the ACS resource, then the <strong>ACS resource owner</strong> creates a Teams access assignment for the tenant/RA with <code>principalType: "teamsResourceAccount"</code>. The separate Calling SDK client-user flow uses <code>TeamsExtension.ManageCalls</code>, admin consent, and permitted client IDs; do not present that as the server-only Call Automation grant. Optional Graph RA discovery uses a beta endpoint and is not a production prerequisite when administrators already provide the RA object ID. <a href="https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/tpe/teams-phone-extensibility-access-teams-phone">Server vs client assignments</a> &middot; <a href="https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/tpe/teams-phone-extensibility-quickstart">Provisioning and discovery</a>.</p>
+      </details>
+
+      <h2 id="handoffs">Human handoff: acceptance is not completion</h2>
+      <p>Every path needs an observed outcome and a failure fallback. A YAML agent handoff changes the AI persona, not the telephone call.</p>
+      <details class="reference-detail" data-section="handoffs">
+        <summary>Destination, transfer, outcome &amp; recovery checklist</summary>
+      <div class="handoff-contract">
+        <div><span>1</span><h3>Resolve</h3><p>Teams identity vs E.164 number; tenant scope, destination allowlist, caller consent, and identity policy.</p></div>
+        <div><span>2</span><h3>Attempt</h3><p>Blind vs consultative; hold/media ownership, new call legs, timeout, and correlation ID.</p></div>
+        <div><span>3</span><h3>Observe</h3><p>Accepted vs completed; asynchronous callback/notification, busy, no answer, rejection, and disconnect.</p></div>
+        <div><span>4</span><h3>Recover</h3><p>Retain caller or offer a designed fallback; avoid duplicate transfers; release only the correct media/legs.</p></div>
+      </div>
+      <p><strong>Context is a separate data path.</strong> A summary, authentication state, transcript, and CRM reference do not automatically travel with a phone call. Use an authorized integration, scoped identifiers, and explicit retention/access policy. SIP headers or TPE context headers are not a universal human-desktop context protocol. <a href="https://learn.microsoft.com/en-us/azure/communication-services/concepts/interop/tpe/teams-phone-extensibility-capabilities">TPE context and feature scope</a>.</p>
+      </details>
+
+      <h2 id="migration">ACS exit workstreams</h2>
+      <p>These are proposed delivery checkpoints, not assigned tasks or a release schedule. Reuse the current business logic; replace and prove each ACS-specific boundary.</p>
+      <div class="callout">
+        <p><strong>Voice migration is not complete ACS removal.</strong> If your application also uses ACS Email or SMS, migrate those dependencies separately. Teams Phone telephony does not replace transactional email or programmable messaging.</p>
+      </div>
+      <dl class="workstream-checkpoints">
+        <div><dt>Voice control + media</dt><dd><strong>Choose a voice path:</strong> <a href="#graph">Graph media bot</a> or <a href="#sip">SIP gateway</a>. App/media owners replace create/answer/transfer, callbacks, framing, identity, and cleanup. <a href="voice-extension-guide.md">Runtime extension boundary</a>.</dd></div>
+        <div><dt>Call-lifecycle proof</dt><dd><strong>App + telephony owners:</strong> prove inbound/outbound, duplex audio, barge-in, DTMF, <a href="#handoffs">human handoff</a>, failure recovery, and hangup; recording/announcements where required.</dd></div>
+        <div><dt>Email + SMS</dt><dd><strong>Choose replacements where needed:</strong> migrate tools, templates, credentials, delivery tracking, and consent/compliance independently of the voice path.</dd></div>
+        <div><dt>Commercial + admin approval</dt><dd><strong>Tenant + service owners:</strong> confirm <a href="#permissions">licenses/consent</a>, carrier and solution support, preview limits, and applicable <a href="#lifecycle">public lifecycle guidance</a> before a production commitment.</dd></div>
+        <div><dt>Final dependency audit</dt><dd><strong>Release owner:</strong> verify no remaining ACS consumers before removing resources, secrets, numbers, roles, or deployment configuration. No removal is performed by this guide.</dd></div>
+      </dl>
+
+      <h2 id="sources">Sources &amp; revision dates</h2>
+      <p>Public sources retrieved <strong>20 September 2026</strong>. Page-update dates are not release dates. Product claims below rely on public documentation; proposed integration designs remain recommendations.</p>
+      <details class="reference-detail" data-section="sources">
+        <summary>Full Microsoft reference register &amp; unresolved decisions</summary>
+      <div class="table-scroll" tabindex="0" role="region" aria-label="Official reference register">
+        <table class="source-register">
+          <thead><tr><th scope="col">Evidence area</th><th scope="col">Primary Microsoft references</th><th scope="col">Revision / boundary</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Integration taxonomy</th><td><a href="https://learn.microsoft.com/en-us/microsoftteams/teams-contact-center">Teams contact-center models</a></td><td>2026-07-29. Unify / Extend / Connect and separate solution certification.</td></tr>
+            <tr><th scope="row">TPE architecture</th><td><a href="https://learn.microsoft.com/en-us/azure/communication-services/concepts/interop/tpe/teams-phone-extensibility-overview">Overview</a>; <a href="https://learn.microsoft.com/en-us/azure/communication-services/concepts/interop/tpe/teams-phone-extensibility-faq">FAQ</a>; <a href="https://learn.microsoft.com/en-us/azure/communication-services/concepts/interop/tpe/teams-phone-extensibility-capabilities">Capabilities</a></td><td>2026-07-16 / 2026-09-01 / 2026-07-23. FAQ initial-GA PSTN scope; matrix is scenario-specific.</td></tr>
+            <tr><th scope="row">TPE setup and grants</th><td><a href="https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/tpe/teams-phone-extensibility-server-outbound-call">Server outbound</a>; <a href="https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/tpe/teams-phone-extensibility-quickstart">Provisioning</a>; <a href="https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/tpe/teams-phone-extensibility-access-teams-phone">Access assignment</a>; <a href="https://learn.microsoft.com/en-us/azure/communication-services/concepts/interop/tpe/teams-phone-extensibility-connectivity-cost">Connectivity/cost</a></td><td>2026-09-07 / 2026-08-27 / 2026-07-17 / 2026-07-17. Server and client consent are separate.</td></tr>
+            <tr><th scope="row">Python TeamsAppSource</th><td><a href="https://learn.microsoft.com/en-us/python/api/azure-communication-callautomation/azure.communication.callautomation.callautomationclient?view=azure-python">Python client API</a>; <a href="https://github.com/Azure/azure-sdk-for-python/blob/main/sdk/communication/azure-communication-callautomation/CHANGELOG.md#150-2025-09-10">SDK changelog</a></td><td>API retrieved 2026-09-20; stable 1.5.0 entry dated 2025-09-10.</td></tr>
+            <tr><th scope="row">Graph call control</th><td><a href="https://learn.microsoft.com/en-us/graph/api/application-post-calls?view=graph-rest-1.0">Create</a>; <a href="https://learn.microsoft.com/en-us/graph/api/call-answer?view=graph-rest-1.0">Answer</a>; <a href="https://learn.microsoft.com/en-us/graph/api/call-transfer?view=graph-rest-1.0">Transfer</a>; <a href="https://learn.microsoft.com/en-us/graph/cloud-communications-phone-number">Bot phone number</a>; <a href="https://learn.microsoft.com/en-us/graph/permissions-reference">Permissions reference</a></td><td>2025-08-27 / 2025-12-03 / 2025-07-23 / 2025-08-06 / 2026-09-15. REST v1.0, documented PSTN scenarios, application grants.</td></tr>
+            <tr><th scope="row">Graph raw media</th><td><a href="https://learn.microsoft.com/en-us/microsoftteams/platform/bots/calls-and-meetings/requirements-considerations-application-hosted-media-bots">Application-hosted media requirements</a></td><td>2026-07-22. Developer-preview label remains; Windows/Azure, instance reachability, affinity, SDK freshness.</td></tr>
+            <tr><th scope="row">Routing and SIP</th><td><a href="https://learn.microsoft.com/en-us/microsoftteams/direct-routing-plan">Direct Routing plan</a>; <a href="https://learn.microsoft.com/en-us/microsoftteams/direct-routing-protocols-sip#call-transfer">SIP transfer</a>; <a href="https://learn.microsoft.com/en-us/azure/communication-services/concepts/telephony/direct-routing-infrastructure">ACS infrastructure</a></td><td>2026-09-17 / 2026-08-21 / 2026-03-25. Directional transfer rules and separate ACS/Teams SBC FQDNs.</td></tr>
+            <tr><th scope="row">Third-party voice agents</th><td><a href="https://learn.microsoft.com/en-us/microsoftteams/teams-voice-agents">Support boundaries</a>; <a href="https://learn.microsoft.com/en-us/microsoftteams/aa-cq-setup-third-party-voice-agents">Setup / known issues</a></td><td>2026-08-17; setup <code>ms.date</code> 2026-08-31. Certified-partner support; explicit ACS/Event Grid; specific external-transfer failure.</td></tr>
+            <tr><th scope="row">Managed products</th><td><a href="https://learn.microsoft.com/en-us/microsoftteams/aa-cq-setup-teams-phone-agent">Teams Phone Agent</a>; <a href="https://learn.microsoft.com/en-us/microsoftteams/aa-cq-direct-mcs">Direct-dial Copilot Studio</a>; <a href="https://learn.microsoft.com/en-us/microsoft-copilot-studio/voice-teams-phone-agent">Copilot Teams channel</a></td><td>2026-09-17; direct-dial <code>ms.date</code> 2026-08-31; channel 2026-08-18. Preview/gating and basic-only channel limits.</td></tr>
+            <tr><th scope="row">Licenses and roles</th><td><a href="https://learn.microsoft.com/en-us/microsoftteams/aa-cq-reference-prerequisites-licensing">Voice-app licensing</a>; <a href="https://learn.microsoft.com/en-us/microsoftteams/teams-add-on-licensing/virtual-user">RA license</a>; <a href="https://learn.microsoft.com/en-us/microsoftteams/using-admin-roles">Admin roles</a>; <a href="https://learn.microsoft.com/en-us/microsoftteams/aa-cq-manage-resource-accounts#assign-permissions-for-managing-a-resource-account">RA permissions</a></td><td>Licensing 2026-09-04 / 2026-04-27; roles 2026-07-28. RA permissions retrieved 2026-09-20. Commercial wording is not fully aligned across articles.</td></tr>
+            <tr><th scope="row">Lifecycle notice</th><td><a href="https://github.com/MicrosoftDocs/azure-docs/blob/main/articles/communication-services/includes/acs-retirement-breakingchange-callout.md">Public Microsoft notice</a></td><td>Notice <code>ms.date</code> 2026-02-25. A general warning only; no service-specific deadlines or migration entitlements are inferred.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="source-note">Open decisions: lifecycle terms; exact license/funding agreement; certified-solution support; Graph media production support; SIP vendor/duplex contract; topology-specific transfer and media bypass; managed-preview eligibility. This page deliberately leaves those unresolved rather than inventing entitlements, costs, endpoints, or support guarantees.</p>
+      </details>
+      <nav class="guide-footer" aria-label="Related guides">
+        <a href="adopt.html">Adopt &amp; Extend</a>
+        <a href="voice-extension-guide.md">Runtime extension ownership</a>
+        <a href="#top">Back to top</a>
+      </nav>
+    </div>
+  </main>
+</div>
+<script src="js/main.js?v=2"></script>
+<script src="js/search.js?v=2"></script>
+<script src="js/telephony.js?v=3"></script>
+</body>
+</html>
