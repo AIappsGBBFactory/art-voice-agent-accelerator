@@ -229,10 +229,28 @@
   const players = [];
   const disclosures = new Map([...document.querySelectorAll('details[data-section]')]
     .map(detail => [detail.dataset.section, detail]));
+  const licensePanels = new Map([...document.querySelectorAll('[data-license-panel]')]
+    .map(panel => [panel.dataset.licensePanel, panel]));
+  const licenseChoices = document.querySelectorAll('.license-picker a');
+  const licenseMap = document.getElementById('license-map');
+
+  function selectLicense(id) {
+    licensePanels.forEach((panel, key) => { panel.hidden = key !== id; });
+    licenseChoices.forEach(link => {
+      if (link.hash === `#${id}`) link.setAttribute('aria-current', 'true');
+      else link.removeAttribute('aria-current');
+    });
+    document.getElementById('license-selection').textContent =
+      `Showing requirements: ${document.getElementById(id).textContent}`;
+  }
+
+  selectLicense(licensePanels.has(location.hash.slice(1)) ? location.hash.slice(1) : 'license-tpe');
 
   function revealSection() {
     const target = document.getElementById(location.hash.slice(1));
     if (!target) return;
+    const license = target.closest('[data-license-panel]');
+    if (license) selectLicense(license.dataset.licensePanel);
     const section = disclosures.get(target.id);
     if (section) section.open = true;
     let ancestor = target.closest('details');
@@ -240,7 +258,8 @@
       ancestor.open = true;
       ancestor = ancestor.parentElement.closest('details');
     }
-    requestAnimationFrame(() => target.scrollIntoView({ block: 'start', behavior: 'instant' }));
+    const scrollTarget = license ? licenseMap : target;
+    requestAnimationFrame(() => scrollTarget.scrollIntoView({ block: 'start', behavior: 'instant' }));
   }
 
   disclosures.forEach((detail, id) => {
