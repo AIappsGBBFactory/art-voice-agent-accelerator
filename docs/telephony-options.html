@@ -384,7 +384,127 @@
       </section>
 
       <h2 id="permissions">Licenses &amp; permissions</h2>
-      <p>Read the requirements in four layers: <strong>human user / tenant</strong>, <strong>resource account</strong>, <strong>PSTN connectivity</strong>, and <strong>application consumption</strong>. An admin grant or preview invitation is not a license.</p>
+      <p>Choose what you want to enable. These are the building blocks to arrange &mdash; not a check of your tenant's entitlements.</p>
+      <section id="license-map" class="license-map" aria-label="Feature-to-license map">
+        <svg class="license-sprite" aria-hidden="true" width="0" height="0">
+          <defs>
+            <symbol id="license-person-icon" viewBox="0 0 24 24"><circle cx="12" cy="7" r="4"/><path d="M4 22v-3a8 8 0 0 1 16 0v3"/></symbol>
+            <symbol id="license-app-icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M9 9v12"/></symbol>
+            <symbol id="license-usage-icon" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 10-13h-7z"/></symbol>
+          </defs>
+        </svg>
+        <nav class="license-picker" aria-label="Choose a capability">
+          <a href="#license-acs">ACS calls</a>
+          <a href="#license-tpe">Teams + Python</a>
+          <a href="#license-graph">Graph bot</a>
+          <a href="#license-sip">SIP gateway</a>
+          <a href="#license-managed">Teams receptionist</a>
+          <a href="#license-copilot">Copilot voice</a>
+        </nav>
+        <p id="license-selection" class="sr-only" role="status" aria-live="polite"></p>
+
+        <section class="license-scenario" data-license-panel="license-acs" aria-labelledby="license-acs">
+          <h3 id="license-acs">Make ACS-only phone calls</h3>
+          <div class="license-recipe" role="group" aria-label="Required building blocks">
+            <div class="license-block people"><span class="license-block-label"><svg aria-hidden="true"><use href="#license-person-icon"/></svg>People</span><strong>No Teams / E7 license</strong><small>For the ACS-only path</small></div>
+            <span class="license-plus" aria-hidden="true">+</span>
+            <div class="license-block account"><span class="license-block-label"><svg aria-hidden="true"><use href="#license-app-icon"/></svg>App / service</span><strong>Azure + ACS resource</strong><small>No Teams resource account</small></div>
+            <span class="license-plus" aria-hidden="true">+</span>
+            <div class="license-block usage"><span class="license-block-label"><svg aria-hidden="true"><use href="#license-usage-icon"/></svg>Connectivity / usage</span><strong>ACS number + calling</strong><small>AI and hosting billed separately</small></div>
+          </div>
+          <p class="license-caveat"><strong>If you add a Teams recipient:</strong> Teams Phone and voice enablement are required.</p>
+          <p class="license-links"><a href="https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/call-automation/quickstart-make-an-outbound-call">Microsoft prerequisites</a> &middot; <a href="#license-reference">Full requirements</a></p>
+        </section>
+
+        <section class="license-scenario" data-license-panel="license-tpe" aria-labelledby="license-tpe">
+          <h3 id="license-tpe">Connect the Python agent to Teams via ACS</h3>
+          <div class="license-recipe" role="group" aria-label="Required building blocks">
+            <div class="license-block people"><span class="license-block-label"><svg aria-hidden="true"><use href="#license-person-icon"/></svg>People</span><strong>Teams + Phone System</strong><small>Human agents: Enterprise Voice enabled</small></div>
+            <span class="license-plus" aria-hidden="true">+</span>
+            <div class="license-block account"><span class="license-block-label"><svg aria-hidden="true"><use href="#license-app-icon"/></svg>App / service</span><strong>Teams Phone Resource Account</strong><small>Acquire and assign the RA license</small></div>
+            <span class="license-plus" aria-hidden="true">+</span>
+            <div class="license-block usage"><span class="license-block-label"><svg aria-hidden="true"><use href="#license-usage-icon"/></svg>Connectivity / usage</span><strong>PSTN route + ACS usage</strong><small>AI and hosting billed separately</small></div>
+          </div>
+          <p class="license-caveat"><strong>Calling Plan outbound:</strong> the RA needs PAYG + funding. ACS association and server authorization still apply.</p>
+          <p class="license-links"><a href="https://learn.microsoft.com/en-us/azure/communication-services/concepts/interop/tpe/teams-phone-extensibility-connectivity-cost#teams-licenses-requirements">Microsoft requirements</a> &middot; <a href="#license-reference">Full requirements</a></p>
+        </section>
+
+        <section class="license-scenario" data-license-panel="license-graph" aria-labelledby="license-graph">
+          <h3 id="license-graph">Build a Graph PSTN bot</h3>
+          <div class="license-recipe" role="group" aria-label="Required building blocks">
+            <div class="license-block people"><span class="license-block-label"><svg aria-hidden="true"><use href="#license-person-icon"/></svg>People</span><strong>Teams user rights</strong><small>Depends on the calling scenario</small></div>
+            <span class="license-plus" aria-hidden="true">+</span>
+            <div class="license-block account"><span class="license-block-label"><svg aria-hidden="true"><use href="#license-app-icon"/></svg>App / service</span><strong>Teams Phone Resource Account</strong><small>For the numbered bot instance</small></div>
+            <span class="license-plus" aria-hidden="true">+</span>
+            <div class="license-block usage"><span class="license-block-label"><svg aria-hidden="true"><use href="#license-usage-icon"/></svg>Connectivity / usage</span><strong>PSTN + Azure media hosting</strong><small>Windows/.NET media service + AI</small></div>
+          </div>
+          <p class="license-caveat"><strong>Check topology:</strong> the bot number guide uses a Calling Plan. Graph admin consent is separate.</p>
+          <p class="license-links"><a href="https://learn.microsoft.com/en-us/graph/cloud-communications-phone-number">Microsoft requirements</a> &middot; <a href="#license-reference">Full requirements</a></p>
+        </section>
+
+        <section class="license-scenario" data-license-panel="license-sip" aria-labelledby="license-sip">
+          <h3 id="license-sip">Connect a SIP gateway to Teams</h3>
+          <div class="license-recipe" role="group" aria-label="Required building blocks">
+            <div class="license-block people"><span class="license-block-label"><svg aria-hidden="true"><use href="#license-person-icon"/></svg>People</span><strong>Teams + Phone System</strong><small>For Teams Direct Routing users</small></div>
+            <span class="license-plus" aria-hidden="true">+</span>
+            <div class="license-block account"><span class="license-block-label"><svg aria-hidden="true"><use href="#license-app-icon"/></svg>App / service</span><strong>Vendor platform terms</strong><small>RA license only if using Teams voice-app RAs</small></div>
+            <span class="license-plus" aria-hidden="true">+</span>
+            <div class="license-block usage"><span class="license-block-label"><svg aria-hidden="true"><use href="#license-usage-icon"/></svg>Connectivity / usage</span><strong>Carrier + SBC + gateway</strong><small>App and AI usage are separate</small></div>
+          </div>
+          <p class="license-caveat"><strong>Direct Routing:</strong> no Microsoft Calling Plan required for that route. Confirm the vendor's media/API licensing.</p>
+          <p class="license-links"><a href="https://learn.microsoft.com/en-us/microsoftteams/direct-routing-plan#licensing-requirements">Microsoft requirements</a> &middot; <a href="#license-reference">Full requirements</a></p>
+        </section>
+
+        <section class="license-scenario" data-license-panel="license-managed" aria-labelledby="license-managed">
+          <h3 id="license-managed">Enable a native Teams Phone Agent</h3>
+          <div class="license-recipe" role="group" aria-label="Required building blocks">
+            <div class="license-block people"><span class="license-block-label"><svg aria-hidden="true"><use href="#license-person-icon"/></svg>Tenant</span><strong>At least one Teams Phone license</strong><small>Voice-app base requirement</small></div>
+            <span class="license-plus" aria-hidden="true">+</span>
+            <div class="license-block account"><span class="license-block-label"><svg aria-hidden="true"><use href="#license-app-icon"/></svg>App / service</span><strong>Teams Phone Resource Account</strong><small>One license per RA</small></div>
+            <span class="license-plus" aria-hidden="true">+</span>
+            <div class="license-block usage"><span class="license-block-label"><svg aria-hidden="true"><use href="#license-usage-icon"/></svg>Connectivity / usage</span><strong>Number + PSTN funding</strong><small>Preview admission is separate</small></div>
+          </div>
+          <p class="license-caveat"><strong>Frontier preview:</strong> no extra Teams Phone licensing for base features. <a href="#license-extras">Optional features</a> have separate entitlements.</p>
+          <p class="license-links"><a href="https://learn.microsoft.com/en-us/microsoftteams/aa-cq-reference-prerequisites-licensing#licensing">Microsoft requirements</a> &middot; <a href="#license-reference">Full requirements</a></p>
+        </section>
+
+        <section class="license-scenario" data-license-panel="license-copilot" aria-labelledby="license-copilot">
+          <h3 id="license-copilot">Put a Copilot Studio agent on the phone</h3>
+          <div class="license-recipe" role="group" aria-label="Required building blocks">
+            <div class="license-block people"><span class="license-block-label"><svg aria-hidden="true"><use href="#license-person-icon"/></svg>Tenant / maker</span><strong>Teams Phone + Copilot Studio</strong><small>Studio tenant + user entitlements</small></div>
+            <span class="license-plus" aria-hidden="true">+</span>
+            <div class="license-block account"><span class="license-block-label"><svg aria-hidden="true"><use href="#license-app-icon"/></svg>App / service</span><strong>Teams Phone Resource Account</strong><small>For the AI Agent RA</small></div>
+            <span class="license-plus" aria-hidden="true">+</span>
+            <div class="license-block usage"><span class="license-block-label"><svg aria-hidden="true"><use href="#license-usage-icon"/></svg>Connectivity / usage</span><strong>Copilot Credits / PAYG + PSTN</strong><small>Don't assume E7 funds anonymous calls</small></div>
+          </div>
+          <p class="license-caveat"><strong>Channel gate:</strong> basic voice only, with Microsoft-enabled preview access.</p>
+          <p class="license-links"><a href="https://learn.microsoft.com/en-us/microsoft-copilot-studio/voice-teams-phone-agent#prerequisites">Microsoft requirements</a> &middot; <a href="#license-reference">Full requirements</a></p>
+        </section>
+      </section>
+
+      <div class="license-bundles" aria-label="How existing user licenses fit">
+        <h3 id="license-bundles">Already have a user suite?</h3>
+        <p class="source-note">E7 is not a blanket prerequisite.</p>
+        <dl>
+          <div><dt>E5 / E7</dt><dd><span aria-hidden="true">&rarr;</span> Phone System included</dd></div>
+          <div><dt>Base without Phone System, e.g. E3</dt><dd><span aria-hidden="true">&rarr;</span> Add Teams Phone Standard</dd></div>
+          <div><dt>E5 (no Teams)</dt><dd><span aria-hidden="true">&rarr;</span> Add Teams access; keep Phone System</dd></div>
+        </dl>
+        <p class="source-note">Confirm assigned service plans. Phone System is not PSTN minutes; RA licenses are separate. <a href="https://learn.microsoft.com/en-us/microsoft-365/copilot/microsoft-365-copilot-license-feature-overview">E7 source</a> &middot; <a href="https://learn.microsoft.com/en-us/microsoftteams/teams-phone-licensing">Phone licensing</a> &middot; <a href="#license-users">Exact suite combinations</a>.</p>
+      </div>
+      <details class="reference-detail" data-section="license-extras">
+        <summary id="license-extras">Adding queues, bookings, automation, or recording?</summary>
+        <dl class="feature-unlocks">
+          <div><dt>Queues App</dt><dd>Teams Premium for its users</dd></div>
+          <div><dt>Bookings tools</dt><dd>Appropriate Bookings entitlement</dd></div>
+          <div><dt>Power Automate</dt><dd>Appropriate flow licensing</dd></div>
+          <div><dt>Recording</dt><dd>SharePoint/storage or compliance-partner terms</dd></div>
+        </dl>
+        <p class="source-note"><a href="https://learn.microsoft.com/en-us/microsoftteams/aa-cq-reference-prerequisites-licensing">Microsoft feature-specific requirements</a>.</p>
+      </details>
+      <details class="reference-detail" data-section="license-reference">
+        <summary id="license-reference">Full licensing requirements, permissions &amp; Microsoft sources</summary>
+      <h3 id="license-details">Detailed requirements by architecture</h3>
       <div class="callout">
         <p><strong>E7 is not a blanket prerequisite.</strong> Microsoft 365 E7 bundles E5, Microsoft Copilot, Microsoft Entra Suite, and Agent 365. E5 includes Phone System rights; check the assigned Teams and Phone System service plans before adding a separate Teams Phone Standard license. The cited voice prerequisites do not specify E7 as a universal requirement. <a href="https://learn.microsoft.com/en-us/microsoft-365/copilot/microsoft-365-copilot-license-feature-overview">E7 bundle</a> &middot; <a href="https://learn.microsoft.com/en-us/microsoftteams/teams-phone-licensing">Teams Phone licensing</a>.</p>
       </div>
@@ -395,37 +515,37 @@
           <colgroup><col class="license-path"><col class="license-user"><col class="license-account"><col class="license-usage"></colgroup>
           <thead><tr><th scope="col">Architecture</th><th scope="col">Human user / tenant</th><th scope="col">Application identity</th><th scope="col">Connectivity + consumption</th></tr></thead>
           <tbody>
-            <tr id="license-acs">
+            <tr>
               <th scope="row">1. Standalone ACS</th>
               <td>No E7 or Teams Phone requirement in the <strong>ACS-only</strong> prerequisites. Added Teams recipients need Teams Phone and voice enablement.</td>
               <td>Azure subscription and ACS resource; an ACS phone number for the documented PSTN flow. No Teams RA for the ACS-only path.</td>
               <td>ACS usage, AI services, and app hosting. <a href="https://learn.microsoft.com/en-us/azure/communication-services/quickstarts/call-automation/quickstart-make-an-outbound-call">Public ACS prerequisites</a>.</td>
             </tr>
-            <tr id="license-tpe">
+            <tr>
               <th scope="row">2. Teams via ACS/TPE</th>
               <td><strong>Teams + Teams Phone</strong> entitlement for each human agent, plus Enterprise Voice enablement. See the <a href="#license-users">bundle/add-on examples</a>.</td>
               <td><strong>Teams Phone Resource Account</strong> license for the designated RA, plus its ACS association and server access assignment.</td>
               <td>Selected PSTN route/funding <strong>and</strong> ACS/AI consumption. RA-originated Calling Plan calls have specific PAYG requirements. <a href="https://learn.microsoft.com/en-us/azure/communication-services/concepts/interop/tpe/teams-phone-extensibility-connectivity-cost#teams-licenses-requirements">TPE licensing and charges</a>.</td>
             </tr>
-            <tr id="license-graph">
+            <tr>
               <th scope="row">3. Graph PSTN bot</th>
               <td>E7 is not listed as a bot prerequisite. Human Teams users follow their scenario's licensing rules; <strong>Graph admin consent is separate</strong>.</td>
               <td>A numbered application instance/RA with the <strong>Teams Phone Resource Account</strong> license (called &ldquo;virtual user&rdquo; in the bot guide).</td>
               <td>The bot guide specifies a Calling Plan; validate current funding and the selected topology. Budget Azure Windows/.NET media hosting and AI separately. <a href="https://learn.microsoft.com/en-us/graph/cloud-communications-phone-number">Bot number licensing</a>.</td>
             </tr>
-            <tr id="license-sip">
+            <tr>
               <th scope="row">4. SIP / Connect</th>
               <td><strong>Teams + Teams Phone</strong> for Teams Direct Routing users. Other contact-center agents follow the vendor's licensing terms.</td>
               <td>An RA license is needed if the design uses Teams voice-app resource accounts; it is not a per-SBC license.</td>
               <td>Carrier/SBC/gateway and app/AI charges. Direct Routing does <strong>not</strong> require buying a Microsoft Calling Plan for that route. <a href="https://learn.microsoft.com/en-us/microsoftteams/direct-routing-plan#licensing-requirements">Direct Routing licenses</a> &middot; <a href="https://learn.microsoft.com/en-us/microsoftteams/teams-phone-licensing">PSTN licensing</a>.</td>
             </tr>
-            <tr id="license-managed">
+            <tr>
               <th scope="row">5a. Native Teams Phone Agent</th>
               <td>Tenant: <strong>at least one Teams Phone license</strong>. Base Teams Phone Agent requires <strong>no extra Teams Phone licensing</strong> during Frontier Public Preview.</td>
               <td><strong>Teams Phone Resource Account</strong> license for each RA. Preview eligibility and configuration still apply.</td>
               <td>Number/PSTN connectivity and applicable outbound funding. Bookings, Power Automate, and other optional features have their own entitlements. <a href="https://learn.microsoft.com/en-us/microsoftteams/aa-cq-reference-prerequisites-licensing#licensing">Voice-app licensing</a>.</td>
             </tr>
-            <tr id="license-copilot">
+            <tr>
               <th scope="row">5b. Copilot Studio on Teams Phone</th>
               <td>Channel: <strong>Copilot Studio tenant + user licenses</strong>, plus applicable Teams Phone licenses. Confirm bundle entitlements; do not assume E7 alone covers the channel.</td>
               <td><strong>Teams Phone Resource Account</strong> license for the AI Agent RA, and Microsoft-enabled preview access.</td>
@@ -435,8 +555,6 @@
         </table>
       </div>
       <p class="source-note">Teams Phone supplies Phone System/PBX rights, not PSTN minutes. Choose Calling Plans, Operator Connect, or Direct Routing and fund that connectivity separately. <strong>E7's &ldquo;Frontier Suite&rdquo; name is not admission to the Frontier Public Preview.</strong> Check the product's actual eligibility and tenant enablement. Licenses also do not grant <a href="#tpe-grants">TPE server access</a> or <a href="#graph-grants">Graph application consent</a>.</p>
-      <details class="reference-detail" data-section="permissions">
-        <summary>E7/E5/E3 examples, add-ons, admin ownership &amp; exact permissions</summary>
         <p>Use this as a scenario checklist, not a pricing quote or universal role recipe. Confirm the exact SKU, service plans, region, carrier, and commercial agreement.</p>
       <h3 id="license-users">Human users: E7, E5, or a Teams Phone add-on?</h3>
       <div class="table-scroll" tabindex="0" role="region" aria-label="Human user licensing examples">
@@ -533,6 +651,6 @@
 </div>
 <script src="js/main.js?v=2"></script>
 <script src="js/search.js?v=2"></script>
-<script src="js/telephony.js?v=3"></script>
+<script src="js/telephony.js?v=4"></script>
 </body>
 </html>
