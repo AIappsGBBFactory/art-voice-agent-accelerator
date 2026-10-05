@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quick Tune — ART Agent Docs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/syntax.css">
+</head>
+<body>
+
+<header class="site-header">
+  <a href="index.html" class="logo">◆ <span>ART</span> Agent Docs</a>
+  <nav class="header-nav">
+    <a href="index.html">Home</a>
+    <a href="architecture.html">Architecture</a>
+    <a href="guides.html">Guides</a>
+    <a href="adopt.html">Adopt</a>
+    <a href="agents.html">Agents</a>
+    <a href="quick-tune.html" class="active">Quick Tune</a>
+    <a href="api.html">API</a>
+    <a href="certification.html">Certify</a>
+  </nav>
+  <div class="header-actions">
+    <button class="search-trigger" type="button" aria-label="Search docs (Cmd+K)">
+      <span class="search-trigger-icon" aria-hidden="true">⌕</span>
+      <span class="search-trigger-label">Search docs…</span>
+      <span class="search-trigger-kbd">⌘K</span>
+    </button>
+    <a id="legacy-docs-link" class="legacy-link" href="legacy-site/index.html" title="Original mkdocs documentation site">Legacy ↗</a>
+    <a href="https://github.com/Azure-Samples/art-voice-agent-accelerator" class="gh-link" target="_blank" rel="noopener">GitHub ↗</a>
+    <button class="theme-toggle" aria-label="Toggle theme">🌙</button>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <div class="sidebar-section">
+      <h4>On this page</h4>
+      <a href="#top" class="active">Overview</a>
+      <a href="#opening">Opening Quick Tune</a>
+      <a href="#tune-agent">Tune Agent</a>
+      <a href="#voice-model">Voice &amp; Model Catalog</a>
+      <a href="#tools">Tool Catalog</a>
+      <a href="#prompt-editor">Prompt Editor</a>
+      <a href="#scenarios">Scenario Preview &amp; Editor</a>
+      <a href="#apply">Apply &amp; Session Binding</a>
+      <a href="#runtime-contract">Runtime Contract</a>
+      <a href="#guardrails">Validation Guardrails</a>
+    </div>
+    <div class="sidebar-section">
+      <h4>Related</h4>
+      <a href="guides.html#create-agent">Create an Agent</a>
+      <a href="guides.html#create-scenario">Create a Scenario</a>
+      <a href="architecture.html">Architecture</a>
+    </div>
+  </aside>
+
+  <main class="content">
+    <div class="content-inner">
+
+      <h1 id="top">Quick Tune</h1>
+      <p class="subtitle">A live, in-call authoring workspace for tuning agents and scenarios — without redeploying, and without leaving the conversation you're testing.</p>
+
+      <div class="callout tip">
+        <p><strong>What's new:</strong> Quick Tune now shows which Foundry resource/region backs each model list, blocks BYOM/model mismatches before Apply, preserves the active scenario across an apply, and — most recently — lets you preview a whole scenario's agents, tools, and handoffs before jumping into the full graphical editor.</p>
+      </div>
+
+      <p>Quick Tune is the panel behind the <strong>tune icon</strong> in the call console. It edits a <em>session-scoped</em> copy of an agent or scenario — changes are draft-only until you press <strong>Save changes</strong>, and they never mutate the shared YAML catalog in <code>registries/agentstore/</code> or <code>registries/scenariostore/</code>.</p>
+
+      <hr>
+
+      <h2 id="opening">Opening Quick Tune</h2>
+      <p>Quick Tune opens as a docked drawer alongside the active call. It always shows the current session id, the active scenario, and a status pill (<em>Ready to try</em> / <em>Unsaved draft</em>) so you always know whether what you're looking at has been applied yet.</p>
+
+      <figure class="arch-diagram contain" data-expandable>
+        <img src="images/quick-tune/tune-agent-panel.png" alt="Quick Tune panel open beside a live VoiceLive call, showing the Tune agent tab with model, voice, and VAD controls">
+        <figcaption>Quick Tune docked next to a live call. The <strong>Tune agent</strong> tab is selected; <strong>Edit scenario</strong> and <strong>Create scenario</strong> sit alongside it.</figcaption>
+      </figure>
+
+      <p>Three tabs cover the whole authoring surface:</p>
+      <table>
+        <thead><tr><th>Tab</th><th>Edits</th><th>Backend endpoint</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Tune agent</strong></td><td>The selected agent's model, voice, BYOM mode, tools, prompt, and turn-detection/VAD knobs</td><td><code>PUT /api/v1/agent-builder/session/{session_id}</code></td></tr>
+          <tr><td><strong>Edit scenario</strong></td><td>Handoff routes between agents already in the active scenario</td><td><code>PUT /api/v1/scenario-builder/session/{session_id}</code></td></tr>
+          <tr><td><strong>Create scenario</strong></td><td>A brand-new draft scenario, generated from a prompt or template, previewed before it becomes the active one</td><td><code>/api/v1/scenario-drafts/*</code></td></tr>
+        </tbody>
+      </table>
+
+      <hr>
+
+      <h2 id="tune-agent">Tune Agent</h2>
+      <p>The <strong>Tune agent</strong> tab is scoped to one agent at a time (shown in the <em>Agent to tune</em> selector) — not the whole scenario. It's organized into collapsible cards: <strong>Behavior</strong>, <strong>Tools</strong>, and <strong>Voice &amp; model</strong>, plus fine-grained sliders for speaking rate and pause-before-reply.</p>
+
+      <p>Fields map to a fixed set of properties on the session agent payload:</p>
+      <table>
+        <thead><tr><th>UI field</th><th>Payload field</th><th>Used by</th></tr></thead>
+        <tbody>
+          <tr><td>Model source / Model</td><td><code>cascade_model</code> (Cascade) or <code>voicelive_model</code> (VoiceLive)</td><td>Both orchestrators</td></tr>
+          <tr><td>BYOM selector</td><td><code>byom.mode</code></td><td>VoiceLive only</td></tr>
+          <tr><td>Input transcription</td><td><code>session.input_audio_transcription_settings.model</code></td><td>VoiceLive only</td></tr>
+          <tr><td>Voice / Voice style</td><td><code>voice.name</code>, <code>voice.style</code></td><td>Both</td></tr>
+          <tr><td>Speaking rate / Pitch</td><td><code>voice.rate</code>, <code>voice.pitch</code></td><td>Both</td></tr>
+          <tr><td>Pause before reply / VAD sliders (Fine controls)</td><td><code>session.turn_detection.*</code> (VoiceLive) or <code>speech.vad_silence_timeout_ms</code> / <code>speech.use_semantic_segmentation</code> (Cascade)</td><td>Mode-specific</td></tr>
+          <tr><td>Tools</td><td><code>tools[]</code></td><td>Both</td></tr>
+          <tr><td>Behavior / prompt</td><td><code>prompt</code>, <code>greeting</code>, <code>handoff_trigger</code></td><td>Both</td></tr>
+        </tbody>
+      </table>
+
+      <p>Two save paths exist, chosen automatically:</p>
+      <ul>
+        <li><strong>Live-settings fast path</strong> — if only VAD/voice changed on an active VoiceLive call, Quick Tune calls <code>POST /api/v1/agent-builder/session/{session_id}/live-settings</code>, which pushes a <code>session.update</code> over the open VoiceLive socket with no reconnect.</li>
+        <li><strong>Full persist path</strong> — any model, BYOM, transcription, tool, or prompt change goes through the full <code>PUT /api/v1/agent-builder/session/{session_id}</code>, which forces a reconnect so the new model/BYOM binding takes effect at connect time.</li>
+      </ul>
+
+      <hr>
+
+      <h2 id="voice-model">Voice &amp; Model Catalog</h2>
+      <p>The model and voice dropdowns are populated live from <code>GET /api/v1/agent-builder/voices</code> and the connected Foundry account's deployment list — not a hardcoded catalog. The panel also states <strong>which</strong> Azure resource and region served that list, because Cascade reads the primary AI Foundry account while VoiceLive reads the separate Voice Live (AVL) account, and the two are often provisioned in different regions.</p>
+
+      <figure class="arch-diagram contain" data-expandable>
+        <img src="images/quick-tune/voice-catalog-search.png" alt="Voice picker searching the live regional voice catalog, filtered to French, showing 568 voices cached from northcentralus">
+        <figcaption>Searching the live voice catalog. The helper text under the field states the source region and voice count — <em>“568 voices from northcentralus (cached)”</em> — so a latency-sensitive mismatch between the app, Cascade Foundry, and Voice Live regions is visible instead of silent.</figcaption>
+      </figure>
+
+      <div class="callout warn">
+        <p><strong>Why this matters:</strong> before this attribution was added, the panel only showed a bare deployment count. In one deployment the backend ran in <code>westus2</code>, Cascade's Foundry account in <code>northcentralus</code>, and Voice Live in <code>swedencentral</code> — a trans-Atlantic hop on the realtime audio path that fully explained observed 1100&ndash;1300ms VoiceLive time-to-first-token, with nothing in the UI to explain why.</p>
+      </div>
+
+      <hr>
+
+      <h2 id="tools">Tool Catalog</h2>
+      <p>The <strong>Tools</strong> card lists every tool registered in <code>registries/toolstore/registry.py</code>, searchable by purpose, filterable to just the agent's current selection, and annotated with which agent(s) each tool is already assigned to — so you can see cross-agent tool sharing before changing it.</p>
+
+      <figure class="arch-diagram contain" data-expandable>
+        <img src="images/quick-tune/tool-catalog.png" alt="Tool catalog search filtered to 'fraud', showing 14 of 70 results with agent assignment shown per tool">
+        <figcaption>Tool catalog filtered to “fraud”. Each result shows its registered name, category badge, and current agent assignment (<code>Assigned to FraudAgent</code>) pulled straight from the live registry.</figcaption>
+      </figure>
+
+      <hr>
+
+      <h2 id="prompt-editor">Prompt Editor</h2>
+      <p>The prompt editor opens the agent's Jinja/Markdown prompt template with a live <strong>Preview</strong> pane. Preview renders the template with the session's current context variables (like <code>{{ agent_name }}</code>) — it is explicitly a read-only snapshot, because the runtime also appends scenario handoff instructions and conversation recap at connect/turn time that the static preview cannot reproduce.</p>
+
+      <figure class="arch-diagram contain" data-expandable>
+        <img src="images/quick-tune/prompt-editor.png" alt="Prompt editor showing markdown/jinja source on the left and a rendered preview on the right for the Concierge agent's VoiceLive session context">
+        <figcaption>Prompt editor for <code>Concierge / VoiceLive / Session context</code>. The right pane renders <code>{{ agent_name }}</code> against the live session and calls out that scenario handoff instructions are added by the runtime, not the preview.</figcaption>
+      </figure>
+
+      <hr>
+
+      <h2 id="scenarios">Scenario Preview &amp; Editor</h2>
+      <p>Before <code>d1c0994</code>, previewing a scenario meant jumping straight into the full drag-and-drop graph editor. <strong>Scenario preview</strong> now shows a bounded, read-only view of the selected scenario's agents and handoffs first, with a clickable path into the full editor only when you need it.</p>
+
+      <figure class="arch-diagram contain" data-expandable>
+        <img src="images/quick-tune/scenario-preview.png" alt="Bounded scenario preview for the Banking scenario, showing BankingConcierge as the start agent connected to Fraud Agent, with an 'Open graphical editor' link below">
+        <figcaption>Bounded preview of the <strong>Banking</strong> scenario — start agent, handoff count, and an <strong>Open graphical editor</strong> escape hatch — rendered without leaving the <strong>Tune agent</strong> context.</figcaption>
+      </figure>
+
+      <p>Clicking through (or using <strong>Create scenario</strong> / <strong>Edit scenario</strong> directly) opens the full graph: draggable agent nodes, handoff edges, and a per-node/per-edge inspector. Nothing here is saved until <strong>Apply scenario</strong>.</p>
+
+      <figure class="arch-diagram contain" data-expandable>
+        <img src="images/quick-tune/scenario-graph-editor.png" alt="Full scenario graph editor showing AuthAgent connected via a handoff to GeneralKBAgent, with a scenario flow summary and an agent palette on the left">
+        <figcaption>Full graphical editor. Agents from the catalog (left) can be dragged onto the canvas; the <strong>Scenario Flow</strong> panel summarizes start agent, agent count, and handoff routes before <strong>Apply scenario</strong>.</figcaption>
+      </figure>
+
+      <hr>
+
+      <h2 id="apply">Apply &amp; Session Binding</h2>
+      <p>Pressing <strong>Save changes</strong> (agent) or <strong>Apply scenario</strong> (scenario) is the moment a draft becomes a real, session-scoped runtime object. The backend never edits the shared catalog — it clones into a per-session copy via <code>session_agent_for_edit()</code> and stores it keyed by <code>session_id</code>, so the change only affects the call you're tuning, and survives a reconnect on that same session.</p>
+
+      <figure class="arch-diagram contain" data-expandable>
+        <img src="images/quick-tune/apply-confirmation.png" alt="Toast confirming 'Agent updated' with a summary of the model, voice, and tool count that were persisted for the session" style="max-height:420px">
+        <figcaption>Confirmation toast after Apply — it echoes back exactly what the backend persisted (<code>Model gpt-4o · Voice Ava · 1 tool</code>), so the UI never claims success without confirming the session-scoped write.</figcaption>
+      </figure>
+
+      <h3>Where each field lands, end to end</h3>
+      <table>
+        <thead><tr><th>Layer</th><th>What happens</th><th>Code</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Frontend Apply</td>
+            <td>Validates the payload (see <a href="#guardrails">guardrails</a>), then <code>PUT /api/v1/agent-builder/session/{session_id}</code> or the live-settings fast path.</td>
+            <td><code>utils/quickTune.js</code> (<code>quickTuneRequest</code>), <code>components/QuickTuneWorkspace.jsx</code></td>
+          </tr>
+          <tr>
+            <td>Endpoint</td>
+            <td><code>_upsert_session_agent(...)</code> validates the merged agent, then stores it.</td>
+            <td><code>api/v1/endpoints/agent_builder.py</code></td>
+          </tr>
+          <tr>
+            <td>Session store</td>
+            <td><code>session_agent_for_edit()</code> deep-copies the base/scenario agent into session scope (or reuses the session's existing copy); the registry keeps the per-session map plus which agent is active, mirrored into Redis.</td>
+            <td><code>src/orchestration/session_agents.py</code></td>
+          </tr>
+          <tr>
+            <td>Cascade pickup</td>
+            <td><code>_get_or_create_adapter()</code> injects the session agent into <code>adapter.agents</code> and writes <code>active_agent</code> to MemoManager <em>before</em> <code>sync_from_memo_manager()</code> runs, so a stale memo value can't silently override the just-tuned agent.</td>
+            <td><code>src/orchestration/unified/__init__.py</code>, <code>voice/speech_cascade/orchestrator.py</code></td>
+          </tr>
+          <tr>
+            <td>VoiceLive pickup</td>
+            <td><code>_update_session_context()</code> rebuilds prompt instructions from the active session agent and the scenario's handoff instructions, and sends <code>session.update</code> only when the resulting fingerprint actually changed.</td>
+            <td><code>voice/voicelive/orchestrator.py</code></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <hr>
+
+      <h2 id="runtime-contract">Runtime Contract: Cascade vs. VoiceLive</h2>
+      <p>Both orchestrators read the same session-scoped agent object, but bind it to the live call differently:</p>
+
+      <table>
+        <thead><tr><th></th><th>SpeechCascade</th><th>VoiceLive</th></tr></thead>
+        <tbody>
+          <tr><td><strong>When the tuned agent is bound</strong></td><td>Resolved per turn — <code>route_turn()</code> re-checks the session agent every turn, so most edits apply without a reconnect.</td><td>Bound at connect time — model, BYOM, and transcription changes require the socket to reconnect.</td></tr>
+          <tr><td><strong>Model field</strong></td><td><code>cascade_model.deployment_id</code></td><td><code>voicelive_model.deployment_id</code>, gated by <code>byom.mode</code></td></tr>
+          <tr><td><strong>Turn detection</strong></td><td><code>speech.vad_silence_timeout_ms</code>, <code>speech.use_semantic_segmentation</code> (Azure Speech STT, cannot change mid-stream)</td><td><code>session.turn_detection.*</code>, pushable live via <code>apply_live_session_settings()</code></td></tr>
+          <tr><td><strong>Handoff routing</strong></td><td><code>HandoffService</code>, built from the scenario resolved for the session</td><td>Same <code>HandoffService</code> contract, plus handoff instructions folded into <code>session.update</code></td></tr>
+          <tr><td><strong>Scenario resolution</strong></td><td><code>resolve_orchestrator_config(session_id=...)</code> must be given the session's scenario name, or handoff routing silently falls back to declarative <code>scenariostore/*/orchestration.yaml</code> defaults</td><td>Same requirement — an earlier bug (<code>b8972f7</code>) dropped the session scenario on every VoiceLive reconnect until this was fixed</td></tr>
+        </tbody>
+      </table>
+
+      <p>The practical effect: on Cascade, most Quick Tune edits are visible on the caller's very next turn. On VoiceLive, anything beyond voice/VAD forces a short reconnect, because the model and BYOM profile are properties of the realtime socket itself, not something that can be renegotiated mid-session.</p>
+
+      <hr>
+
+      <h2 id="guardrails">Validation Guardrails</h2>
+      <p>Quick Tune enforces the same two rules on both the client and the server, so a bad combination is rejected before Apply rather than connecting a session that silently can't speak:</p>
+
+      <ol>
+        <li><strong>Managed model requires BYOM off.</strong> A non-managed VoiceLive model selected while <code>byom.mode</code> is empty is blocked (<code>needsByomForModel</code> client-side; <code>is_managed_voicelive_model(...)</code> server-side).</li>
+        <li><strong>BYOM profile must match the model's API family.</strong> Pairing a realtime model (e.g. <code>gpt-realtime</code>) with a chat-completions BYOM profile (<code>byom-azure-openai-chat-completion</code>) is blocked (<code>byomProfileConflict</code> client-side; <code>byom_profile_model_conflict(...)</code> server-side).</li>
+      </ol>
+
+      <div class="callout warn">
+        <p><strong>Why this was worth guarding:</strong> before this validation existed, that exact mismatch let a tuned session connect and report <code>session_contract_ok</code> while the LLM leg of the realtime socket never actually answered — STT kept transcribing into a model deployment that only serves <code>/chat/completions</code>, not <code>/realtime</code>. App Insights showed real pre-tune turns (<code>ttft=1121ms</code>) followed by post-tune turns with every latency metric reading <code>N/A</code>, because no response ever came back.</p>
+      </div>
+
+      <p>Quick tick-list for picking a valid combination:</p>
+      <table>
+        <thead><tr><th>Mode</th><th>Model</th><th>BYOM</th></tr></thead>
+        <tbody>
+          <tr><td>Cascade</td><td>Any <code>cascade_model</code> deployment on the primary Foundry account</td><td>Not applicable</td></tr>
+          <tr><td>VoiceLive, managed</td><td>A managed VoiceLive model from the connected AVL account</td><td>Off</td></tr>
+          <tr><td>VoiceLive, BYOM</td><td>A deployment that exists on the BYOM-connected Foundry resource</td><td>On, matching the model's API family (realtime vs. chat completion)</td></tr>
+        </tbody>
+      </table>
+
+    </div>
+  </main>
+</div>
+
+<script src="js/main.js?v=2"></script>
+<script src="js/search.js?v=2"></script>
+</body>
+</html>
