@@ -1190,12 +1190,15 @@ class TestQuickTunePreservesScenario:
         assert merged["BankingConcierge"].greeting == "TUNED GREETING"
         assert len(merged) == len(agents)
 
-    def test_scenario_handoff_edges_beat_the_global_map(self, registry, banking_config):
+    @pytest.mark.parametrize("global_target", ["Concierge", "FraudAgent"])
+    def test_scenario_handoff_edges_beat_the_global_map(
+        self, registry, banking_config, global_target
+    ):
         """Declarative scenario routing wins over the app-state handoff map."""
         from apps.artagent.backend.voice.shared import build_effective_registry
 
         agents, app_state_map = registry
-        assert app_state_map["handoff_concierge"] == "Concierge"
+        app_state_map = {**app_state_map, "handoff_concierge": global_target}
 
         _merged, _start, handoff_map = build_effective_registry(
             banking_config,
